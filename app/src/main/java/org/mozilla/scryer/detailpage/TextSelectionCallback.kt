@@ -34,8 +34,10 @@ class TextSelectionCallback(
         (0 until menu.size()).map {
             menu.getItem(it)
         }.forEach { item ->
-            item.icon = DrawableCompat.wrap(item.icon).mutate().apply {
-                DrawableCompat.setTint(this, Color.WHITE)
+            item.icon = item.icon?.let { icon ->
+                DrawableCompat.wrap(icon).mutate().apply {
+                    DrawableCompat.setTint(this, Color.WHITE)
+                }
             }
             item.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         }
@@ -69,7 +71,7 @@ class TextSelectionCallback(
 
     private fun copyText(text: String) {
         val manager = view.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        manager.primaryClip = ClipData.newPlainText("selected text", text)
+        manager.setPrimaryClip(ClipData.newPlainText("selected text", text))
         ScryerToast.makeText(view.context, view.context.getString(R.string.snackbar_copied),
                 Toast.LENGTH_SHORT).show()
     }

@@ -16,8 +16,8 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.Observer
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import kotlinx.android.synthetic.main.fragment_full_text_search.*
 import org.mozilla.scryer.R
+import org.mozilla.scryer.databinding.FragmentFullTextSearchBinding
 import org.mozilla.scryer.ScryerApplication
 import org.mozilla.scryer.collectionview.*
 import org.mozilla.scryer.detailpage.DetailPageActivity
@@ -39,6 +39,9 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
     companion object {
         private const val SPAN_COUNT = 3
     }
+
+    private var _binding: FragmentFullTextSearchBinding? = null
+    private val binding get() = _binding!!
 
     private lateinit var screenshotAdapter: SearchAdapter
     private lateinit var liveData: LiveData<List<ScreenshotModel>>
@@ -91,8 +94,10 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
             (0 until menu.size()).map {
                 menu.getItem(it)
             }.forEach { item ->
-                item.icon = DrawableCompat.wrap(item.icon).mutate().apply {
-                    DrawableCompat.setTint(this, Color.WHITE)
+                item.icon = item.icon?.let { icon ->
+                    DrawableCompat.wrap(icon).mutate().apply {
+                        DrawableCompat.setTint(this, Color.WHITE)
+                    }
                 }
                 if (selector.selected.isEmpty()) {
                     item.isVisible = false
@@ -114,7 +119,7 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
             screenshotAdapter.exitSelectionMode()
             val activity = activity ?: return
 
-            activity.findViewById<View>(R.id.action_mode_bar).visibility = View.INVISIBLE
+            activity.findViewById<View>(androidx.appcompat.R.id.action_mode_bar)?.visibility = View.INVISIBLE
             activity.window?.let {
                 it.statusBarColor = ContextCompat.getColor(activity, R.color.statusBarColor)
             }
@@ -136,10 +141,10 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
                 "${selected.size}"
             }
 
-            selectAllCheckbox.isChecked = screenshotAdapter.screenshotList.all {
+            _binding?.selectAllCheckbox?.isChecked = screenshotAdapter.screenshotList.all {
                 isSelected(it)
             }
-            selectAllCheckbox.invalidate()
+            _binding?.selectAllCheckbox?.invalidate()
 
             actionModeMenu?.let { menu ->
                 (0 until menu.size()).map {
@@ -155,14 +160,14 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
         override fun onEnterSelectMode() {
             val activity = (activity as? AppCompatActivity) ?: return
             actionMode = activity.startSupportActionMode(selectActionModeCallback)
-            selectAllCheckbox.visibility = View.VISIBLE
+            _binding?.selectAllCheckbox?.visibility = View.VISIBLE
             actionMode?.title = getString(R.string.collection_header_select_none)
-            selectAllCheckbox.isChecked = false
+            _binding?.selectAllCheckbox?.isChecked = false
         }
 
         override fun onExitSelectMode() {
             actionMode?.finish()
-            selectAllCheckbox.visibility = View.GONE
+            _binding?.selectAllCheckbox?.visibility = View.GONE
         }
     }
 
@@ -170,12 +175,13 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
             inflater: LayoutInflater,
             container: ViewGroup?,
             savedInstanceState: Bundle?
-    ): View? {
-        return inflater.inflate(R.layout.fragment_full_text_search, container, false)
+    ): View {
+        _binding = FragmentFullTextSearchBinding.inflate(inflater, container, false)
+        return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        searchEditText.addTextChangedListener(object : TextWatcher {
+        binding.searchEditText.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
                 liveData.removeObservers(this@FullTextSearchFragment)
             }
@@ -187,17 +193,17 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
 
             override fun afterTextChanged(s: Editable?) {
                 liveData.observe(this@FullTextSearchFragment, Observer { screenshots ->
-                    subtitleLayout.visibility = if (screenshots.isEmpty()) {
+                    binding.subtitleLayout.visibility = if (screenshots.isEmpty()) {
                         View.GONE
                     } else {
                         View.VISIBLE
                     }
-                    emptyView.visibility = if (screenshots.isEmpty() && s?.isNotEmpty() == true && !isIndexing && !isIndexError) {
+                    binding.emptyView.visibility = if (screenshots.isEmpty() && s?.isNotEmpty() == true && !isIndexing && !isIndexError) {
                         View.VISIBLE
                     } else {
                         View.GONE
                     }
-                    errorView.visibility = if (isIndexError && screenshots.isEmpty()) {
+                    binding.errorView.visibility = if (isIndexError && screenshots.isEmpty()) {
                         View.VISIBLE
                     } else {
                         View.GONE
@@ -207,7 +213,7 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
                         screenshotAdapter.showLoadingView(null)
                     }
 
-                    subtitleTextView.text = getString(R.string.search_separator_results, screenshots.size)
+                    binding.subtitleTextView.text = getString(R.string.search_separator_results, screenshots.size)
 
                     screenshots.sortedByDescending { it.lastModified }.let { sorted ->
                         screenshotAdapter.screenshotList = sorted
@@ -215,28 +221,28 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
                     }
                 })
 
-                clear.visibility = if (searchEditText.text?.isNotEmpty() == true) {
+                binding.clear.visibility = if (binding.searchEditText.text?.isNotEmpty() == true) {
                     View.VISIBLE
                 } else {
                     View.INVISIBLE
                 }
             }
         })
-        searchEditText.onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
+        binding.searchEditText.onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
             // Avoid showing keyboard again when returning to the previous page by back key.
             if (hasFocus) {
-                showKeyboard(searchEditText)
+                showKeyboard(binding.searchEditText)
             } else {
-                hideKeyboard(searchEditText)
+                hideKeyboard(binding.searchEditText)
             }
         }
-        searchEditText.requestFocus()
+        binding.searchEditText.requestFocus()
 
-        clear.setOnClickListener { searchEditText.setText("") }
+        binding.clear.setOnClickListener { binding.searchEditText.setText("") }
 
-        selectAllCheckbox.setOnClickListener { _ ->
-            val isChecked = selectAllCheckbox.isChecked
-            selectAllCheckbox.invalidate()
+        binding.selectAllCheckbox.setOnClickListener { _ ->
+            val isChecked = binding.selectAllCheckbox.isChecked
+            binding.selectAllCheckbox.invalidate()
             screenshotAdapter.screenshotList.forEach {
                 if (isChecked != selector.isSelected(it)) {
                     selector.toggleSelection(it)
@@ -245,14 +251,19 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
             screenshotAdapter.notifyDataSetChanged()
         }
 
-        connectButton.setOnClickListener {
+        binding.connectButton.setOnClickListener {
             startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
         }
 
-        screenshotListView.setOnTouchListener { _, _ ->
-            hideKeyboard(searchEditText)
+        binding.screenshotListView.setOnTouchListener { _, _ ->
+            hideKeyboard(binding.searchEditText)
             false
         }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null
     }
 
     override fun onActivityCreated(savedInstanceState: Bundle?) {
@@ -261,7 +272,7 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
 
         screenshotAdapter = SearchAdapter(context, selector) { item, view, position ->
             val context = context ?: return@SearchAdapter
-            DetailPageActivity.showDetailPage(context, item, view, searchKeyword = searchEditText.text.toString())
+            DetailPageActivity.showDetailPage(context, item, view, searchKeyword = binding.searchEditText.text.toString())
         }
         enterTimeMillis = System.currentTimeMillis()
 
@@ -285,16 +296,16 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
     }
 
     private fun onIndexProgress(current: Int, total: Int) {
-        searchEditText.text?.let {
+        binding.searchEditText.text?.let {
             if (it.isNotEmpty()) {
                 screenshotAdapter.showLoadingView(LoadingViewModel(
                         getString(R.string.search_transition_progress, total - current),
                         getString(R.string.search_transition_content_searchable)))
 
-                emptyView.visibility = View.GONE
+                binding.emptyView.visibility = View.GONE
             }
         }
-        errorView.visibility = View.GONE
+        binding.errorView.visibility = View.GONE
         isIndexing = true
         isIndexError = false
     }
@@ -302,17 +313,17 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
     private fun onIndexEnd() {
         screenshotAdapter.showLoadingView(null)
         if (screenshotAdapter.screenshotList.isEmpty()
-                && searchEditText.text?.isNotEmpty() == true) {
-            emptyView.visibility = View.VISIBLE
+                && binding.searchEditText.text?.isNotEmpty() == true) {
+            binding.emptyView.visibility = View.VISIBLE
         }
-        errorView.visibility = View.GONE
+        binding.errorView.visibility = View.GONE
         isIndexing = false
         isIndexError = false
     }
 
     private fun onIndexError() {
         screenshotAdapter.showLoadingView(null)
-        errorView.visibility = View.VISIBLE
+        binding.errorView.visibility = View.VISIBLE
         isIndexing = false
         isIndexError = true
     }
@@ -320,7 +331,7 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
             android.R.id.home -> {
-                hideKeyboard(searchEditText)
+                hideKeyboard(binding.searchEditText)
                 getNavController()?.navigateUp()
             }
 
@@ -351,12 +362,12 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
                 }
             }
         }
-        screenshotListView.itemAnimator = null
-        screenshotListView.layoutManager = manager
-        screenshotListView.adapter = screenshotAdapter
+        binding.screenshotListView.itemAnimator = null
+        binding.screenshotListView.layoutManager = manager
+        binding.screenshotListView.adapter = screenshotAdapter
 
         val itemSpace = context.resources.getDimensionPixelSize(R.dimen.collection_item_space)
-        screenshotListView.addItemDecoration(InnerSpaceDecoration(itemSpace) {
+        binding.screenshotListView.addItemDecoration(InnerSpaceDecoration(itemSpace) {
             SPAN_COUNT
         })
 

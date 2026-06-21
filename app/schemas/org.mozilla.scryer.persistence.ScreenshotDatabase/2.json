@@ -34,10 +34,10 @@
           }
         ],
         "primaryKey": {
+          "autoGenerate": false,
           "columnNames": [
             "id"
-          ],
-          "autoGenerate": false
+          ]
         },
         "indices": [],
         "foreignKeys": []
@@ -72,10 +72,10 @@
           }
         ],
         "primaryKey": {
+          "autoGenerate": false,
           "columnNames": [
             "id"
-          ],
-          "autoGenerate": false
+          ]
         },
         "indices": [
           {
@@ -84,7 +84,8 @@
             "columnNames": [
               "collection_id"
             ],
-            "createSql": "CREATE  INDEX `index_screenshot_collection_id` ON `${TABLE_NAME}` (`collection_id`)"
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_screenshot_collection_id` ON `${TABLE_NAME}` (`collection_id`)"
           },
           {
             "name": "index_screenshot_absolute_path",
@@ -92,7 +93,8 @@
             "columnNames": [
               "absolute_path"
             ],
-            "createSql": "CREATE UNIQUE INDEX `index_screenshot_absolute_path` ON `${TABLE_NAME}` (`absolute_path`)"
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_screenshot_absolute_path` ON `${TABLE_NAME}` (`absolute_path`)"
           }
         ],
         "foreignKeys": []
@@ -115,10 +117,10 @@
           }
         ],
         "primaryKey": {
+          "autoGenerate": false,
           "columnNames": [
             "id"
-          ],
-          "autoGenerate": false
+          ]
         },
         "indices": [],
         "foreignKeys": [
@@ -164,8 +166,8 @@
           }
         ],
         "primaryKey": {
-          "columnNames": [],
-          "autoGenerate": false
+          "autoGenerate": false,
+          "columnNames": []
         },
         "indices": [],
         "foreignKeys": []
@@ -174,7 +176,7 @@
     "views": [],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, \"567d5628db5bb8187474eb32f2f37689\")"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '567d5628db5bb8187474eb32f2f37689')"
     ]
   }
 }

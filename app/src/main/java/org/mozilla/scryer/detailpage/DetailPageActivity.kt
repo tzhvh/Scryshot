@@ -24,14 +24,14 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.snackbar.Snackbar
 import com.google.firebase.ml.common.FirebaseMLException
 import com.google.firebase.ml.vision.text.FirebaseVisionText
-import kotlinx.android.synthetic.main.activity_detail_page.*
-import kotlinx.coroutines.experimental.*
+import kotlinx.coroutines.*
 import me.saket.bettermovementmethod.BetterLinkMovementMethod
 import org.mozilla.scryer.R
 import org.mozilla.scryer.collectionview.OnDeleteScreenshotListener
 import org.mozilla.scryer.collectionview.showDeleteScreenshotDialog
 import org.mozilla.scryer.collectionview.showScreenshotInfoDialog
 import org.mozilla.scryer.collectionview.showShareScreenshotDialog
+import org.mozilla.scryer.databinding.ActivityDetailPageBinding
 import org.mozilla.scryer.persistence.CollectionModel
 import org.mozilla.scryer.persistence.ScreenshotModel
 import org.mozilla.scryer.preference.PreferenceWrapper
@@ -40,9 +40,11 @@ import org.mozilla.scryer.scan.FirebaseVisionTextHelper
 import org.mozilla.scryer.sortingpanel.SortingPanelActivity
 import org.mozilla.scryer.ui.ScryerToast
 import org.mozilla.scryer.viewmodel.ScreenshotViewModel
-import kotlin.coroutines.experimental.CoroutineContext
+import kotlin.coroutines.CoroutineContext
 
 class DetailPageActivity : AppCompatActivity(), CoroutineScope {
+
+    private lateinit var binding: ActivityDetailPageBinding
 
     companion object Launcher {
         private const val EXTRA_SCREENSHOT_ID = "screenshot_id"
@@ -111,9 +113,7 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
     private var isEnterTransitionPostponed = true
 
     private val adapter = DetailPageAdapter()
-    private val graphicOverlayHelper: GraphicOverlayHelper by lazy {
-        GraphicOverlayHelper(graphicOverlay)
-    }
+    private lateinit var graphicOverlayHelper: GraphicOverlayHelper
 
     /* whether the user has run ocr on the current image before swiping to the next one */
     private var hasRunOcr = false
@@ -140,7 +140,7 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
 
     private val imageStateCallback = object : DetailPageAdapter.ImageStateCallback {
         override fun onScaleChanged(pageView: DetailPageAdapter.PageView) {
-            view_pager.pageLocked = pageView.isScaled()
+            binding.viewPager.pageLocked = pageView.isScaled()
         }
     }
 
@@ -152,7 +152,9 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        setContentView(R.layout.activity_detail_page)
+        binding = ActivityDetailPageBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+        graphicOverlayHelper = GraphicOverlayHelper(binding.graphicOverlay)
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE
 
@@ -193,49 +195,49 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         }
     }
 
-    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.menu_detail, menu)
 
-        if (menu != null) {
-            shareMenu = menu.findItem(R.id.action_share)
-            shareMenu?.let {
-                val wrapped = DrawableCompat.wrap(it.icon).mutate()
-                DrawableCompat.setTint(wrapped, ContextCompat.getColor(this, R.color.white))
-            }
-
-            moveToMenu = menu.findItem(R.id.action_move_to)
-            if (srcCollectionId == CollectionModel.CATEGORY_NONE) {
-                moveToMenu?.let {
-                    val wrapped = DrawableCompat.wrap(it.icon).mutate()
-                    DrawableCompat.setTint(wrapped, ContextCompat.getColor(this, R.color.white))
-                    it.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-                }
-            }
-            screenshotInfoMenu = menu.findItem(R.id.action_screenshot_info)
-
-            deleteMenu = menu.findItem(R.id.action_delete)
-
-            selectAllMenu = menu.findItem(R.id.action_select_all)
-            selectAllMenu?.isVisible = false
+        shareMenu = menu.findItem(R.id.action_share)
+        shareMenu?.icon?.let { icon ->
+            val wrapped = DrawableCompat.wrap(icon).mutate()
+            DrawableCompat.setTint(wrapped, ContextCompat.getColor(this, R.color.white))
         }
+
+        moveToMenu = menu.findItem(R.id.action_move_to)
+        if (srcCollectionId == CollectionModel.CATEGORY_NONE) {
+            moveToMenu?.let {
+                it.icon?.let { icon ->
+                    val wrapped = DrawableCompat.wrap(icon).mutate()
+                    DrawableCompat.setTint(wrapped, ContextCompat.getColor(this, R.color.white))
+                }
+                it.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+            }
+        }
+        screenshotInfoMenu = menu.findItem(R.id.action_screenshot_info)
+
+        deleteMenu = menu.findItem(R.id.action_delete)
+
+        selectAllMenu = menu.findItem(R.id.action_select_all)
+        selectAllMenu?.isVisible = false
 
         return true
     }
 
-    override fun onOptionsItemSelected(item: MenuItem?): Boolean {
-        when (item?.itemId) {
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        when (item.itemId) {
             R.id.action_share -> {
-                showShareScreenshotDialog(this, screenshots[view_pager.currentItem])
+                showShareScreenshotDialog(this, screenshots[binding.viewPager.currentItem])
             }
             R.id.action_move_to -> {
                 startActivity(SortingPanelActivity.sortOldScreenshot(this,
-                        screenshots[view_pager.currentItem]))
+                        screenshots[binding.viewPager.currentItem]))
             }
             R.id.action_screenshot_info -> {
-                showScreenshotInfoDialog(this, screenshots[view_pager.currentItem])
+                showScreenshotInfoDialog(this, screenshots[binding.viewPager.currentItem])
             }
             R.id.action_delete -> {
-                showDeleteScreenshotDialog(this, screenshots[view_pager.currentItem],
+                showDeleteScreenshotDialog(this, screenshots[binding.viewPager.currentItem],
                         object : OnDeleteScreenshotListener {
                             override fun onDeleteScreenshot() {
                                 finish()
@@ -273,27 +275,27 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
      * dispatch touch event to underlying graphic overlay */
     private fun routeUnhandledEventToOverlay(event: MotionEvent): Boolean {
         val scale = IMAGE_SCALE_TEXT_MODE
-        val leftDiff = view_pager.measuredWidth * (1 - scale) / 2f
+        val leftDiff = binding.viewPager.measuredWidth * (1 - scale) / 2f
         val x = (event.x - leftDiff) / scale
-        val y = event.y / scale + (toolbar.layoutParams as ViewGroup.MarginLayoutParams).topMargin
+        val y = event.y / scale + (binding.toolbar.layoutParams as ViewGroup.MarginLayoutParams).topMargin
         event.setLocation(x, y)
-        return graphicOverlay.dispatchTouchEvent(event)
+        return binding.graphicOverlay.dispatchTouchEvent(event)
     }
 
     private fun initViewPager() {
         launch(Dispatchers.Main) {
             screenshots = getScreenshots().sortedByDescending { it.lastModified }
-            view_pager.adapter = adapter.apply {
+            binding.viewPager.adapter = adapter.apply {
                 screenshots = this@DetailPageActivity.screenshots
                 itemCallback = this@DetailPageActivity.itemCallback
                 imageStateCallback = this@DetailPageActivity.imageStateCallback
             }
-            view_pager.addOnPageChangeListener(object : ViewPager.SimpleOnPageChangeListener() {
+            binding.viewPager.addOnPageChangeListener(object : ViewPager.SimpleOnPageChangeListener() {
                 override fun onPageSelected(position: Int) {
                     hasRunOcr = false
                 }
             })
-            view_pager.currentItem = screenshots.indexOfFirst { it.id == screenshotId }
+            binding.viewPager.currentItem = screenshots.indexOfFirst { it.id == screenshotId }
         }
     }
 
@@ -315,11 +317,11 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         }
 
         fab.setOnClickListener(fabListener)
-        cancel_fab.setOnClickListener(fabListener)
+        binding.cancelFab.setOnClickListener(fabListener)
     }
 
     private fun initPanel() {
-        BottomSheetBehavior.from(text_mode_panel_content)
+        BottomSheetBehavior.from(binding.textModePanelContent)
                 .setBottomSheetCallback(object : BottomSheetBehavior.BottomSheetCallback() {
                     override fun onSlide(bottomSheet: View, slideOffset: Float) {
 
@@ -333,16 +335,16 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
 
                         if (newState == BottomSheetBehavior.STATE_EXPANDED
                                 && graphicOverlayHelper.getSelectedText() == "") {
-                            BottomSheetBehavior.from(text_mode_panel_content).state = BottomSheetBehavior.STATE_COLLAPSED
+                            BottomSheetBehavior.from(binding.textModePanelContent).state = BottomSheetBehavior.STATE_COLLAPSED
                         }
                     }
                 })
 
-        textModePanelTextView.movementMethod = BetterLinkMovementMethod.newInstance().setOnLinkClickListener { _, _ ->
+        binding.textModePanelTextView.movementMethod = BetterLinkMovementMethod.newInstance().setOnLinkClickListener { _, _ ->
             false
         }
 
-        textModePanelHint.setOnClickListener { }
+        binding.textModePanelHint.setOnClickListener { }
     }
 
     private fun startRecognition() {
@@ -350,7 +352,7 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         launch(Dispatchers.Main) {
             updateUI()
 
-            val screenshot = screenshots[view_pager.currentItem]
+            val screenshot = screenshots[binding.viewPager.currentItem]
             val result = withContext(Dispatchers.Default) {
                 runTextRecognition(screenshot)
             }
@@ -389,7 +391,7 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
     }
 
     private fun showConnectPromptSnackbar() {
-        Snackbar.make(snackbar_container, R.string.detail_ocr_error_module, Snackbar.LENGTH_LONG).apply {
+        Snackbar.make(binding.snackbarContainer, R.string.detail_ocr_error_module, Snackbar.LENGTH_LONG).apply {
             setAction(R.string.detail_ocr_error_action_connect) {
                 startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
             }
@@ -447,7 +449,7 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
     private fun updateUI() {
         val pagerScale: Float
         val pagerTranslation: Float
-        val pageView = adapter.findViewForPosition(view_pager.currentItem)
+        val pageView = adapter.findViewForPosition(binding.viewPager.currentItem)
 
         if (isTextMode) {
             pageView?.resetScale()
@@ -455,9 +457,9 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
             updateFabUI(true, false)
             enableTextModeMenu(true)
             pagerScale = IMAGE_SCALE_TEXT_MODE
-            pagerTranslation = -view_pager.height * ((1 - IMAGE_SCALE_TEXT_MODE) / 2f)
+            pagerTranslation = -binding.viewPager.height * ((1 - IMAGE_SCALE_TEXT_MODE) / 2f)
 
-            setupTextSelectionCallback(textModePanelTextView)
+            setupTextSelectionCallback(binding.textModePanelTextView)
             updateLoadingViewVisibility(false)
             updateTextModePanelVisibility(true)
 
@@ -478,8 +480,8 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
             supportActionBar?.show()
         }
 
-        view_pager.pageLocked = (pageView?.isScaled() == true)
-        listOf(view_pager, graphicOverlay).forEach {
+        binding.viewPager.pageLocked = (pageView?.isScaled() == true)
+        listOf(binding.viewPager, binding.graphicOverlay).forEach {
             it.animate()
                     .scaleX(pagerScale)
                     .scaleY(pagerScale)
@@ -498,30 +500,30 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
     private fun updateFabUI(isTextMode: Boolean, isLoading: Boolean) {
         when {
             isTextMode -> {
-                cancel_fab.hide()
-                text_mode_fab.hide()
+                binding.cancelFab.hide()
+                binding.textModeFab.hide()
             }
 
             isLoading -> {
-                cancel_fab.show()
-                text_mode_fab.hide()
+                binding.cancelFab.show()
+                binding.textModeFab.hide()
             }
 
             else -> {
-                cancel_fab.hide()
-                text_mode_fab.show()
+                binding.cancelFab.hide()
+                binding.textModeFab.show()
             }
         }
     }
 
     private fun updateTextModePanelVisibility(visible: Boolean) {
         val visibility = if (visible) {
-            BottomSheetBehavior.from(text_mode_panel_content).state = BottomSheetBehavior.STATE_COLLAPSED
+            BottomSheetBehavior.from(binding.textModePanelContent).state = BottomSheetBehavior.STATE_COLLAPSED
             View.VISIBLE
         } else {
             View.GONE
         }
-        text_mode_panel.visibility = visibility
+        binding.textModePanel.visibility = visibility
     }
 
     private fun enableTextModeMenu(enable: Boolean) {
@@ -534,7 +536,7 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
     }
 
     private fun updateNavigationIcon() {
-        toolbar.navigationIcon = ContextCompat.getDrawable(this, if (isTextMode) {
+        binding.toolbar.navigationIcon = ContextCompat.getDrawable(this, if (isTextMode) {
             R.drawable.close_large
         } else {
             R.drawable.back
@@ -568,24 +570,24 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         isShowing = !isShowing
 
         if (isShowing) {
-            toolbar_background.visibility = View.VISIBLE
+            binding.toolbarBackground.visibility = View.VISIBLE
             supportActionBar?.show()
             window?.decorView?.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
-            text_mode_fab.show()
-            cancel_fab.hide()
+            binding.textModeFab.show()
+            binding.cancelFab.hide()
 
         } else {
-            toolbar_background.visibility = View.INVISIBLE
+            binding.toolbarBackground.visibility = View.INVISIBLE
             supportActionBar?.hide()
             window?.decorView?.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN
 
-            text_mode_fab.hide()
-            cancel_fab.hide()
+            binding.textModeFab.hide()
+            binding.cancelFab.hide()
         }
     }
 
     private fun processTextRecognitionResult(result: FirebaseVisionText) {
-        val pageView = adapter.findViewForPosition(view_pager.currentItem) ?: return
+        val pageView = adapter.findViewForPosition(binding.viewPager.currentItem) ?: return
 
         val graphicBlocks = graphicOverlayHelper.convertToGraphicBlocks(result, pageView)
 //        val graphicBlocks = graphicOverlayHelper.convertWordsToGraphicBlocks(result,
@@ -598,7 +600,7 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
     }
 
     private fun updateGraphicOverlay(blocks: List<TextBlockGraphic>) {
-        graphicOverlay.setBlocks(blocks, if (isTextMode) {
+        binding.graphicOverlay.setBlocks(blocks, if (isTextMode) {
             GraphicOverlay.MODE_OVERLAY_HIGHLIGHT
         } else {
             GraphicOverlay.MODE_HIGHLIGHT
@@ -613,7 +615,7 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
                 updatePanel(selectedText)
             }
         }
-        graphicOverlay.setOnTouchListener { _, event ->
+        binding.graphicOverlay.setOnTouchListener { _, event ->
             touchHelper.onTouchEvent(event)
         }
     }
@@ -632,10 +634,10 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
     }
 
     private fun updatePanel(panelText: String) {
-        textModePanelTextView.autoLinkMask = Linkify.ALL
-        textModePanelTextView.text = panelText
+        binding.textModePanelTextView.autoLinkMask = Linkify.ALL
+        binding.textModePanelTextView.text = panelText
 
-        val behavior = BottomSheetBehavior.from(text_mode_panel_content)
+        val behavior = BottomSheetBehavior.from(binding.textModePanelContent)
         if (panelText.isEmpty()) {
             behavior.state = BottomSheetBehavior.STATE_COLLAPSED
         } else {
@@ -645,15 +647,15 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
     }
 
     private fun switchToHintModePanelLayout() {
-        textModePanelHandler.visibility = View.GONE
-        textModePanelTextView.visibility = View.GONE
-        textModePanelHint.visibility = View.VISIBLE
+        binding.textModePanelHandler.visibility = View.GONE
+        binding.textModePanelTextView.visibility = View.GONE
+        binding.textModePanelHint.visibility = View.VISIBLE
     }
 
     private fun switchToTextModePanelLayout() {
-        textModePanelHandler.visibility = View.VISIBLE
-        textModePanelTextView.visibility = View.VISIBLE
-        textModePanelHint.visibility = View.GONE
+        binding.textModePanelHandler.visibility = View.VISIBLE
+        binding.textModePanelTextView.visibility = View.VISIBLE
+        binding.textModePanelHint.visibility = View.GONE
     }
 
 //    private fun showSystemUI() {
@@ -674,22 +676,22 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
 
 
     private fun showOcrOnboarding() {
-        onboarding_view.visibility = View.VISIBLE
-        onboarding_view.setOnClickListener {
-            (onboarding_view.parent as ViewGroup).removeView(onboarding_view)
+        binding.onboardingView.visibility = View.VISIBLE
+        binding.onboardingView.setOnClickListener {
+            (binding.onboardingView.parent as ViewGroup).removeView(binding.onboardingView)
         }
 
-        onboarding_overlay.overlayMode = GraphicOverlay.MODE_HIGHLIGHT
-        onboarding_overlay.overlayColor = ContextCompat.getColor(this, R.color.detail_onboarding_overlay)
-        onboarding_overlay.add(object : GraphicOverlay.Graphic(onboarding_overlay) {
+        binding.onboardingOverlay.overlayMode = GraphicOverlay.MODE_HIGHLIGHT
+        binding.onboardingOverlay.overlayColor = ContextCompat.getColor(this, R.color.detail_onboarding_overlay)
+        binding.onboardingOverlay.add(object : GraphicOverlay.Graphic(binding.onboardingOverlay) {
             private val spotlightPaint: Paint = Paint().apply {
                 xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
             }
 
             override fun draw(canvas: Canvas) {
-                canvas.drawCircle((text_mode_fab.left + text_mode_fab.right) / 2f,
-                        (text_mode_fab.top + text_mode_fab.bottom) / 2f,
-                        (text_mode_fab.right - text_mode_fab.left).toFloat(),
+                canvas.drawCircle((binding.textModeFab.left + binding.textModeFab.right) / 2f,
+                        (binding.textModeFab.top + binding.textModeFab.bottom) / 2f,
+                        (binding.textModeFab.right - binding.textModeFab.left).toFloat(),
                         spotlightPaint)
             }
         })
@@ -700,17 +702,17 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
     private class LoadingViewGroup(private val activity: DetailPageActivity) {
         fun show() {
             activity.apply {
-                loading_overlay.visibility = View.VISIBLE
-                loading_progress.visibility = View.VISIBLE
-                loading_text.visibility = View.VISIBLE
+                binding.loadingOverlay.visibility = View.VISIBLE
+                binding.loadingProgress.visibility = View.VISIBLE
+                binding.loadingText.visibility = View.VISIBLE
             }
         }
 
         fun hide() {
             activity.apply {
-                loading_overlay.visibility = View.INVISIBLE
-                loading_progress.visibility = View.INVISIBLE
-                loading_text.visibility = View.INVISIBLE
+                binding.loadingOverlay.visibility = View.INVISIBLE
+                binding.loadingProgress.visibility = View.INVISIBLE
+                binding.loadingText.visibility = View.INVISIBLE
             }
         }
     }

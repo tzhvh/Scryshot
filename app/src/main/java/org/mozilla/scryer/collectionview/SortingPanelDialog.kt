@@ -4,6 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+@file:OptIn(DelicateCoroutinesApi::class)
+
 package org.mozilla.scryer.collectionview
 
 import android.graphics.PixelFormat
@@ -13,12 +15,13 @@ import android.view.WindowManager
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
-import kotlinx.android.synthetic.main.view_sorting_panel.view.*
-import kotlinx.coroutines.experimental.Dispatchers
-import kotlinx.coroutines.experimental.GlobalScope
-import kotlinx.coroutines.experimental.launch
-import kotlinx.coroutines.experimental.withContext
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.mozilla.scryer.R
+import org.mozilla.scryer.databinding.ViewSortingPanelBinding
 import org.mozilla.scryer.persistence.CollectionModel
 import org.mozilla.scryer.persistence.ScreenshotModel
 import org.mozilla.scryer.persistence.SuggestCollectionHelper
@@ -132,8 +135,9 @@ class SortingPanelDialog(
         val actionText = panel.findViewById<TextView>(R.id.panel_title_action_button)
         actionText.text = activity.getText(android.R.string.cancel)
 
-        panel.fake_layer.visibility = View.INVISIBLE
-        panel.image_view.visibility = View.INVISIBLE
+        val binding = ViewSortingPanelBinding.bind(panel)
+        binding.fakeLayer.visibility = View.INVISIBLE
+        binding.imageView.visibility = View.INVISIBLE
 
         panel.setBackgroundColor(ContextCompat.getColor(panel.context, R.color.dialogScrim))
     }

@@ -13,7 +13,7 @@ class GraphicOverlayTouchHelper(context: Context, val blocks: List<TextBlockGrap
     var callback: Callback? = null
 
     private val gestureDetector = GestureDetector(context, object : GestureDetector.OnGestureListener {
-        override fun onShowPress(e: MotionEvent?) {}
+        override fun onShowPress(e: MotionEvent) {}
 
         override fun onSingleTapUp(e: MotionEvent): Boolean {
             var selected: TextBlockGraphic? = null
@@ -29,19 +29,19 @@ class GraphicOverlayTouchHelper(context: Context, val blocks: List<TextBlockGrap
             return true
         }
 
-        override fun onDown(e: MotionEvent?): Boolean {
+        override fun onDown(e: MotionEvent): Boolean {
             return true
         }
 
-        override fun onFling(e1: MotionEvent?, e2: MotionEvent?, velocityX: Float, velocityY: Float): Boolean {
+        override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
             return false
         }
 
-        override fun onScroll(e1: MotionEvent?, e2: MotionEvent?, distanceX: Float, distanceY: Float): Boolean {
+        override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
             return false
         }
 
-        override fun onLongPress(e: MotionEvent?) {
+        override fun onLongPress(e: MotionEvent) {
 
         }
     })

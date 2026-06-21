@@ -19,10 +19,10 @@ class TextBlockGraphic internal constructor(
         private const val colorNormalRes = android.R.color.black
         private const val alphaNormal = 0.32f
 
-        private const val colorSelectedRes = R.color.primaryTeal
+        private val colorSelectedRes = R.color.primaryTeal
         private const val alphaSelected = 0.3f
 
-        private const val colorHighlightRes = R.color.primaryTeal
+        private val colorHighlightRes = R.color.primaryTeal
         private const val alphaHighlight = 0.3f
 
         private const val CORNER_RADIUS_DP = 2f

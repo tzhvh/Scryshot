@@ -10,8 +10,8 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelProviders
-import kotlinx.coroutines.experimental.Dispatchers
-import kotlinx.coroutines.experimental.withContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.mozilla.scryer.ScryerApplication
 import org.mozilla.scryer.persistence.ScreenshotModel
 import org.mozilla.scryer.repository.ScreenshotRepository
@@ -45,7 +45,7 @@ class ScreenshotViewModel(private val delegate: ScreenshotRepository) : ViewMode
 
 class ScreenshotViewModelFactory(private val repository: ScreenshotRepository)
     : ViewModelProvider.NewInstanceFactory() {
-    override fun <T : ViewModel?> create(modelClass: Class<T>): T {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
         @Suppress("UNCHECKED_CAST")
         return ScreenshotViewModel(repository) as T
     }

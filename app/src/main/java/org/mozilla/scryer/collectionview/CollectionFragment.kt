@@ -26,15 +26,16 @@ import androidx.core.view.ViewCompat
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import kotlinx.android.synthetic.main.dialog_collection_info.view.*
-import kotlinx.android.synthetic.main.dialog_screenshot_info.view.*
-import kotlinx.android.synthetic.main.fragment_collection.*
-import kotlinx.coroutines.experimental.Dispatchers
-import kotlinx.coroutines.experimental.GlobalScope
-import kotlinx.coroutines.experimental.launch
-import kotlinx.coroutines.experimental.withContext
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.mozilla.scryer.*
 import org.mozilla.scryer.Observer
+import org.mozilla.scryer.databinding.DialogCollectionInfoBinding
+import org.mozilla.scryer.databinding.DialogScreenshotInfoBinding
+import org.mozilla.scryer.databinding.FragmentCollectionBinding
 import org.mozilla.scryer.detailpage.DetailPageActivity
 import org.mozilla.scryer.extension.getNavController
 import org.mozilla.scryer.persistence.CollectionModel
@@ -62,6 +63,9 @@ class CollectionFragment : Fragment() {
     private lateinit var screenshotListView: RecyclerView
     private lateinit var subtitleView: TextView
     private lateinit var selectAllCheckbox: AppCompatCheckBox
+
+    private var _binding: FragmentCollectionBinding? = null
+    private val binding get() = _binding!!
 
     private lateinit var screenshotAdapter: ScreenshotAdapter
 
@@ -106,8 +110,10 @@ class CollectionFragment : Fragment() {
             (0 until menu.size()).map {
                 menu.getItem(it)
             }.forEach { item ->
-                item.icon = DrawableCompat.wrap(item.icon).mutate().apply {
-                    DrawableCompat.setTint(this, Color.WHITE)
+                item.icon = item.icon?.let { icon ->
+                    DrawableCompat.wrap(icon).mutate().apply {
+                        DrawableCompat.setTint(this, Color.WHITE)
+                    }
                 }
                 if (selector.selected.isEmpty()) {
                     item.isVisible = false
@@ -129,7 +135,7 @@ class CollectionFragment : Fragment() {
             screenshotAdapter.exitSelectionMode()
             val activity = activity ?: return
 
-            activity.findViewById<View>(R.id.action_mode_bar).visibility = View.INVISIBLE
+            activity.findViewById<View>(androidx.appcompat.R.id.action_mode_bar)?.visibility = View.INVISIBLE
             activity.window?.let {
                 it.statusBarColor = ContextCompat.getColor(activity, R.color.statusBarColor)
             }
@@ -198,11 +204,11 @@ class CollectionFragment : Fragment() {
             inflater: LayoutInflater,
             container: ViewGroup?,
             savedInstanceState: Bundle?
-    ): View? {
-        val layout = inflater.inflate(R.layout.fragment_collection, container, false)
-        screenshotListView = layout.findViewById(R.id.screenshot_list)
-        subtitleView = layout.findViewById(R.id.subtitle)
-        selectAllCheckbox = layout.findViewById(R.id.select_all_checkbox)
+    ): View {
+        _binding = FragmentCollectionBinding.inflate(inflater, container, false)
+        screenshotListView = binding.screenshotList
+        subtitleView = binding.subtitle
+        selectAllCheckbox = binding.selectAllCheckbox
         selectAllCheckbox.setOnClickListener { _ ->
             val isChecked = selectAllCheckbox.isChecked
             selectAllCheckbox.invalidate()
@@ -213,7 +219,12 @@ class CollectionFragment : Fragment() {
             }
             screenshotAdapter.notifyDataSetChanged()
         }
-        return layout
+        return binding.root
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null
     }
 
     override fun onActivityCreated(savedInstanceState: Bundle?) {
@@ -254,10 +265,11 @@ class CollectionFragment : Fragment() {
     private fun setupWindowInsets() {
         val rootView = view ?: return
         ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, insets ->
-            toolbar_holder.setPadding(toolbar_holder.paddingLeft,
+            val holder = _binding?.toolbarHolder
+            holder?.setPadding(holder.paddingLeft,
                     insets.systemWindowInsetTop,
-                    toolbar_holder.paddingRight,
-                    toolbar_holder.paddingBottom)
+                    holder.paddingRight,
+                    holder.paddingBottom)
             view.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight,
                     insets.systemWindowInsetBottom)
             insets
@@ -389,10 +401,10 @@ class CollectionFragment : Fragment() {
             if (screenshots.isNotEmpty()) {
                 subtitleView.visibility = View.VISIBLE
                 subtitleView.text = getString(R.string.collection_separator_shots, screenshots.size)
-                empty_view.visibility = View.GONE
+                _binding?.emptyView?.visibility = View.GONE
             } else {
                 subtitleView.visibility = View.INVISIBLE
-                empty_view.visibility = View.VISIBLE
+                _binding?.emptyView?.visibility = View.VISIBLE
             }
 
             screenshots.sortedByDescending { it.lastModified }.let { sorted ->
@@ -433,14 +445,14 @@ interface OnDeleteCollectionListener {
 }
 
 fun showScreenshotInfoDialog(context: Context, screenshotModel: ScreenshotModel) {
-    val dialogView = LayoutInflater.from(context).inflate(R.layout.dialog_screenshot_info, null as ViewGroup?)
-    dialogView.screenshot_info_name_content.text = getFileNameText(screenshotModel.absolutePath)
-    dialogView.screenshot_info_file_size_amount.text = getFileSizeText(File(screenshotModel.absolutePath).length())
-    dialogView.screenshot_info_last_edit_time.text = getFileDateText(File(screenshotModel.absolutePath).lastModified())
+    val binding = DialogScreenshotInfoBinding.inflate(LayoutInflater.from(context))
+    binding.screenshotInfoNameContent.text = getFileNameText(screenshotModel.absolutePath)
+    binding.screenshotInfoFileSizeAmount.text = getFileSizeText(File(screenshotModel.absolutePath).length())
+    binding.screenshotInfoLastEditTime.text = getFileDateText(File(screenshotModel.absolutePath).lastModified())
 
     AlertDialog.Builder(context)
             .setTitle(context.getString(R.string.info_info))
-            .setView(dialogView)
+            .setView(binding.root)
             .setPositiveButton(context.getString(android.R.string.ok)) {
                 dialog: DialogInterface?, _: Int -> dialog?.dismiss()
             }
@@ -487,6 +499,7 @@ fun showDeleteScreenshotDialog(
     showDeleteScreenshotDialog(context, listOf(screenshotModel), listener)
 }
 
+@OptIn(DelicateCoroutinesApi::class)
 fun showDeleteScreenshotDialog(
         context: Context,
         screenshotModels: List<ScreenshotModel>,
@@ -530,6 +543,7 @@ fun showShareScreenshotDialog(context: Context, screenshotModel: ScreenshotModel
     showShareScreenshotDialog(context, listOf(screenshotModel))
 }
 
+@OptIn(DelicateCoroutinesApi::class)
 fun showShareScreenshotDialog(context: Context, screenshotModels: List<ScreenshotModel>) {
     if (screenshotModels.isEmpty()) {
         return
@@ -561,6 +575,7 @@ fun showShareScreenshotDialog(context: Context, screenshotModels: List<Screensho
     }
 }
 
+@OptIn(DelicateCoroutinesApi::class)
 fun showCollectionInfo(context: Context, viewModel: ScreenshotViewModel, collectionId: String?) {
     GlobalScope.launch(Dispatchers.IO) {
         collectionId ?: return@launch
@@ -593,20 +608,21 @@ private fun showCollectionInfoDialog(
         screenshots: List<ScreenshotModel>,
         totalFileSize: Long
 ) {
-    val dialogView = LayoutInflater.from(context).inflate(R.layout.dialog_collection_info, null as ViewGroup?)
-    dialogView.collection_info_name_content.text = getFileNameText(collection.name)
-    dialogView.collection_info_total_screenshots_count.text = screenshots.size.toString()
-    dialogView.collection_info_storage_used_amount.text = getFileSizeText(totalFileSize)
+    val binding = DialogCollectionInfoBinding.inflate(LayoutInflater.from(context))
+    binding.collectionInfoNameContent.text = getFileNameText(collection.name)
+    binding.collectionInfoTotalScreenshotsCount.text = screenshots.size.toString()
+    binding.collectionInfoStorageUsedAmount.text = getFileSizeText(totalFileSize)
 
     AlertDialog.Builder(context)
             .setTitle(context.getString(R.string.dialogue_collecitioninfo_title_info))
-            .setView(dialogView)
+            .setView(binding.root)
             .setPositiveButton(context.getString(android.R.string.ok)) {
                 dialog: DialogInterface?, _: Int -> dialog?.dismiss()
             }
             .show()
 }
 
+@OptIn(DelicateCoroutinesApi::class)
 fun showDeleteCollectionDialog(
         context: Context,
         viewModel: ScreenshotViewModel,

@@ -24,7 +24,7 @@ import androidx.core.graphics.drawable.DrawableCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProviders
-import kotlinx.coroutines.experimental.*
+import kotlinx.coroutines.*
 import org.mozilla.scryer.Observer
 import org.mozilla.scryer.R
 import org.mozilla.scryer.ScryerApplication
@@ -43,8 +43,9 @@ import org.mozilla.scryer.util.launchIO
 import org.mozilla.scryer.viewmodel.ScreenshotViewModel
 import java.io.File
 import java.util.*
-import kotlin.coroutines.experimental.CoroutineContext
-import kotlin.coroutines.experimental.suspendCoroutine
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
     companion object {
@@ -204,12 +205,13 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
         }
     }
 
-    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.menu_sorting_panel, menu)
 
-        if (menu != null) {
-            menu.findItem(R.id.action_share)?.let {
-                val wrapped = DrawableCompat.wrap(it.icon).mutate()
+        menu.findItem(R.id.action_share)?.let {
+            val icon = it.icon
+            if (icon != null) {
+                val wrapped = DrawableCompat.wrap(icon).mutate()
                 DrawableCompat.setTint(wrapped, ContextCompat.getColor(this, R.color.white))
             }
         }
@@ -217,8 +219,8 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
         return true
     }
 
-    override fun onOptionsItemSelected(item: MenuItem?): Boolean {
-        when (item?.itemId) {
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        when (item.itemId) {
             R.id.action_share -> {
                 currentScreenshot?.let { showShareScreenshotDialog(this, it) }
             }
@@ -377,14 +379,14 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
         }
         collectionId = null
 
-        GlobalScope.launch(Dispatchers.Main) {
+        launch(Dispatchers.Main) {
             when {
                 intent.hasExtra(EXTRA_PATH) -> {
                     loadNewScreenshot(getFilePath(intent))
                 }
 
                 intent.hasExtra(EXTRA_SCREENSHOT_ID) -> {
-                    loadOldScreenshot(intent.getStringExtra(EXTRA_SCREENSHOT_ID))
+                    intent.getStringExtra(EXTRA_SCREENSHOT_ID)?.let { loadOldScreenshot(it) }
                 }
 
                 intent.hasExtra(EXTRA_COLLECTION_ID) -> {
@@ -511,7 +513,7 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
     }
 
     private fun onCollectionClickStart(collection: CollectionModel) {
-        GlobalScope.launch(Dispatchers.Main.immediate) {
+        launch(Dispatchers.Main.immediate) {
             val screenshot = currentScreenshot ?: return@launch
 
             if (SuggestCollectionHelper.isSuggestCollection(collection)) {

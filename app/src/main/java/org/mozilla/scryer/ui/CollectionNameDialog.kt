@@ -11,10 +11,11 @@ import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.DrawableCompat
-import kotlinx.coroutines.experimental.Dispatchers
-import kotlinx.coroutines.experimental.GlobalScope
-import kotlinx.coroutines.experimental.launch
-import kotlinx.coroutines.experimental.withContext
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.mozilla.scryer.R
 import org.mozilla.scryer.persistence.CollectionModel
 import org.mozilla.scryer.util.CollectionListHelper
@@ -25,6 +26,7 @@ import java.util.*
 class CollectionNameDialog(private val context: Context,
                            private val delegate: Delegate) {
 
+    @OptIn(DelicateCoroutinesApi::class)
     companion object {
         /**
          * @param excludeSuggestion: whether to take suggest collection names into consideration when
@@ -211,7 +213,8 @@ class CollectionNameDialog(private val context: Context,
     }
 
     private fun createDialog(): AlertDialog {
-        return AlertDialog.Builder(context, R.style.Theme_AppCompat_Light_Dialog_Alert)
+        // TODO(tier5/material3): re-apply an explicit light dialog theme once Material 3 lands (issue 28).
+        return AlertDialog.Builder(context)
                 .setPositiveButton(delegate.getPositiveButtonText()) { _, _ ->
                     if (inputName == originalName) {
                         delegate.onNegativeAction()

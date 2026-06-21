@@ -228,7 +228,7 @@ class ScreenshotItemHolder(
         }
     }
 
-    override fun onMenuItemClick(item: MenuItem?): Boolean {
+    override fun onMenuItemClick(item: MenuItem): Boolean {
         onContextMenuActionListener.onContextMenuAction(item, adapterPosition)
         return false
     }

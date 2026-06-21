@@ -14,7 +14,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.DrawableCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
-import kotlinx.android.synthetic.main.item_quick_access.view.*
+import com.airbnb.lottie.LottieAnimationView
 import org.mozilla.scryer.R
 import org.mozilla.scryer.collectionview.*
 import org.mozilla.scryer.extension.getValidPosition
@@ -127,22 +127,22 @@ class QuickAccessAdapter(
             }
 
             if (shouldPlayOcrHint(this)) {
-                holder.itemView.ocr_onboarding_hint.visibility = View.VISIBLE
+                holder.itemView.findViewById<LottieAnimationView>(R.id.ocr_onboarding_hint).visibility = View.VISIBLE
             } else {
-                holder.itemView.ocr_onboarding_hint.visibility = View.GONE
+                holder.itemView.findViewById<LottieAnimationView>(R.id.ocr_onboarding_hint).visibility = View.GONE
             }
 
             // TODO: RecyclerView will temporarily detach child view during
             // onLayoutChildren(this happens after onBindViewHolder), making
             // LottieAnimationView stop the animation.
             holder.itemView.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-                override fun onViewAttachedToWindow(v: View?) {
+                override fun onViewAttachedToWindow(v: View) {
                     if (shouldPlayOcrHint(this@apply)) {
-                        holder.itemView.ocr_onboarding_hint.playAnimation()
+                        holder.itemView.findViewById<LottieAnimationView>(R.id.ocr_onboarding_hint).playAnimation()
                     }
                 }
 
-                override fun onViewDetachedFromWindow(v: View?) {
+                override fun onViewDetachedFromWindow(v: View) {
                     // LottieAnimationView will stop animation once being detached, no need to call
                     // cancelAnimation()
                 }

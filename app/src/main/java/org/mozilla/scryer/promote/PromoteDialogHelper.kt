@@ -7,10 +7,8 @@ package org.mozilla.scryer.promote
 import android.content.Context
 import android.graphics.drawable.Drawable
 import androidx.appcompat.app.AlertDialog
-import android.view.View
-import android.widget.ImageView
-import kotlinx.android.synthetic.main.dialog_promote.view.*
-import org.mozilla.scryer.R
+import android.view.LayoutInflater
+import org.mozilla.scryer.databinding.DialogPromoteBinding
 
 class PromoteDialogHelper {
     companion object {
@@ -25,27 +23,26 @@ class PromoteDialogHelper {
                 negativeListener: () -> Unit
         ): AlertDialog {
             val dialog = AlertDialog.Builder(context).create()
-            val dialogView = View.inflate(context, R.layout.dialog_promote, null).let {
-                it.title.text = title
-                it.subtitle.text = subtitle
-                drawable?.let { image ->
-                    it.findViewById<ImageView>(R.id.image).setImageDrawable(image)
+            val binding = DialogPromoteBinding.inflate(LayoutInflater.from(context)).apply {
+                this.title.text = title
+                this.subtitle.text = subtitle
+                drawable?.let { d ->
+                    image.setImageDrawable(d)
                 }
 
-                it.positive_button.text = positiveText
-                it.positive_button.setOnClickListener { _ ->
+                positiveButton.text = positiveText
+                positiveButton.setOnClickListener { _ ->
                     dialog.dismiss()
                     positiveListener.invoke()
                 }
 
-                it.negative_button.text = negativeText
-                it.negative_button.setOnClickListener { _ ->
+                negativeButton.text = negativeText
+                negativeButton.setOnClickListener { _ ->
                     dialog.dismiss()
                     negativeListener.invoke()
                 }
-                it
             }
-            dialog.setView(dialogView)
+            dialog.setView(binding.root)
             return dialog
         }
     }

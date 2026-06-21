@@ -5,12 +5,12 @@
 package org.mozilla.scryer.scan
 
 import android.content.Context
-import androidx.concurrent.futures.ResolvableFuture
 import androidx.work.ListenableWorker
 import androidx.work.WorkerParameters
+import androidx.work.impl.utils.futures.SettableFuture
 import com.google.common.util.concurrent.ListenableFuture
-import kotlinx.coroutines.experimental.*
-import kotlin.coroutines.experimental.CoroutineContext
+import kotlinx.coroutines.*
+import kotlin.coroutines.CoroutineContext
 
 class BackgroundScanner(
         context: Context,
@@ -23,7 +23,7 @@ class BackgroundScanner(
         get() = Dispatchers.Default + workerJob + CoroutineExceptionHandler { _, _ -> }
 
     override fun startWork(): ListenableFuture<Result> {
-        val future = ResolvableFuture.create<Result>()
+        val future = SettableFuture.create<Result>()
 
         launch {
             FirebaseVisionTextHelper.scanAndSave()

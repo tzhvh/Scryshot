@@ -7,7 +7,6 @@
 package org.mozilla.scryer.persistence
 
 import androidx.room.*
-import androidx.room.ForeignKey.CASCADE
 import java.util.*
 
 @Entity(tableName = "screenshot_content",
@@ -15,7 +14,7 @@ import java.util.*
                 entity = ScreenshotModel::class,
                 parentColumns = ["id"],
                 childColumns = ["id"],
-                onDelete = CASCADE))])
+                onDelete = ForeignKey.CASCADE))])
 data class ScreenshotContentModel constructor (
         @PrimaryKey(autoGenerate = false) var id: String,
         @ColumnInfo(name = "content_text") var contentText: String? = null

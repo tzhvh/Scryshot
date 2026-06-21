@@ -135,7 +135,7 @@ class CaptureButtonController(private val context: Context) {
                     animator.duration = 200
                     animator.interpolator = AccelerateInterpolator()
                     animator.setListener(object : AnimatorListenerAdapter() {
-                        override fun onAnimationEnd(animation: Animator?) {
+                        override fun onAnimationEnd(animation: Animator) {
                             clickListener?.onScreenshotButtonDismissed()
                         }
                     })

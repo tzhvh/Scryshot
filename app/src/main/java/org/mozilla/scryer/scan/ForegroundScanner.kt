@@ -8,16 +8,14 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.Observer
 import com.google.firebase.ml.common.FirebaseMLException
-import kotlinx.coroutines.experimental.CoroutineScope
-import kotlinx.coroutines.experimental.Dispatchers
-import kotlinx.coroutines.experimental.Job
-import kotlinx.coroutines.experimental.channels.Channel
-import kotlinx.coroutines.experimental.channels.SendChannel
-import kotlinx.coroutines.experimental.channels.actor
-import kotlinx.coroutines.experimental.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import org.mozilla.scryer.ScryerApplication
 import org.mozilla.scryer.persistence.ScreenshotModel
-import kotlin.coroutines.experimental.CoroutineContext
+import kotlin.coroutines.CoroutineContext
 
 class ForegroundScanner : CoroutineScope {
 
@@ -34,7 +32,10 @@ class ForegroundScanner : CoroutineScope {
     private val parentJob = Job()
     private var scanJob: Job? = null
     private var isScanning = false
-    private var scanActor: SendChannel<Unit>? = null
+    // Conflated channel preserves the "drop intermediate triggers, run at most
+    // one outstanding scan" semantics of the old `actor` builder (removed in
+    // coroutines 1.0). A launch consumer drains it; closing/cancelling stops both.
+    private var scanChannel: Channel<Unit>? = null
 
     override val coroutineContext: CoroutineContext
         get() = Dispatchers.Default + parentJob
@@ -64,14 +65,9 @@ class ForegroundScanner : CoroutineScope {
     }
 
     private fun prepareScan() {
-        val scanJob = Job(parentJob).apply {
-            scanJob = this
-        }
-
-        scanActor = actor(
-                context = scanJob + Dispatchers.Main,
-                capacity = Channel.CONFLATED
-        ) {
+        val channel = Channel<Unit>(Channel.CONFLATED)
+        scanChannel = channel
+        scanJob = launch(Dispatchers.Main) {
             for (msg in channel) {
                 scan()
             }
@@ -107,13 +103,11 @@ class ForegroundScanner : CoroutineScope {
 
     private fun cancelScan() {
         isScanning = false
-        scanActor?.close()
+        scanChannel?.close()
         scanJob?.cancel()
     }
 
     private fun scheduleForegroundScan() {
-        launch {
-            scanActor?.send(Unit)
-        }
+        scanChannel?.trySend(Unit)
     }
 }

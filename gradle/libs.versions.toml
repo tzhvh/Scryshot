@@ -1,0 +1,103 @@
+# Version catalog — single source of truth for dependency versions.
+# Replaces the old buildSrc/Dependencies.kt. Issue 08 (Tier 1 toolchain).
+#
+# Note: many of these are still pinned at their 2018 versions. Bumps land in
+# Tier 2 (issues 12-19) — do NOT bump them here unless a toolchain/API forces it.
+
+[versions]
+# Toolchain
+agp = "8.7.3"
+kotlin = "2.1.0"
+kotlinCoroutines = "1.9.0"  # bumped from 0.30.2 by issue 08; deletes the .experimental package
+
+# AndroidX (mostly 2018 pins; Tier 2 bumps these)
+appCompat = "1.1.0-alpha01"
+material = "1.1.0-alpha02"
+recyclerView = "1.1.0-alpha01"
+transition = "1.1.0-alpha01"
+media = "1.1.0-alpha01"
+constraintLayout = "2.0.0-alpha3"
+ktx = "1.0.1"
+supportLegacy = "1.0.0"  # legacy-support-v4 / legacy-preference-v14 — Tier 2 (issue 18) replaces these
+
+# Lifecycle / Room / Navigation / Work (2018 pins; Tier 2)
+lifecycle = "2.1.0-alpha01"
+# Room 2.1.0-alpha03's compiler can't read Kotlin 2.1 metadata (crashes in kapt
+# with KotlinNullPointerException reading parameter names). Bumped to 2.6.1 —
+# the minimum that handles Kotlin 2.x metadata. kapt→KSP migration is issue 16.
+room = "2.6.1"
+navigation = "1.0.0-alpha05"  # android.arch group; issue 14 moves to androidx
+work = "1.0.0-beta05"        # android.arch group; issue 15 moves to androidx
+
+# Firebase (Tier 2 — ML Kit OCR migration in issue 12, BoM in 13)
+firebaseMlVision = "18.0.2"
+
+# Test
+junit = "4.13.2"
+testRunner = "1.6.2"
+espresso = "3.6.1"
+mockito = "5.12.0"
+
+# 3rd party
+glide = "4.7.1"
+subsamplingImageView = "3.10.0"
+lottie = "2.7.0"
+betterLinkMovementMethod = "2.2.0"
+
+[libraries]
+# AndroidX
+appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appCompat" }
+material = { module = "com.google.android.material:material", version.ref = "material" }
+cardview = { module = "androidx.cardview:cardview", version.ref = "supportLegacy" }
+recyclerview = { module = "androidx.recyclerview:recyclerview", version.ref = "recyclerView" }
+transition = { module = "androidx.transition:transition", version.ref = "transition" }
+legacy-preference-v14 = { module = "androidx.legacy:legacy-preference-v14", version.ref = "supportLegacy" }
+media = { module = "androidx.media:media", version.ref = "media" }
+legacy-support-v4 = { module = "androidx.legacy:legacy-support-v4", version.ref = "supportLegacy" }
+constraintlayout = { module = "androidx.constraintlayout:constraintlayout", version.ref = "constraintLayout" }
+
+# KTX
+core-ktx = { module = "androidx.core:core-ktx", version.ref = "ktx" }
+
+# Lifecycle (issue 17 drops lifecycle-extensions)
+lifecycle-common-java8 = { module = "androidx.lifecycle:lifecycle-common-java8", version.ref = "lifecycle" }
+lifecycle-extensions = { module = "androidx.lifecycle:lifecycle-extensions", version.ref = "lifecycle" }
+
+# Navigation (issue 14 moves to androidx group)
+navigation-ui = { module = "android.arch.navigation:navigation-ui", version.ref = "navigation" }
+navigation-fragment = { module = "android.arch.navigation:navigation-fragment", version.ref = "navigation" }
+
+# Room (issue 16 bumps version + kapt→KSP)
+room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+
+# WorkManager (issue 15 moves to androidx group)
+work-runtime = { module = "android.arch.work:work-runtime", version.ref = "work" }
+
+# Kotlin
+kotlin-stdlib-jdk8 = { module = "org.jetbrains.kotlin:kotlin-stdlib-jdk8", version.ref = "kotlin" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinCoroutines" }
+
+# Firebase (Tier 2)
+firebase-ml-vision = { module = "com.google.firebase:firebase-ml-vision", version.ref = "firebaseMlVision" }
+
+# Glide / images
+glide = { module = "com.github.bumptech.glide:glide", version.ref = "glide" }
+subsampling-scale-image-view = { module = "com.davemorrissey.labs:subsampling-scale-image-view", version.ref = "subsamplingImageView" }
+
+# Lottie
+lottie = { module = "com.airbnb.android:lottie", version.ref = "lottie" }
+
+# BetterLinkMovementMethod
+better-link-movement-method = { module = "me.saket:better-link-movement-method", version.ref = "betterLinkMovementMethod" }
+
+# Test
+junit = { module = "junit:junit", version.ref = "junit" }
+test-runner = { module = "androidx.test:runner", version.ref = "testRunner" }
+espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso" }
+mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockito" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-kapt = { id = "org.jetbrains.kotlin.kapt", version.ref = "kotlin" }

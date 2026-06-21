@@ -17,8 +17,10 @@ class ScryerToast(private val context: Context) {
         fun makeText(context: Context, text: String, duration: Int): Toast {
             val toast = Toast(context)
             toast.setGravity(Gravity.FILL_HORIZONTAL or Gravity.BOTTOM, 0, 0)
+            @Suppress("DEPRECATION")
             toast.view = View.inflate(context, R.layout.view_custom_toast, null)
-            toast.view.findViewById<TextView>(R.id.text)?.text = text
+            @Suppress("DEPRECATION")
+            toast.view?.findViewById<TextView>(R.id.text)?.text = text
             toast.duration = duration
             return toast
         }

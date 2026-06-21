@@ -35,11 +35,10 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialog
-import kotlinx.android.synthetic.main.fragment_home.*
-import kotlinx.android.synthetic.main.fragment_home.view.*
-import kotlinx.android.synthetic.main.view_quick_access.view.*
-import kotlinx.coroutines.experimental.*
+import kotlinx.coroutines.*
 import org.mozilla.scryer.*
+import org.mozilla.scryer.databinding.FragmentHomeBinding
+import org.mozilla.scryer.databinding.ViewQuickAccessBinding
 import org.mozilla.scryer.collectionview.ScreenshotItemHolder
 import org.mozilla.scryer.detailpage.DetailPageActivity
 import org.mozilla.scryer.detailpage.GraphicOverlay
@@ -62,7 +61,7 @@ import org.mozilla.scryer.util.launchIO
 import org.mozilla.scryer.viewmodel.ScreenshotViewModel
 import java.io.File
 import java.util.*
-import kotlin.coroutines.experimental.CoroutineContext
+import kotlin.coroutines.CoroutineContext
 
 class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
 
@@ -82,7 +81,11 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         get() = Dispatchers.Main + fragmentJob
 
     private var quickAccessContainer: ViewGroup? = null
+    private var quickAccessBinding: ViewQuickAccessBinding? = null
     private var quickAccessAdapter: QuickAccessAdapter? = null
+
+    private var _binding: FragmentHomeBinding? = null
+    private val binding get() = _binding!!
 
     private var mainAdapter: MainAdapter? = null
 
@@ -106,17 +109,14 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
             inflater: LayoutInflater,
             container: ViewGroup?,
             savedInstanceState: Bundle?
-    ): View? {
+    ): View {
         mainAdapter = MainAdapter(this)
         quickAccessAdapter = QuickAccessAdapter(context)
 
-        val layout = inflater.inflate(R.layout.fragment_home, container, false)
-        quickAccessContainer = View.inflate(
-                inflater.context,
-                R.layout.view_quick_access,
-                null
-        ) as ViewGroup
-        return layout
+        _binding = FragmentHomeBinding.inflate(inflater, container, false)
+        quickAccessBinding = ViewQuickAccessBinding.inflate(inflater)
+        quickAccessContainer = quickAccessBinding?.root as ViewGroup
+        return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -145,6 +145,8 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         mainAdapter = null
         quickAccessAdapter = null
         quickAccessContainer = null
+        quickAccessBinding = null
+        _binding = null
         super.onDestroyView()
     }
 
@@ -384,30 +386,32 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         activity?.window?.let {
             it.statusBarColor = ContextCompat.getColor(context!!, R.color.detail_onboarding_overlay)
         }
-        onboarding_view.visibility = View.VISIBLE
-        onboarding_view.setOnClickListener {
-            activity?.window?.let {
-                it.statusBarColor = Color.TRANSPARENT
+        _binding?.let { b ->
+            b.onboardingView.visibility = View.VISIBLE
+            b.onboardingView.setOnClickListener {
+                activity?.window?.let {
+                    it.statusBarColor = Color.TRANSPARENT
+                }
+                (b.onboardingView.parent as ViewGroup).removeView(b.onboardingView)
             }
-            (onboarding_view.parent as ViewGroup).removeView(onboarding_view)
+
+            b.onboardingOverlay.overlayMode = GraphicOverlay.MODE_HIGHLIGHT
+            b.onboardingOverlay.overlayColor = ContextCompat.getColor(context!!, R.color.detail_onboarding_overlay)
+            b.onboardingOverlay.add(object : GraphicOverlay.Graphic(b.onboardingOverlay) {
+                private val spotlightPaint: Paint = Paint().apply {
+                    xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+                }
+
+                override fun draw(canvas: Canvas) {
+                    val radius = b.toolbar.height + resources.getDimensionPixelSize(R.dimen.common_padding_12dp)
+
+                    canvas.drawCircle(0f,
+                            0f,
+                            radius.toFloat(),
+                            spotlightPaint)
+                }
+            })
         }
-
-        onboarding_overlay.overlayMode = GraphicOverlay.MODE_HIGHLIGHT
-        onboarding_overlay.overlayColor = ContextCompat.getColor(context!!, R.color.detail_onboarding_overlay)
-        onboarding_overlay.add(object : GraphicOverlay.Graphic(onboarding_overlay) {
-            private val spotlightPaint: Paint = Paint().apply {
-                xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
-            }
-
-            override fun draw(canvas: Canvas) {
-                val radius = toolbar.height + resources.getDimensionPixelSize(R.dimen.common_padding_12dp)
-
-                canvas.drawCircle(0f,
-                        0f,
-                        radius.toFloat(),
-                        spotlightPaint)
-            }
-        })
 
         pref?.setSearchOnboardingShown()
     }
@@ -431,7 +435,7 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         val searchView = view!!.findViewById<SearchView>(R.id.search_view)//searchItem.actionView as SearchView
         searchView.setIconifiedByDefault(false)
         searchView.maxWidth = resources.displayMetrics.widthPixels
-        searchView.findViewById<View>(R.id.search_plate)?.setBackgroundColor(Color.TRANSPARENT)
+        searchView.findViewById<View>(androidx.appcompat.R.id.search_plate)?.setBackgroundColor(Color.TRANSPARENT)
         searchView.isFocusableInTouchMode = false
         searchView.isClickable = false
 
@@ -499,7 +503,7 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
             }
         }
 
-        quickAccessContainer?.list_view?.apply {
+        quickAccessBinding?.listView?.apply {
             layoutManager = LinearLayoutManager(context, LinearLayoutManager.HORIZONTAL, false)
             adapter = quickAccessAdapter
 
@@ -538,15 +542,15 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         val manager = GridLayoutManager(context, COLLECTION_COLUMN_COUNT,
                 RecyclerView.VERTICAL, false)
         manager.spanSizeLookup = MainAdapter.SpanSizeLookup(COLLECTION_COLUMN_COUNT)
-        root_view.main_list.layoutManager = manager
+        binding.mainList.layoutManager = manager
 
         quickAccessContainer?.let {
             mainAdapter?.quickAccessContainer = it
         }
-        root_view.main_list.adapter = mainAdapter
+        binding.mainList.adapter = mainAdapter
 
         val spaceOuter = resources.getDimensionPixelSize(R.dimen.home_horizontal_padding)
-        root_view.main_list.addItemDecoration(MainAdapter.ItemDecoration(context,
+        binding.mainList.addItemDecoration(MainAdapter.ItemDecoration(context,
                 COLLECTION_COLUMN_COUNT,
                 spaceOuter,
                 0))
@@ -578,7 +582,7 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
     }
 
     private fun updateQuickAccessListView(screenshots: List<ScreenshotModel>) {
-        quickAccessContainer?.empty_view_group?.visibility = if (screenshots.isEmpty()) {
+        quickAccessBinding?.emptyViewGroup?.visibility = if (screenshots.isEmpty()) {
             View.VISIBLE
         } else {
             View.INVISIBLE

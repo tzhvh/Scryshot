@@ -74,7 +74,7 @@ class FloatingView(context: Context) : FrameLayout(context) {
                     }
                 }
         animator.setListener(object : AnimatorListenerAdapter() {
-            override fun onAnimationEnd(animation: Animator?) {
+            override fun onAnimationEnd(animation: Animator) {
                 dock.updatePosition(self.x.toInt(), self.y.toInt())
             }
         })

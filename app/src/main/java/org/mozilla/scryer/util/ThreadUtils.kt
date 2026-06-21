@@ -6,7 +6,7 @@
 package org.mozilla.scryer.util
 
 import android.os.Looper
-import kotlinx.coroutines.experimental.*
+import kotlinx.coroutines.*
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.atomic.AtomicInteger
@@ -43,6 +43,13 @@ object ThreadUtils {
     }
 }
 
+/**
+ * Fire-and-forget launch on the IO dispatcher. Used from call sites with no
+ * natural lifecycle scope (repositories, dialogs). [GlobalScope] is intentional
+ * here — these are short, self-contained background jobs (db writes, file ops)
+ * whose lifetime isn't tied to a specific Android component.
+ */
+@OptIn(DelicateCoroutinesApi::class)
 fun launchIO(block: suspend CoroutineScope.() -> Unit) {
     GlobalScope.launch(Dispatchers.IO) {
         block(this)

@@ -80,7 +80,7 @@ class ScreenshotFetcher {
         val results = mutableListOf<ScreenshotModel>()
 
         File(dirPath).listFiles()?.filter { file ->
-            isExtSupported(file.name.toLowerCase())
+            isExtSupported(file.name.lowercase())
 
         }?.forEach {
             val model = ScreenshotModel(it.absolutePath, it.lastModified(),

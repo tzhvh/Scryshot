@@ -15,8 +15,9 @@ import androidx.appcompat.app.ActionBar
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Observer
 import androidx.lifecycle.ViewModelProviders
-import kotlinx.android.synthetic.main.activity_main.*
+import org.mozilla.scryer.databinding.ActivityMainBinding
 import org.mozilla.scryer.permission.PermissionViewModel
 import org.mozilla.scryer.preference.PreferenceWrapper
 import org.mozilla.scryer.scan.ContentScanner
@@ -28,6 +29,8 @@ class MainActivity : AppCompatActivity() {
         const val REQUEST_CODE_WRITE_EXTERNAL_PERMISSION = 1001
     }
 
+    private lateinit var binding: ActivityMainBinding
+
     private val prefs: PreferenceWrapper by lazy {
         PreferenceWrapper(this)
     }
@@ -36,7 +39,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
         isFirstTimeLaunched = prefs.isFirstTimeLaunch()
         if (isFirstTimeLaunched) {
             prefs.setFirstTimeLaunched()
@@ -54,7 +58,7 @@ class MainActivity : AppCompatActivity() {
 
 
         if (BuildConfig.DEBUG) {
-            scan_progress_bar.visibility = View.VISIBLE
+            binding.scanProgressBar.visibility = View.VISIBLE
             ScryerApplication.getContentScanner().getProgressState().observe(this, Observer {
                 if (it is ContentScanner.ProgressState.Progress) {
                     updateDebugProgress(it)
@@ -73,12 +77,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateDebugProgress(progress: ContentScanner.ProgressState.Progress) {
-        scan_progress_bar.progress = if (progress.current == progress.total) {
+        binding.scanProgressBar.progress = if (progress.current == progress.total) {
             100
         } else {
             (100 * progress.current / progress.total.toFloat()).toInt()
         }
-        scan_progress_bar.visibility = if (scan_progress_bar.progress == 100) {
+        binding.scanProgressBar.visibility = if (binding.scanProgressBar.progress == 100) {
             View.GONE
         } else {
             View.VISIBLE

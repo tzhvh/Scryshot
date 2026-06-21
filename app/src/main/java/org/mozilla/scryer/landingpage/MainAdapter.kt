@@ -293,7 +293,7 @@ class MainAdapter(private val fragment: Fragment?): RecyclerView.Adapter<Recycle
 
         }
 
-        override fun onMenuItemClick(item: MenuItem?): Boolean {
+        override fun onMenuItemClick(item: MenuItem): Boolean {
             onContextMenuActionListener.onContextMenuAction(item, adapterPosition)
             return false
         }

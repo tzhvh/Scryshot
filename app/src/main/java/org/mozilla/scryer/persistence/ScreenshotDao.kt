@@ -7,7 +7,7 @@ package org.mozilla.scryer.persistence
 
 import androidx.lifecycle.LiveData
 import androidx.room.*
-import androidx.room.OnConflictStrategy.REPLACE
+import androidx.room.OnConflictStrategy.Companion.REPLACE
 import androidx.sqlite.db.SimpleSQLiteQuery
 
 @Dao
@@ -26,7 +26,7 @@ interface ScreenshotDao {
     @Query("SELECT * FROM screenshot WHERE collection_id IN(:collectionIds)")
     fun getScreenshotList(collectionIds: List<String>): List<ScreenshotModel>
 
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    @Insert(onConflict = OnConflictStrategy.Companion.IGNORE)
     fun addScreenshot(screenshot: List<ScreenshotModel>)
 
     @Update(onConflict = REPLACE)
