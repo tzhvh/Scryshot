@@ -1,33 +1,36 @@
 # Version catalog — single source of truth for dependency versions.
 # Replaces the old buildSrc/Dependencies.kt. Issue 08 (Tier 1 toolchain).
 #
-# Note: many of these are still pinned at their 2018 versions. Bumps land in
-# Tier 2 (issues 12-19) — do NOT bump them here unless a toolchain/API forces it.
+# Tier 2 (issues 14-19): bumped all AndroidX + 3rd-party deps to current stable.
 
 [versions]
 # Toolchain
 agp = "8.7.3"
 kotlin = "2.1.0"
 kotlinCoroutines = "1.9.0"  # bumped from 0.30.2 by issue 08; deletes the .experimental package
+ksp = "2.1.0-1.0.29"       # matched to Kotlin 2.1.0 (issue 16)
 
-# AndroidX (mostly 2018 pins; Tier 2 bumps these)
-appCompat = "1.1.0-alpha01"
-material = "1.1.0-alpha02"
-recyclerView = "1.1.0-alpha01"
-transition = "1.1.0-alpha01"
-media = "1.1.0-alpha01"
-constraintLayout = "2.0.0-alpha3"
-ktx = "1.0.1"
-supportLegacy = "1.0.0"  # legacy-support-v4 / legacy-preference-v14 — Tier 2 (issue 18) replaces these
+# AndroidX (Tier 2 bumps — issues 17-18)
+appCompat = "1.7.0"
+material = "1.12.0"
+recyclerView = "1.4.0"
+transition = "1.5.1"
+media = "1.7.0"
+constraintLayout = "2.2.0"
+coreKtx = "1.15.0"
+preference = "1.2.1"
 
-# Lifecycle / Room / Navigation / Work (2018 pins; Tier 2)
-lifecycle = "2.1.0-alpha01"
-# Room 2.1.0-alpha03's compiler can't read Kotlin 2.1 metadata (crashes in kapt
-# with KotlinNullPointerException reading parameter names). Bumped to 2.6.1 —
-# the minimum that handles Kotlin 2.x metadata. kapt→KSP migration is issue 16.
+# Lifecycle (Tier 2 — issue 17)
+lifecycle = "2.8.7"
+
+# Room (Tier 2 — issue 16: bumped to 2.6.1 in 08 for Kotlin 2.x compat, still valid)
 room = "2.6.1"
-navigation = "1.0.0-alpha05"  # android.arch group; issue 14 moves to androidx
-work = "1.0.0-beta05"        # android.arch group; issue 15 moves to androidx
+
+# Navigation (Tier 2 — issue 14: moved to androidx group)
+navigation = "2.8.5"
+
+# WorkManager (Tier 2 — issue 15: moved to androidx group)
+work = "2.10.0"
 
 # ML Kit (Tier 2 — OCR migration in issue 12)
 mlkitTextRecognition = "16.0.1"
@@ -38,41 +41,42 @@ testRunner = "1.6.2"
 espresso = "3.6.1"
 mockito = "5.12.0"
 
-# 3rd party
-glide = "4.7.1"
+# 3rd party (Tier 2 — issue 19)
+glide = "4.16.0"
 subsamplingImageView = "3.10.0"
-lottie = "2.7.0"
+lottie = "6.6.0"
 betterLinkMovementMethod = "2.2.0"
 
 [libraries]
 # AndroidX
 appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appCompat" }
 material = { module = "com.google.android.material:material", version.ref = "material" }
-cardview = { module = "androidx.cardview:cardview", version.ref = "supportLegacy" }
 recyclerview = { module = "androidx.recyclerview:recyclerview", version.ref = "recyclerView" }
 transition = { module = "androidx.transition:transition", version.ref = "transition" }
-legacy-preference-v14 = { module = "androidx.legacy:legacy-preference-v14", version.ref = "supportLegacy" }
 media = { module = "androidx.media:media", version.ref = "media" }
-legacy-support-v4 = { module = "androidx.legacy:legacy-support-v4", version.ref = "supportLegacy" }
 constraintlayout = { module = "androidx.constraintlayout:constraintlayout", version.ref = "constraintLayout" }
+preference = { module = "androidx.preference:preference", version.ref = "preference" }
 
 # KTX
-core-ktx = { module = "androidx.core:core-ktx", version.ref = "ktx" }
+core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
 
-# Lifecycle (issue 17 drops lifecycle-extensions)
+# Lifecycle (issue 17: dropped lifecycle-extensions, added runtime-ktx + viewmodel-ktx + livedata-ktx + process)
 lifecycle-common-java8 = { module = "androidx.lifecycle:lifecycle-common-java8", version.ref = "lifecycle" }
-lifecycle-extensions = { module = "androidx.lifecycle:lifecycle-extensions", version.ref = "lifecycle" }
+lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }
+lifecycle-viewmodel-ktx = { module = "androidx.lifecycle:lifecycle-viewmodel-ktx", version.ref = "lifecycle" }
+lifecycle-livedata-ktx = { module = "androidx.lifecycle:lifecycle-livedata-ktx", version.ref = "lifecycle" }
+lifecycle-process = { module = "androidx.lifecycle:lifecycle-process", version.ref = "lifecycle" }
 
-# Navigation (issue 14 moves to androidx group)
-navigation-ui = { module = "android.arch.navigation:navigation-ui", version.ref = "navigation" }
-navigation-fragment = { module = "android.arch.navigation:navigation-fragment", version.ref = "navigation" }
+# Navigation (issue 14: moved to androidx group with -ktx variants)
+navigation-ui-ktx = { module = "androidx.navigation:navigation-ui-ktx", version.ref = "navigation" }
+navigation-fragment-ktx = { module = "androidx.navigation:navigation-fragment-ktx", version.ref = "navigation" }
 
-# Room (issue 16 bumps version + kapt→KSP)
+# Room (issue 16: kapt→KSP)
 room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 
-# WorkManager (issue 15 moves to androidx group)
-work-runtime = { module = "android.arch.work:work-runtime", version.ref = "work" }
+# WorkManager (issue 15: moved to androidx group with -ktx variant)
+work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
 
 # Kotlin
 kotlin-stdlib-jdk8 = { module = "org.jetbrains.kotlin:kotlin-stdlib-jdk8", version.ref = "kotlin" }
@@ -101,3 +105,4 @@ mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockito" }
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-kapt = { id = "org.jetbrains.kotlin.kapt", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

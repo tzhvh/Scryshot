@@ -27,7 +27,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.Observer
-import androidx.lifecycle.ViewModelProviders
+import androidx.lifecycle.ViewModelProvider
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.navigation.Navigation
 import androidx.preference.PreferenceManager
@@ -231,7 +231,7 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
     private fun showStoragePermissionView(view: View, action: Runnable) {
         val activity = activity?: return
 
-        val model = ViewModelProviders.of(activity).get(PermissionViewModel::class.java)
+        val model = ViewModelProvider(activity).get(PermissionViewModel::class.java)
         model.permissionRequest.observe(this, EventObserver {
             permissionFlow.onPermissionResult(MainActivity.REQUEST_CODE_WRITE_EXTERNAL_PERMISSION, it)
         })
@@ -482,7 +482,7 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
 
     private fun <T> LiveData<T>.observeOnce(observer: Observer<T>) {
         observeForever(object : Observer<T> {
-            override fun onChanged(t: T?) {
+            override fun onChanged(t: T) {
                 removeObserver(this)
                 observer.onChanged(t)
             }

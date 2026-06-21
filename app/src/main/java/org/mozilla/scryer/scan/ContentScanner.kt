@@ -5,7 +5,7 @@
 package org.mozilla.scryer.scan
 
 import androidx.lifecycle.LiveData
-import androidx.lifecycle.Transformations
+import androidx.lifecycle.map
 
 class ContentScanner {
     companion object {
@@ -24,7 +24,7 @@ class ContentScanner {
     }
 
     fun getProgress(): LiveData<Pair<Int, Int>> {
-        return Transformations.map(plan.getProgressState()) {
+        return plan.getProgressState().map {
             if (it is ProgressState.Progress) {
                 Pair(it.current, it.total)
             } else {

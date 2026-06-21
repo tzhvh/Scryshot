@@ -16,7 +16,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Observer
-import androidx.lifecycle.ViewModelProviders
+import androidx.lifecycle.ViewModelProvider
 import org.mozilla.scryer.databinding.ActivityMainBinding
 import org.mozilla.scryer.permission.PermissionViewModel
 import org.mozilla.scryer.preference.PreferenceWrapper
@@ -72,7 +72,7 @@ class MainActivity : AppCompatActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>,
                                             grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        ViewModelProviders.of(this).get(PermissionViewModel::class.java)
+        ViewModelProvider(this).get(PermissionViewModel::class.java)
                 .permissionRequest.notify(grantResults)
     }
 

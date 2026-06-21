@@ -23,7 +23,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.DrawableCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProviders
+import androidx.lifecycle.ViewModelProvider
 import kotlinx.coroutines.*
 import org.mozilla.scryer.Observer
 import org.mozilla.scryer.R
@@ -133,7 +133,7 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
     }
 
     private val persistModel: PersistModel by lazy {
-        ViewModelProviders.of(this)[PersistModel::class.java]
+        ViewModelProvider(this).get(PersistModel::class.java)
     }
 
     private val shouldShowCollectionPanel: Boolean
@@ -175,7 +175,7 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        ViewModelProviders.of(this).get(PersistModel::class.java).reset()
+        ViewModelProvider(this).get(PersistModel::class.java).reset()
         loadScreenshots(intent, this::onLoadScreenshotsSuccess)
     }
 
@@ -461,7 +461,7 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
         this.sortedScreenshots.clear()
         this.unsortedScreenshots.clear()
 
-        val panelModel = ViewModelProviders.of(this).get(PersistModel::class.java)
+        val panelModel = ViewModelProvider(this).get(PersistModel::class.java)
         val currentIndex = panelModel.getCurrentIndex()
 
         val sorted = screenshots.sortedByDescending { it.lastModified }

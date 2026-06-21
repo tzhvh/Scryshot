@@ -1,7 +1,8 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.kapt)
+    alias(libs.plugins.ksp)
+    // kapt removed in issue 16 — nothing else uses it
 }
 
 android {
@@ -29,12 +30,6 @@ android {
             val n = buildNumber.toInt()
             versionCode = n
             versionNameSuffix = "($n)"
-        }
-
-        javaCompileOptions {
-            annotationProcessorOptions {
-                arguments += mapOf("room.schemaLocation" to "$projectDir/schemas")
-            }
         }
     }
 
@@ -77,8 +72,6 @@ android {
         }
     }
 
-    // variantFilter (Groovy) is gone in AGP 8's Kotlin DSL; the equivalent is
-    // androidComponents.beforeVariants below.
     buildFeatures {
         viewBinding = true
         buildConfig = true
@@ -96,49 +89,41 @@ androidComponents {
     }
 }
 
-dependencies {
-    // AGP 8 enforces unique manifest namespaces across artifacts. The 2018
-    // AndroidX pins pull vectordrawable + vectordrawable-animated at versions
-    // (1.0.0 / 1.0.1) that both declare the same namespace, which AGP 8 rejects.
-    // Force-align to 1.1.0 where this was fixed. Tier 2 (issue 18) bumps these
-    // properly and can drop this block.
-    configurations.all {
-        resolutionStrategy {
-            force(
-                "androidx.vectordrawable:vectordrawable:1.1.0",
-                "androidx.vectordrawable:vectordrawable-animated:1.1.0"
-            )
-        }
-    }
+// KSP configuration for Room schema export.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
 
+dependencies {
     // AndroidX
     implementation(libs.appcompat)
     implementation(libs.material)
-    implementation(libs.cardview)
     implementation(libs.recyclerview)
     implementation(libs.transition)
-    implementation(libs.legacy.preference.v14)
     implementation(libs.media)
-    implementation(libs.legacy.support.v4)
     implementation(libs.constraintlayout)
+    implementation(libs.preference)
 
     // KTX
     implementation(libs.core.ktx)
 
     // Lifecycle
     implementation(libs.lifecycle.common.java8)
-    implementation(libs.lifecycle.extensions)
+    implementation(libs.lifecycle.runtime.ktx)
+    implementation(libs.lifecycle.viewmodel.ktx)
+    implementation(libs.lifecycle.livedata.ktx)
+    implementation(libs.lifecycle.process)
 
     // Navigation
-    implementation(libs.navigation.ui)
-    implementation(libs.navigation.fragment)
+    implementation(libs.navigation.ui.ktx)
+    implementation(libs.navigation.fragment.ktx)
 
     // Room
     implementation(libs.room.runtime)
-    kapt(libs.room.compiler)
+    ksp(libs.room.compiler)
 
     // WorkManager
-    implementation(libs.work.runtime)
+    implementation(libs.work.runtime.ktx)
 
     // Kotlin
     implementation(libs.kotlin.stdlib.jdk8)

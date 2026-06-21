@@ -8,7 +8,7 @@ package org.mozilla.scryer.repository
 import android.content.Context
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.Transformations
+import androidx.lifecycle.switchMap
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
@@ -96,7 +96,7 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
     }
 
     override fun getCollectionCovers(): LiveData<Map<String, ScreenshotModel>> {
-        return Transformations.switchMap(database.screenshotDao().getCollectionCovers()) { models ->
+        return database.screenshotDao().getCollectionCovers().switchMap { models ->
             MutableLiveData<Map<String, ScreenshotModel>>().apply {
                 value = models.map { it.collectionId to it }.toMap()
             }
@@ -215,7 +215,7 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
 
             } else {
                 val liveData = MutableLiveData<List<ScreenshotModel>>()
-                return Transformations.switchMap(database.screenshotDao().getScreenshotContent()) {
+                return database.screenshotDao().getScreenshotContent().switchMap {
                     launchIO {
                         val args = queryText.split(" ").map { term -> "%$term%" }
                         val whereClauseBuilder = StringBuilder()

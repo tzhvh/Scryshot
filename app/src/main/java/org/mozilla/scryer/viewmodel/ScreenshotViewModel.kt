@@ -9,7 +9,6 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.ViewModelProviders
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.mozilla.scryer.ScryerApplication
@@ -20,11 +19,11 @@ class ScreenshotViewModel(private val delegate: ScreenshotRepository) : ViewMode
         ScreenshotRepository by delegate {
     companion object {
         fun get(fragment: Fragment): ScreenshotViewModel {
-            return ViewModelProviders.of(fragment, getFactory()).get(ScreenshotViewModel::class.java)
+            return ViewModelProvider(fragment, getFactory()).get(ScreenshotViewModel::class.java)
         }
 
         fun get(activity: FragmentActivity): ScreenshotViewModel {
-            return ViewModelProviders.of(activity, getFactory()).get(ScreenshotViewModel::class.java)
+            return ViewModelProvider(activity, getFactory()).get(ScreenshotViewModel::class.java)
         }
 
         private fun getFactory(): ScreenshotViewModelFactory {

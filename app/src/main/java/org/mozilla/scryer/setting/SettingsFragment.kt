@@ -19,12 +19,12 @@ import org.mozilla.scryer.promote.PromoteShareHelper
 
 class SettingsFragment : PreferenceFragmentCompat(), Preference.OnPreferenceChangeListener, Preference.OnPreferenceClickListener {
 
-    private val enableCaptureService: SwitchPreferenceCompat by lazy { findPreference(getString(R.string.pref_key_enable_capture_service)) as SwitchPreferenceCompat }
-    private val enableFloatingScreenshotButton: SwitchPreferenceCompat by lazy { findPreference(getString(R.string.pref_key_enable_floating_screenshot_button)) as SwitchPreferenceCompat }
-    private val enableAddToCollectionButton: SwitchPreferenceCompat by lazy { findPreference(getString(R.string.pref_key_enable_add_to_collection)) as SwitchPreferenceCompat }
-    private val giveFeedbackPreference: Preference by lazy { findPreference(getString(R.string.pref_key_give_feedback)) }
-    private val shareWithFriendsPreference: Preference by lazy { findPreference(getString(R.string.pref_key_share_with_friends)) }
-    private val aboutPreference: Preference by lazy { findPreference(getString(R.string.pref_key_about)) }
+    private val enableCaptureService: SwitchPreferenceCompat by lazy { findPreference<SwitchPreferenceCompat>(getString(R.string.pref_key_enable_capture_service))!! }
+    private val enableFloatingScreenshotButton: SwitchPreferenceCompat by lazy { findPreference<SwitchPreferenceCompat>(getString(R.string.pref_key_enable_floating_screenshot_button))!! }
+    private val enableAddToCollectionButton: SwitchPreferenceCompat by lazy { findPreference<SwitchPreferenceCompat>(getString(R.string.pref_key_enable_add_to_collection))!! }
+    private val giveFeedbackPreference: Preference by lazy { findPreference<Preference>(getString(R.string.pref_key_give_feedback))!! }
+    private val shareWithFriendsPreference: Preference by lazy { findPreference<Preference>(getString(R.string.pref_key_share_with_friends))!! }
+    private val aboutPreference: Preference by lazy { findPreference<Preference>(getString(R.string.pref_key_about))!! }
 
     private var overlayPermissionRequested = false
     private var debugClicks = 0
@@ -129,7 +129,7 @@ class SettingsFragment : PreferenceFragmentCompat(), Preference.OnPreferenceChan
         return false
     }
 
-    override fun onPreferenceClick(preference: Preference?): Boolean {
+    override fun onPreferenceClick(preference: Preference): Boolean {
         when (preference) {
             giveFeedbackPreference -> context?.let { showFeedbackDialog(it); return true }
             shareWithFriendsPreference -> context?.let {

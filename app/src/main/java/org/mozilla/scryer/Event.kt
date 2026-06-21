@@ -21,24 +21,20 @@ open class Event<out T>(private val content: T) {
 }
 
 class EventObserver<T>(private val onEvent: (T) -> Unit) : Observer<Event<T>> {
-    override fun onChanged(t: Event<T>?) {
-        t?.getUnhandledContent()?.let(onEvent)
+    override fun onChanged(t: Event<T>) {
+        t.getUnhandledContent()?.let(onEvent)
     }
 }
 
 class Observer<T>(private val onEvent: (T) -> Unit) : Observer<T> {
-    override fun onChanged(t: T?) {
-        t?.let {
-            onEvent(it)
-        }
+    override fun onChanged(t: T) {
+        onEvent(t)
     }
 }
 
 abstract class NonNullObserver<T> : Observer<T> {
-    override fun onChanged(t: T?) {
-        t?.let {
-            onValueChanged(it)
-        }
+    override fun onChanged(t: T) {
+        onValueChanged(t)
     }
 
     abstract fun onValueChanged(newValue: T)

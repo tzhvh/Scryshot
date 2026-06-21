@@ -5,37 +5,16 @@
 package org.mozilla.scryer.scan
 
 import android.content.Context
-import androidx.work.ListenableWorker
+import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import androidx.work.impl.utils.futures.SettableFuture
-import com.google.common.util.concurrent.ListenableFuture
-import kotlinx.coroutines.*
-import kotlin.coroutines.CoroutineContext
 
 class BackgroundScanner(
         context: Context,
         params: WorkerParameters
-) : ListenableWorker(context, params), CoroutineScope {
+) : CoroutineWorker(context, params) {
 
-    private val workerJob = Job()
-
-    override val coroutineContext: CoroutineContext
-        get() = Dispatchers.Default + workerJob + CoroutineExceptionHandler { _, _ -> }
-
-    override fun startWork(): ListenableFuture<Result> {
-        val future = SettableFuture.create<Result>()
-
-        launch {
-            OcrTextHelper.scanAndSave()
-        }.invokeOnCompletion {
-            future.set(Result.success())
-            workerJob.cancel()
-        }
-
-        return future
-    }
-
-    override fun onStopped() {
-        workerJob.cancel()
+    override suspend fun doWork(): Result {
+        OcrTextHelper.scanAndSave()
+        return Result.success()
     }
 }

@@ -51,7 +51,7 @@ class ForegroundAndBackgroundCharging : ContentScanner.Plan {
 
     override fun isScanning(): Boolean {
         backgroundRequestId?.let {
-            return WorkManager.getInstance().getWorkInfoById(it).get().state == WorkInfo.State.RUNNING
+            return WorkManager.getInstance().getWorkInfoById(it).get()?.state == WorkInfo.State.RUNNING
         }
         return foregroundScanner.isScanning()
     }
