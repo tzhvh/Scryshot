@@ -30,8 +30,8 @@ class ScreenshotFetcher {
     private fun getFolders(context: Context): List<String> {
         val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         val columns = arrayOf(MediaStore.Images.Media.DATA, MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME)
-        val selection = "${MediaStore.Images.ImageColumns.BUCKET_ID} IS NOT NULL) GROUP BY (${MediaStore.Images.ImageColumns.BUCKET_ID}"
-        val results = mutableListOf<String>()
+        val selection = "${MediaStore.Images.ImageColumns.BUCKET_ID} IS NOT NULL"
+        val results = mutableSetOf<String>()
 
         try {
             context.contentResolver.query(uri,
@@ -41,12 +41,11 @@ class ScreenshotFetcher {
                     null
             ).use {
                 val cursor = it ?: return@use
+                val index = cursor.getColumnIndex(MediaStore.Images.Media.DATA)
+                if (index < 0) {
+                    return@use
+                }
                 while (cursor.moveToNext()) {
-                    val index = cursor.getColumnIndex(MediaStore.Images.Media.DATA)
-                    if (index < 0) {
-                        continue
-                    }
-
                     // whether getString() throws exception is not defined and depends on implementation,
                     // so here simply catch the exception and ignore fail cases
                     val path = getCursorStringOrEmpty(cursor, index)
@@ -65,7 +64,7 @@ class ScreenshotFetcher {
             android.util.Log.w("ScreenshotFetcher", "Failed to read screenshot", e)
         }
 
-        return results
+        return results.toList()
     }
 
     private fun getCursorStringOrEmpty(cursor: Cursor, idx: Int): String {
