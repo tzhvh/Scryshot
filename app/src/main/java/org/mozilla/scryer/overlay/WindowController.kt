@@ -8,10 +8,10 @@ package org.mozilla.scryer.overlay
 import android.graphics.PixelFormat
 import android.graphics.Point
 import android.os.Build
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
-import com.crashlytics.android.Crashlytics
 
 class WindowController internal constructor(private val windowManager: WindowManager) {
     private val tmp: Point = Point()
@@ -37,10 +37,10 @@ class WindowController internal constructor(private val windowManager: WindowMan
         try {
             windowManager.addView(view, params)
         } catch (e: WindowManager.BadTokenException) {
-            Crashlytics.logException(e)
+            Log.w("WindowController", "BadTokenException", e)
 
         } catch (e: WindowManager.InvalidDisplayException) {
-            Crashlytics.logException(e)
+            Log.w("WindowController", "InvalidDisplayException", e)
         }
     }
 

@@ -16,13 +16,11 @@ object Versions {
     val constraint_layout = "2.0.0-alpha3"
     val ktx = "1.0.1"
 
-    // Crashlytics
-    val fabric_gradle_plugin = "1.26.1"
-    val crashlytics = "2.9.8"
+
 
     // Google
     val firebase = "16.0.6"
-    val firebase_messageing = "17.3.4"
+
     val firebase_ml = "18.0.2"
     val google_service_plugin = "4.2.0"
 
@@ -42,16 +40,11 @@ object Versions {
     val lottie = "2.7.0"
     val better_link_movement_method = "2.2.0"
 
-    // Mozilla
-    val android_components = "0.27.0"
 
-    // Adjust
-    val adjust = "4.15.1"
-    val android_install_referrer = "1.0"
 
-    // License
-    val license_plugin = "0.9.4"
-    val license = "16.0.1"
+
+
+
 }
 
 object Deps {
@@ -78,9 +71,7 @@ object Deps {
 
     object firebase {
         val core = "com.google.firebase:firebase-core:${Versions.firebase}"
-        val messaging = "com.google.firebase:firebase-messaging:${Versions.firebase_messageing}"
         val ml_vision = "com.google.firebase:firebase-ml-vision:${Versions.firebase_ml}"
-        val analytics = "com.google.android.gms:play-services-analytics:${Versions.firebase}" // Required by Adjust
     }
 
     object room {
@@ -93,15 +84,9 @@ object Deps {
         val extension = "androidx.lifecycle:lifecycle-extensions:${Versions.lifecycle}"
     }
 
-    object fabric {
-        val crashlytics = "com.crashlytics.sdk.android:crashlytics:${Versions.crashlytics}"
-        val plugin = "io.fabric.tools:gradle:${Versions.fabric_gradle_plugin}"
-    }
 
-    object mozilla {
-        val search = "org.mozilla.components:browser-search:${Versions.android_components}"
-        val telemetry = "org.mozilla.components:service-telemetry:${Versions.android_components}"
-    }
+
+
 
     object ktx {
         val core = "androidx.core:core-ktx:${Versions.ktx}"
@@ -125,12 +110,7 @@ object Deps {
         val core = "org.mockito:mockito-core:${Versions.mockito}"
     }
 
-    object gms {
-        val plugin = "com.google.gms:google-services:${Versions.google_service_plugin}" // google-services plugin
-    }
-
     val junit = "junit:junit:${Versions.junit}"
     val glide = "com.github.bumptech.glide:glide:${Versions.glide}"
-    val adjust = "com.adjust.sdk:adjust-android:${Versions.adjust}"
-    val install_referrer = "com.android.installreferrer:installreferrer:${Versions.android_install_referrer}"
+
 }

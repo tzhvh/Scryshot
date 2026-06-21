@@ -34,8 +34,6 @@ import org.mozilla.scryer.persistence.ScreenshotModel
 import org.mozilla.scryer.preference.PreferenceWrapper
 import org.mozilla.scryer.promote.Promoter
 import org.mozilla.scryer.sortingpanel.SortingPanelActivity
-import org.mozilla.scryer.telemetry.CaptureServiceHeartbeatWorker
-import org.mozilla.scryer.telemetry.TelemetryWrapper
 import org.mozilla.scryer.ui.ScryerToast
 import org.mozilla.scryer.util.launchIO
 import java.util.concurrent.TimeUnit
@@ -131,7 +129,6 @@ class ScryerService : Service(), CaptureButtonController.ClickListener, ScreenCa
             isRunning = false
             destroyFloatingButton()
             fileMonitor.stopMonitor()
-            stopHeartbeatTracking()
         }
         super.onDestroy()
     }
@@ -146,13 +143,11 @@ class ScryerService : Service(), CaptureButtonController.ClickListener, ScreenCa
             ACTION_DISABLE_SERVICE_SOFTLY -> {
                 PreferenceWrapper(this).setShouldPromptEnableService(true)
                 disableScryerService(false)
-                TelemetryWrapper.stopCaptureService(TelemetryWrapper.Value.NOTIFICATION)
                 return START_NOT_STICKY
             }
 
             ACTION_CAPTURE_SCREEN -> {
                 postTakeScreenshot(DELAY_CAPTURE_NOTIFICATION)
-                TelemetryWrapper.captureViaNotification()
             }
 
             ACTION_ENABLE_CAPTURE_BUTTON -> initFloatingButton()
@@ -168,7 +163,6 @@ class ScryerService : Service(), CaptureButtonController.ClickListener, ScreenCa
         startForeground(getForegroundNotificationId(), getForegroundNotification())
         initFileMonitors()
         initFloatingButton()
-        startHeartbeatTracking()
     }
 
     private fun disableScryerService(showToast: Boolean) {
@@ -192,18 +186,7 @@ class ScryerService : Service(), CaptureButtonController.ClickListener, ScreenCa
         }
     }
 
-    private fun startHeartbeatTracking() {
-        stopHeartbeatTracking()
 
-        val heartbeatWorkBuilder = PeriodicWorkRequest
-                .Builder(CaptureServiceHeartbeatWorker::class.java, 24, TimeUnit.HOURS)
-        heartbeatWorkBuilder.addTag(CaptureServiceHeartbeatWorker.TAG)
-        WorkManager.getInstance().enqueue(heartbeatWorkBuilder.build())
-    }
-
-    private fun stopHeartbeatTracking() {
-        WorkManager.getInstance().cancelAllWorkByTag(CaptureServiceHeartbeatWorker.TAG)
-    }
 
     private fun destroyFloatingButton() {
         captureButtonController?.destroy()
@@ -220,21 +203,17 @@ class ScryerService : Service(), CaptureButtonController.ClickListener, ScreenCa
                 launchIO {
                     ScryerApplication.getScreenshotRepository().addScreenshot(listOf(model))
                 }
-
-                TelemetryWrapper.captureViaExternal()
             }
         })
     }
 
     override fun onScreenshotButtonClicked() {
         postTakeScreenshot(DELAY_CAPTURE_FAB)
-        TelemetryWrapper.captureViaFab()
     }
 
     override fun onScreenshotButtonDismissed() {
         destroyFloatingButton()
         ScryerApplication.getSettingsRepository().floatingEnable = false
-        TelemetryWrapper.closeFAB()
     }
 
     private fun postTakeScreenshot(delayed: Long) {

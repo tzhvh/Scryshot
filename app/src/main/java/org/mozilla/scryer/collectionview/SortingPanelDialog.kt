@@ -25,9 +25,7 @@ import org.mozilla.scryer.persistence.SuggestCollectionHelper
 import org.mozilla.scryer.promote.Promoter
 import org.mozilla.scryer.sortingpanel.SortingPanel
 import org.mozilla.scryer.sortingpanel.SortingPanelAdapter
-import org.mozilla.scryer.telemetry.TelemetryWrapper
-import org.mozilla.scryer.telemetry.TelemetryWrapper.ExtraValue.MULTIPLE
-import org.mozilla.scryer.telemetry.TelemetryWrapper.ExtraValue.SINGLE
+
 import org.mozilla.scryer.ui.CollectionNameDialog
 import org.mozilla.scryer.util.CollectionListHelper
 import org.mozilla.scryer.viewmodel.ScreenshotViewModel
@@ -60,11 +58,6 @@ class SortingPanelDialog(
                     model.updateScreenshots(screenshots)
                 }
 
-                if (screenshots.size > 1) {
-                    TelemetryWrapper.sortScreenshot(SuggestCollectionHelper.getSuggestCollectionNameForTelemetry(activity, collection.name), MULTIPLE)
-                } else {
-                    TelemetryWrapper.sortScreenshot(SuggestCollectionHelper.getSuggestCollectionNameForTelemetry(activity, collection.name), SINGLE)
-                }
             }
         }
 
@@ -78,8 +71,6 @@ class SortingPanelDialog(
                 onClickStart(it)
                 onClickFinish(it)
             }
-
-            TelemetryWrapper.createCollectionWhenSorting()
         }
     }
 
@@ -88,11 +79,6 @@ class SortingPanelDialog(
             return if (event.keyCode == KeyEvent.KEYCODE_BACK) {
                 dismiss()
 
-                if (screenshots.size > 1) {
-                    TelemetryWrapper.cancelSorting(MULTIPLE)
-                } else {
-                    TelemetryWrapper.cancelSorting(SINGLE)
-                }
                 true
 
             } else {
@@ -116,11 +102,6 @@ class SortingPanelDialog(
                 setActionCallback {
                     dismiss()
 
-                    if (screenshots.size > 1) {
-                        TelemetryWrapper.cancelSorting(MULTIPLE)
-                    } else {
-                        TelemetryWrapper.cancelSorting(SINGLE)
-                    }
                 }
             }
             panelView.onStart(activity)
@@ -128,11 +109,6 @@ class SortingPanelDialog(
                     WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS,
                     PixelFormat.TRANSLUCENT))
 
-            if (screenshots.size > 1) {
-                TelemetryWrapper.promptSortingPage(MULTIPLE)
-            } else {
-                TelemetryWrapper.promptSortingPage(SINGLE)
-            }
         }
     }
 

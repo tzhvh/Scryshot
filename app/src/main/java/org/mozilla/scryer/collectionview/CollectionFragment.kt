@@ -41,7 +41,6 @@ import org.mozilla.scryer.persistence.CollectionModel
 import org.mozilla.scryer.persistence.ScreenshotModel
 import org.mozilla.scryer.persistence.SuggestCollectionHelper
 import org.mozilla.scryer.sortingpanel.SortingPanelActivity
-import org.mozilla.scryer.telemetry.TelemetryWrapper
 import org.mozilla.scryer.ui.CollectionNameDialog
 import org.mozilla.scryer.ui.ConfirmationDialog
 import org.mozilla.scryer.ui.InnerSpaceDecoration
@@ -80,7 +79,6 @@ class CollectionFragment : Fragment() {
                         mode.finish()
                     }
                     dialog.show()
-                    TelemetryWrapper.moveScreenshot(TelemetryWrapper.ExtraValue.COLLECTION, selector.selected.size)
                 }
 
                 R.id.action_delete -> {
@@ -90,12 +88,10 @@ class CollectionFragment : Fragment() {
                                     mode.finish()
                                 }
                             })
-                    TelemetryWrapper.deleteScreenshot(TelemetryWrapper.ExtraValue.COLLECTION, selector.selected.size)
                 }
 
                 R.id.action_share -> {
                     showShareScreenshotDialog(activity, selector.selected.toList())
-                    TelemetryWrapper.shareScreenshot(TelemetryWrapper.ExtraValue.COLLECTION, selector.selected.size)
                 }
             }
 
@@ -179,8 +175,6 @@ class CollectionFragment : Fragment() {
             selectAllCheckbox.visibility = View.VISIBLE
             actionMode?.title = getString(R.string.collection_header_select_none)
             selectAllCheckbox.isChecked = false
-
-            TelemetryWrapper.longPressOnScreenshot(TelemetryWrapper.ExtraValue.COLLECTION)
         }
 
         override fun onExitSelectMode() {
@@ -229,9 +223,6 @@ class CollectionFragment : Fragment() {
         screenshotAdapter = ScreenshotAdapter(context, selector) { item, view, _ ->
             val context = context ?: return@ScreenshotAdapter
             DetailPageActivity.showDetailPage(context, item, view, collectionId)
-
-            TelemetryWrapper.collectionItem(
-                    SuggestCollectionHelper.getSuggestCollectionNameForTelemetry(context, collectionName))
         }
 
         setHasOptionsMenu(true)
@@ -239,8 +230,7 @@ class CollectionFragment : Fragment() {
 
         initScreenshotList(activity)
 
-        TelemetryWrapper.visitCollectionPage(
-                SuggestCollectionHelper.getSuggestCollectionNameForTelemetry(context, collectionName))
+
 
         setupWindowInsets()
     }
@@ -316,7 +306,6 @@ class CollectionFragment : Fragment() {
                     screenshotAdapter.screenshotList.isNotEmpty()
                 }?.let {
                     startSortingActivity(it)
-                    TelemetryWrapper.clickOnSortingButton()
                 }
             }
 

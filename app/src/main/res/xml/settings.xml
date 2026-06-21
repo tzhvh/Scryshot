@@ -23,12 +23,7 @@
         android:summary="@string/settings_detail_sorting"
         android:title="@string/settings_list_sorting" />
 
-    <org.mozilla.scryer.setting.TelemetrySwitchPreference
-        android:defaultValue="true"
-        android:key="@string/pref_key_enable_send_usage_data"
-        android:layout="@layout/preference_telemetry_item"
-        android:persistent="true"
-        android:title="@string/settings_list_usagedata" />
+
 
     <androidx.preference.Preference
         android:key="@string/pref_key_give_feedback"

@@ -57,3 +57,24 @@ fastlane/Preview.html
 fastlane/screenshots
 fastlane/test_output
 fastlane/readme.md
+
+
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+*.env.local
+
+# Agent State, Memory, Rules & History Directories
+.agents/
+.agent/
+.devin/
+.commandcode/
+
+# Scratch directories and temporary scripts used by agents for testing/experiments
+scratch/
+scratch_*
+tmp_scratch/
+#*.scratch

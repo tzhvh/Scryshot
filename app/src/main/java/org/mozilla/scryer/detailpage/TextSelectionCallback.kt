@@ -17,16 +17,13 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.graphics.drawable.DrawableCompat
 import org.mozilla.scryer.R
-import org.mozilla.scryer.telemetry.TelemetryWrapper
 import org.mozilla.scryer.ui.ScryerToast
 
 class TextSelectionCallback(
-        private val view: TextView,
-        private val searchEngineDelegate: SearchEngineDelegate
+        private val view: TextView
 ) : android.view.ActionMode.Callback {
 
     override fun onCreateActionMode(mode: android.view.ActionMode, menu: Menu): Boolean {
-        TelemetryWrapper.promptExtractedTextMenu()
         return true
     }
 
@@ -64,12 +61,10 @@ class TextSelectionCallback(
     }
 
     private fun searchText(text: String) {
-        val uri = searchEngineDelegate.buildSearchUrl(text)
-        Intent(Intent.ACTION_VIEW, Uri.parse(uri)).apply {
+        Intent(Intent.ACTION_WEB_SEARCH).apply {
+            putExtra(android.app.SearchManager.QUERY, text)
             view.context.startActivity(this)
         }
-
-        TelemetryWrapper.searchFromExtractedText()
     }
 
     private fun copyText(text: String) {
@@ -77,8 +72,6 @@ class TextSelectionCallback(
         manager.primaryClip = ClipData.newPlainText("selected text", text)
         ScryerToast.makeText(view.context, view.context.getString(R.string.snackbar_copied),
                 Toast.LENGTH_SHORT).show()
-
-        TelemetryWrapper.copyExtractedText()
     }
 
     private fun shareText(text: String) {
@@ -88,12 +81,5 @@ class TextSelectionCallback(
             type = "text/plain"
             view.context.startActivity(this)
         }
-
-        TelemetryWrapper.shareExtractedText()
-    }
-
-    interface SearchEngineDelegate {
-        val name: String
-        fun buildSearchUrl(text: String): String
     }
 }

@@ -13,7 +13,6 @@ import com.google.firebase.ml.vision.text.FirebaseVisionText
 import kotlinx.coroutines.experimental.Dispatchers
 import kotlinx.coroutines.experimental.isActive
 import kotlinx.coroutines.experimental.withContext
-import mozilla.components.support.base.log.Log
 import org.mozilla.scryer.ScryerApplication
 import org.mozilla.scryer.persistence.ScreenshotContentModel
 import org.mozilla.scryer.persistence.ScreenshotModel
@@ -45,14 +44,14 @@ class FirebaseVisionTextHelper {
 
             remains.forEachIndexed { index, model ->
                 if (!isActive) {
-                    Log.log(tag = TAG, message = "scan interrupted")
+                    android.util.Log.d(TAG, "scan interrupted")
                     return@withContext
                 }
 
                 updateListener.invoke(model, indexedCount + index + 1, list.size)
-                Log.log(tag = TAG, message = "progress: ${index + 1}/${remains.size}")
+                android.util.Log.d(TAG, "progress: ${index + 1}/${remains.size}")
             }
-            Log.log(tag = TAG, message = "scan finished")
+            android.util.Log.d(TAG, "scan finished")
         }
 
         suspend fun scanAndSave(updateListener: ((index: Int, total: Int) -> Unit)? = null) {

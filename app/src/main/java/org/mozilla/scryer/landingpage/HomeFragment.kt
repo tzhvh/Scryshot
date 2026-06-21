@@ -39,7 +39,6 @@ import kotlinx.android.synthetic.main.fragment_home.*
 import kotlinx.android.synthetic.main.fragment_home.view.*
 import kotlinx.android.synthetic.main.view_quick_access.view.*
 import kotlinx.coroutines.experimental.*
-import mozilla.components.support.base.log.Log
 import org.mozilla.scryer.*
 import org.mozilla.scryer.collectionview.ScreenshotItemHolder
 import org.mozilla.scryer.detailpage.DetailPageActivity
@@ -58,7 +57,6 @@ import org.mozilla.scryer.promote.PromoteShareHelper
 import org.mozilla.scryer.scan.ContentScanner
 import org.mozilla.scryer.setting.SettingsActivity
 import org.mozilla.scryer.sortingpanel.SortingPanelActivity
-import org.mozilla.scryer.telemetry.TelemetryWrapper
 import org.mozilla.scryer.ui.BottomDialogFactory
 import org.mozilla.scryer.util.launchIO
 import org.mozilla.scryer.viewmodel.ScreenshotViewModel
@@ -161,7 +159,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
 
             menu.findItem(R.id.action_settings).setOnMenuItemClickListener {
                 startActivity(Intent(safeActivity, SettingsActivity::class.java))
-                TelemetryWrapper.enterSettings()
                 true
             }
 
@@ -202,7 +199,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
             showStoragePermissionView(this, action)
         }
 
-        TelemetryWrapper.visitWelcomePage()
     }
 
     override fun showStoragePermissionView(isRational: Boolean, action: Runnable) {
@@ -228,7 +224,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
             showStoragePermissionView(this, action)
         }
 
-        TelemetryWrapper.visitPermissionErrorPage()
     }
 
     private fun showStoragePermissionView(view: View, action: Runnable) {
@@ -241,7 +236,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
 
         view.findViewById<View>(R.id.action_button)?.setOnClickListener {
             action.run()
-            TelemetryWrapper.grantStoragePermission(pref?.getAndIncreaseGrantStoragePermissionCount() ?: 1)
         }
     }
 
@@ -261,12 +255,9 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         )
         dialog.findViewById<View>(R.id.dont_ask_again_checkbox)?.visibility = View.GONE
 
-        dialog.findViewById<TextView>(R.id.positive_button)?.apply {
-            setOnClickListener {
-                action.run()
-                dialog.dismiss()
-                TelemetryWrapper.grantOverlayPermission()
-            }
+        dialog.findViewById<TextView>(R.id.positive_button)?.setOnClickListener {
+            action.run()
+            dialog.dismiss()
         }
 
         dialog.findViewById<TextView>(R.id.negative_button)?.apply {
@@ -274,7 +265,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
             setOnClickListener {
                 negativeAction.run()
                 dialog.dismiss()
-                TelemetryWrapper.notGrantOverlayPermission()
             }
         }
 
@@ -285,7 +275,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         permissionDialog = dialog
         dialogQueue.show(dialog, null)
 
-        TelemetryWrapper.promptOverlayPermission()
     }
 
     override fun showCapturePermissionView(action: Runnable, negativeAction: Runnable) {
@@ -363,11 +352,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
 
     override fun onPermissionFlowFinish() {
         log(LOG_TAG, "onPermissionFlowFinish")
-        if (ScryerApplication.getSettingsRepository().serviceEnabled) {
-            context?.startService(Intent(context, ScryerService::class.java))
-        }
-        TelemetryWrapper.visitHomePage()
-
         if (shouldShowSearchOnboarding()) {
             showSearchOnboarding()
         }
@@ -487,7 +471,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
                             } else {
                                 0
                             }
-                            TelemetryWrapper.startSearch(progress)
                         })
             }
         }
@@ -506,7 +489,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         quickAccessAdapter?.clickListener = object : QuickAccessAdapter.ItemClickListener {
             override fun onItemClick(screenshotModel: ScreenshotModel, holder: ScreenshotItemHolder) {
                 DetailPageActivity.showDetailPage(context, screenshotModel, holder.image)
-                TelemetryWrapper.clickOnQuickAccess(holder.adapterPosition)
             }
 
             override fun onMoreClick(holder: RecyclerView.ViewHolder) {
@@ -514,7 +496,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
                         R.id.action_navigate_to_collection,
                         Bundle()
                 )
-                TelemetryWrapper.clickMoreOnQuickAccess()
             }
         }
 
@@ -754,7 +735,7 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
     }
 
     private fun log(tag: String, msg: String) {
-        Log.log(Log.Priority.DEBUG, tag, null, msg)
+        android.util.Log.d(tag, msg)
     }
 
     private fun setDoNotShowDialogAgain(prefKey: String) {
@@ -793,36 +774,17 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
     }
 
     private fun promptRatingDialog(context: Context) {
-        val from = TelemetryWrapper.ExtraValue.FROM_PROMPT
-
-        val dialog = PromoteRatingHelper.getRatingDialog(context, {
-            TelemetryWrapper.clickFeedback(TelemetryWrapper.Value.POSITIVE, from)
-        }, {
-            TelemetryWrapper.clickFeedback(TelemetryWrapper.Value.NEGATIVE, from)
-        })
-
+        val dialog = PromoteRatingHelper.getRatingDialog(context, {}, {})
+ 
         if (dialogQueue.tryShow(dialog, null)) {
             PromoteRatingHelper.onRatingPromoted(context)
-            TelemetryWrapper.promptFeedbackDialog(from)
         }
     }
-
+ 
     private fun promptShareDialog(context: Context, reason: Int) {
-        val reasonForTelemetry = when (reason) {
-            PromoteShareHelper.REASON_SHOT -> TelemetryWrapper.ExtraValue.TRIGGER_CAPTURE
-            PromoteShareHelper.REASON_SORT -> TelemetryWrapper.ExtraValue.TRIGGER_SORT
-            PromoteShareHelper.REASON_OCR -> TelemetryWrapper.ExtraValue.TRIGGER_OCR
-            else -> return
-        }
-
-        PromoteShareHelper.getShareDialog(context, reason, {
-            TelemetryWrapper.clickShareApp(TelemetryWrapper.ExtraValue.FROM_PROMPT,
-                    reasonForTelemetry)
-        })?.let {
+        PromoteShareHelper.getShareDialog(context, reason, {})?.let {
             if (dialogQueue.tryShow(it, null)) {
                 PromoteShareHelper.onSharingPromoted(context)
-                TelemetryWrapper.promptShareDialog(TelemetryWrapper.ExtraValue.FROM_PROMPT,
-                        reasonForTelemetry)
             }
         }
     }

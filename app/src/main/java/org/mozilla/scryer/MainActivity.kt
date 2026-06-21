@@ -17,11 +17,9 @@ import androidx.appcompat.widget.Toolbar
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModelProviders
 import kotlinx.android.synthetic.main.activity_main.*
-import org.mozilla.scryer.notification.ScryerMessagingService
 import org.mozilla.scryer.permission.PermissionViewModel
 import org.mozilla.scryer.preference.PreferenceWrapper
 import org.mozilla.scryer.scan.ContentScanner
-import org.mozilla.scryer.telemetry.TelemetryWrapper
 
 class MainActivity : AppCompatActivity() {
 
@@ -53,12 +51,7 @@ class MainActivity : AppCompatActivity() {
             it.statusBarColor = Color.TRANSPARENT
         }
 
-        intent.getStringExtra(ScryerMessagingService.PUSH_OPEN_URL)?.run {
-            val openUrlIntent = Intent()
-            openUrlIntent.data = Uri.parse(this)
-            openUrlIntent.action = Intent.ACTION_VIEW
-            startActivity(openUrlIntent)
-        }
+
 
         if (BuildConfig.DEBUG) {
             scan_progress_bar.visibility = View.VISIBLE
@@ -70,23 +63,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    override fun onResume() {
-        super.onResume()
 
-        TelemetryWrapper.startSession()
-    }
-
-    override fun onPause() {
-        super.onPause()
-
-        TelemetryWrapper.stopSession()
-    }
-
-    override fun onStop() {
-        super.onStop()
-
-        TelemetryWrapper.stopMainActivity()
-    }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>,
                                             grantResults: IntArray) {

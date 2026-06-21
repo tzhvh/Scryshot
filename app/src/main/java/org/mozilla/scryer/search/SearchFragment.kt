@@ -19,7 +19,6 @@ import org.mozilla.scryer.R
 import org.mozilla.scryer.extension.getNavController
 import org.mozilla.scryer.getSupportActionBar
 import org.mozilla.scryer.setSupportActionBar
-import org.mozilla.scryer.telemetry.TelemetryWrapper
 import org.mozilla.scryer.ui.ScryerToast
 
 class SearchFragment : Fragment() {
@@ -37,12 +36,10 @@ class SearchFragment : Fragment() {
             layout.findViewById<Button>(R.id.positive_button).visibility = View.VISIBLE
             layout.findViewById<Button>(R.id.positive_button).setOnClickListener {
                 doAfterFeedback()
-                TelemetryWrapper.interestedInSearch()
             }
             layout.findViewById<Button>(R.id.negative_button).visibility = View.VISIBLE
             layout.findViewById<Button>(R.id.negative_button).setOnClickListener {
                 doAfterFeedback()
-                TelemetryWrapper.notInterestedInSearch()
             }
         }
 
@@ -54,7 +51,6 @@ class SearchFragment : Fragment() {
         setHasOptionsMenu(true)
         setupActionBar()
 
-        TelemetryWrapper.visitSearchPage()
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {

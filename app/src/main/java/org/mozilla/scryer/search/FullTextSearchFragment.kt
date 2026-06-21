@@ -29,7 +29,6 @@ import org.mozilla.scryer.persistence.ScreenshotModel
 import org.mozilla.scryer.persistence.SuggestCollectionHelper
 import org.mozilla.scryer.scan.ContentScanner
 import org.mozilla.scryer.setSupportActionBar
-import org.mozilla.scryer.telemetry.TelemetryWrapper
 import org.mozilla.scryer.ui.InnerSpaceDecoration
 import org.mozilla.scryer.util.hideKeyboard
 import org.mozilla.scryer.util.showKeyboard
@@ -65,7 +64,6 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
                         mode.finish()
                     }
                     dialog.show()
-                    TelemetryWrapper.moveScreenshot(TelemetryWrapper.ExtraValue.SEARCH, selector.selected.size)
                 }
 
                 R.id.action_delete -> {
@@ -75,12 +73,10 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
                                     mode.finish()
                                 }
                             })
-                    TelemetryWrapper.deleteScreenshot(TelemetryWrapper.ExtraValue.SEARCH, selector.selected.size)
                 }
 
                 R.id.action_share -> {
                     showShareScreenshotDialog(activity, selector.selected.toList())
-                    TelemetryWrapper.shareScreenshot(TelemetryWrapper.ExtraValue.SEARCH, selector.selected.size)
                 }
             }
 
@@ -162,8 +158,6 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
             selectAllCheckbox.visibility = View.VISIBLE
             actionMode?.title = getString(R.string.collection_header_select_none)
             selectAllCheckbox.isChecked = false
-
-            TelemetryWrapper.longPressOnScreenshot(TelemetryWrapper.ExtraValue.SEARCH)
         }
 
         override fun onExitSelectMode() {
@@ -268,14 +262,6 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
         screenshotAdapter = SearchAdapter(context, selector) { item, view, position ->
             val context = context ?: return@SearchAdapter
             DetailPageActivity.showDetailPage(context, item, view, searchKeyword = searchEditText.text.toString())
-
-            TelemetryWrapper.clickSearchResult(
-                    SuggestCollectionHelper.getSuggestCollectionNameForTelemetry(context,
-                            collectionList.find { it.id == item.collectionId }?.name),
-                    screenshotAdapter.itemCount,
-                    position,
-                    searchEditText.text?.length ?: 0,
-                    System.currentTimeMillis() - enterTimeMillis)
         }
         enterTimeMillis = System.currentTimeMillis()
 

@@ -34,9 +34,6 @@ import org.mozilla.scryer.persistence.ScreenshotModel
 import org.mozilla.scryer.persistence.SuggestCollectionHelper
 import org.mozilla.scryer.preference.PreferenceWrapper
 import org.mozilla.scryer.promote.Promoter
-import org.mozilla.scryer.telemetry.TelemetryWrapper
-import org.mozilla.scryer.telemetry.TelemetryWrapper.ExtraValue.MULTIPLE
-import org.mozilla.scryer.telemetry.TelemetryWrapper.ExtraValue.SINGLE
 import org.mozilla.scryer.ui.BottomDialogFactory
 import org.mozilla.scryer.ui.CollectionNameDialog
 import org.mozilla.scryer.ui.ConfirmationDialog
@@ -189,7 +186,6 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
                     DialogInterface.OnClickListener { _, _ ->
                         flushToUnsortedCollection()
                         finishAndRemoveTask()
-                        TelemetryWrapper.cancelSorting(MULTIPLE)
                     },
                     getString(android.R.string.cancel),
                     DialogInterface.OnClickListener { _, _ ->
@@ -205,11 +201,6 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
                 super.onBackPressed()
             }
 
-            if (isSortingSingleScreenshot) {
-                TelemetryWrapper.cancelSorting(SINGLE)
-            } else {
-                TelemetryWrapper.cancelSorting(MULTIPLE)
-            }
         }
     }
 
@@ -230,7 +221,6 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
         when (item?.itemId) {
             R.id.action_share -> {
                 currentScreenshot?.let { showShareScreenshotDialog(this, it) }
-                TelemetryWrapper.shareScreenshot(TelemetryWrapper.ExtraValue.SINGLE, 1)
             }
             else -> return super.onOptionsItemSelected(item)
         }
@@ -256,7 +246,6 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
                     showAddedToast(unsortedCollection, unsortedScreenshots.isNotEmpty())
                     showNoMoreDialogIfNeeded()
                     finishAndRemoveTask()
-                    TelemetryWrapper.cancelSorting(SINGLE)
                 }
             }, Runnable {
                 launchIO {
@@ -266,7 +255,6 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
                     }
                 }
                 finishAndRemoveTask()
-                TelemetryWrapper.deleteScreenshot(TelemetryWrapper.ExtraValue.SINGLE, 1)
             })
         }
 
@@ -392,17 +380,14 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
         GlobalScope.launch(Dispatchers.Main) {
             when {
                 intent.hasExtra(EXTRA_PATH) -> {
-                    TelemetryWrapper.promptSortingPage(SINGLE)
                     loadNewScreenshot(getFilePath(intent))
                 }
 
                 intent.hasExtra(EXTRA_SCREENSHOT_ID) -> {
-                    TelemetryWrapper.promptSortingPage(SINGLE)
                     loadOldScreenshot(intent.getStringExtra(EXTRA_SCREENSHOT_ID))
                 }
 
                 intent.hasExtra(EXTRA_COLLECTION_ID) -> {
-                    TelemetryWrapper.promptSortingPage(MULTIPLE)
                     collectionId = intent.getStringExtra(EXTRA_COLLECTION_ID)
                     collectionId?.let {
                         loadCollection(it)
@@ -501,10 +486,6 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
             }
             onNewModelAvailable()
             panelModel.onNextScreenshot()
-
-            if (screenshots.size == 1) {
-                TelemetryWrapper.cancelSorting(SINGLE)
-            }
         }
 
         if (!shouldShowCollectionPanel) {
@@ -553,12 +534,6 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
             if (isSortingSingleScreenshot) {
                 showAddedToast(collection, false)
             }
-
-            if (isSortingSingleScreenshot) {
-                TelemetryWrapper.sortScreenshot(SuggestCollectionHelper.getSuggestCollectionNameForTelemetry(this@SortingPanelActivity, collection.name), SINGLE)
-            } else {
-                TelemetryWrapper.sortScreenshot(SuggestCollectionHelper.getSuggestCollectionNameForTelemetry(this@SortingPanelActivity, collection.name), MULTIPLE)
-            }
         }
     }
 
@@ -591,8 +566,6 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
             onCollectionClickStart(it)
             onCollectionClickFinish(it)
         }
-
-        TelemetryWrapper.createCollectionWhenSorting()
     }
 
     private fun createNewScreenshot(path: String): ScreenshotModel? {

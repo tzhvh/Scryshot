@@ -9,7 +9,6 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.work.*
-import mozilla.components.support.base.log.Log
 import java.util.*
 import java.util.concurrent.TimeUnit
 
@@ -58,13 +57,13 @@ class ForegroundAndBackgroundCharging : ContentScanner.Plan {
     }
 
     private fun onEnterForeground() {
-        Log.log(tag = TAG, message = "enter foreground")
+        android.util.Log.d(TAG, "enter foreground")
         cancelBackgroundScan()
         startForegroundScan()
     }
 
     private fun onEnterBackground() {
-        Log.log(tag = TAG, message = "enter background")
+        android.util.Log.d(TAG, "enter background")
         cancelForegroundScan()
         startBackgroundScan()
     }

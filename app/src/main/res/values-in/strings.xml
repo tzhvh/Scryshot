@@ -85,8 +85,7 @@
   <string name="settings_list_fab">Pakai tombol %1$s</string>
   <string name="settings_list_sorting">Tanyakan untuk menyortir</string>
   <string name="settings_detail_sorting">Setelah Anda mengambil cuplikan layar, selalu tanyakan akan dimasukkan ke koleksi yang mana.</string>
-  <string name="settings_list_usagedata">Kirim data penggunaan</string>
-  <string name="settings_detail_mozilla">Mozilla berusaha untuk mengumpulkan hanya apa yang kami perlu untuk sediakan dan meningkatkan %1$s untuk setiap orang.</string>
+
   <string name="settings_action_learnmore">Pelajari lebih lanjut</string>
   <string name="settings_list_feedback">Kirim saran</string>
   <string name="feedback_title_lovefeedback">Kami menyukai saran!</string>

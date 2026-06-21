@@ -27,9 +27,6 @@ import com.google.firebase.ml.vision.text.FirebaseVisionText
 import kotlinx.android.synthetic.main.activity_detail_page.*
 import kotlinx.coroutines.experimental.*
 import me.saket.bettermovementmethod.BetterLinkMovementMethod
-import mozilla.components.browser.search.SearchEngineManager
-import mozilla.components.browser.search.provider.AssetsSearchEngineProvider
-import mozilla.components.browser.search.provider.localization.LocaleSearchLocalizationProvider
 import org.mozilla.scryer.R
 import org.mozilla.scryer.collectionview.OnDeleteScreenshotListener
 import org.mozilla.scryer.collectionview.showDeleteScreenshotDialog
@@ -41,7 +38,6 @@ import org.mozilla.scryer.preference.PreferenceWrapper
 import org.mozilla.scryer.promote.Promoter
 import org.mozilla.scryer.scan.FirebaseVisionTextHelper
 import org.mozilla.scryer.sortingpanel.SortingPanelActivity
-import org.mozilla.scryer.telemetry.TelemetryWrapper
 import org.mozilla.scryer.ui.ScryerToast
 import org.mozilla.scryer.viewmodel.ScreenshotViewModel
 import kotlin.coroutines.experimental.CoroutineContext
@@ -173,7 +169,6 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
             showOcrOnboarding()
         }
 
-        TelemetryWrapper.viewScreenshot()
     }
 
     override fun onDestroy() {
@@ -231,12 +226,10 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         when (item?.itemId) {
             R.id.action_share -> {
                 showShareScreenshotDialog(this, screenshots[view_pager.currentItem])
-                TelemetryWrapper.shareScreenshot(TelemetryWrapper.ExtraValue.SINGLE, 1)
             }
             R.id.action_move_to -> {
                 startActivity(SortingPanelActivity.sortOldScreenshot(this,
                         screenshots[view_pager.currentItem]))
-                TelemetryWrapper.moveScreenshot(TelemetryWrapper.ExtraValue.SINGLE, 1)
             }
             R.id.action_screenshot_info -> {
                 showScreenshotInfoDialog(this, screenshots[view_pager.currentItem])
@@ -248,11 +241,9 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
                                 finish()
                             }
                         })
-                TelemetryWrapper.deleteScreenshot(TelemetryWrapper.ExtraValue.SINGLE, 1)
             }
             R.id.action_select_all -> {
                 selectAllBlocks()
-                TelemetryWrapper.selectAllExtractedText()
             }
             else -> return super.onOptionsItemSelected(item)
         }
@@ -314,7 +305,6 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
                 R.id.text_mode_fab -> {
                     isRecognizing = true
                     startRecognition()
-                    TelemetryWrapper.extractTextFromScreenshot()
                 }
 
                 R.id.cancel_fab -> {
@@ -349,11 +339,10 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
                 })
 
         textModePanelTextView.movementMethod = BetterLinkMovementMethod.newInstance().setOnLinkClickListener { _, _ ->
-            TelemetryWrapper.clickLinkInExtractedText()
             false
         }
 
-        textModePanelHint.setOnClickListener { TelemetryWrapper.clickOnOCRBottomTip() }
+        textModePanelHint.setOnClickListener { }
     }
 
     private fun startRecognition() {
@@ -371,9 +360,6 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
                     ScryerToast.makeText(this@DetailPageActivity,
                             getString(R.string.detail_ocr_error_edgecase),
                             Toast.LENGTH_SHORT).show()
-                    TelemetryWrapper.viewTextInScreenshot(textRecognitionResultForTelemetry(TelemetryWrapper.Value.WEIRD_SIZE, result.value))
-                } else {
-                    TelemetryWrapper.viewTextInScreenshot(textRecognitionResultForTelemetry(TelemetryWrapper.Value.SUCCESS, result.value))
                 }
 
                 FirebaseVisionTextHelper.writeContentTextToDb(screenshot, result.value.text)
@@ -390,14 +376,11 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
 
             } else if (result is Result.Unavailable) {
                 showConnectPromptSnackbar()
-                TelemetryWrapper.viewTextInScreenshot(TelemetryWrapper.TextRecognitionResult(TelemetryWrapper.Value.FAIL, result.msg))
 
             } else if (result is Result.Failed) {
                 ScryerToast.makeText(this@DetailPageActivity,
                         getString(R.string.detail_ocr_error_failed),
                         Toast.LENGTH_SHORT).show()
-
-                TelemetryWrapper.viewTextInScreenshot(TelemetryWrapper.TextRecognitionResult(TelemetryWrapper.Value.FAIL, result.msg))
             }
 
             isRecognizing = false
@@ -405,22 +388,10 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         }
     }
 
-    private fun textRecognitionResultForTelemetry(value: String, textResult: FirebaseVisionText): TelemetryWrapper.TextRecognitionResult {
-        val regex = "http://|https://".toRegex()
-        val match = regex.find(textResult.text)
-
-        val textBlocks = textResult.textBlocks.size
-        val totalLength = textResult.text.length
-
-        return TelemetryWrapper.TextRecognitionResult(value, "",
-                match?.groupValues?.size ?: 0, textBlocks, totalLength)
-    }
-
     private fun showConnectPromptSnackbar() {
         Snackbar.make(snackbar_container, R.string.detail_ocr_error_module, Snackbar.LENGTH_LONG).apply {
             setAction(R.string.detail_ocr_error_action_connect) {
                 startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
-                TelemetryWrapper.clickOnOCRErrorTip(getString(R.string.detail_ocr_error_module))
             }
             show()
         }
@@ -486,11 +457,9 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
             pagerScale = IMAGE_SCALE_TEXT_MODE
             pagerTranslation = -view_pager.height * ((1 - IMAGE_SCALE_TEXT_MODE) / 2f)
 
-            launch(Dispatchers.Main) {
-                setupTextSelectionCallback(textModePanelTextView)
-                updateLoadingViewVisibility(false)
-                updateTextModePanelVisibility(true)
-            }
+            setupTextSelectionCallback(textModePanelTextView)
+            updateLoadingViewVisibility(false)
+            updateTextModePanelVisibility(true)
 
         } else {
             updateLoadingViewVisibility(isRecognizing)
@@ -642,10 +611,6 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
             override fun onBlockSelectStateChanged(block: TextBlockGraphic?) {
                 val selectedText = graphicOverlayHelper.getSelectedText()
                 updatePanel(selectedText)
-
-                if (!selectedText.isEmpty()) {
-                    TelemetryWrapper.clickOnTextBlock()
-                }
             }
         }
         graphicOverlay.setOnTouchListener { _, event ->
@@ -662,22 +627,8 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         graphicOverlayHelper.unselectAllBlocks()
     }
 
-    private suspend fun setupTextSelectionCallback(textView: TextView) {
-        return withContext(Dispatchers.Default) {
-            val searchEngineManager = SearchEngineManager(listOf(
-                    AssetsSearchEngineProvider(LocaleSearchLocalizationProvider())))
-            val engine = searchEngineManager.getDefaultSearchEngine(this@DetailPageActivity)
-            textView.customSelectionActionModeCallback = TextSelectionCallback(
-                    textView,
-                    object : TextSelectionCallback.SearchEngineDelegate {
-                        override val name: String
-                            get() = engine.name
-
-                        override fun buildSearchUrl(text: String): String {
-                            return engine.buildSearchUrl(text)
-                        }
-                    })
-        }
+    private fun setupTextSelectionCallback(textView: TextView) {
+        textView.customSelectionActionModeCallback = TextSelectionCallback(textView)
     }
 
     private fun updatePanel(panelText: String) {

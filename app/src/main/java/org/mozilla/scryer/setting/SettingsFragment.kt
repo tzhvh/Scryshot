@@ -11,20 +11,17 @@ import androidx.preference.SwitchPreferenceCompat
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.widget.Button
-import com.google.firebase.iid.FirebaseInstanceId
 import org.mozilla.scryer.*
 import org.mozilla.scryer.permission.PermissionHelper
 import org.mozilla.scryer.preference.PreferenceWrapper
 import org.mozilla.scryer.promote.PromoteRatingHelper
 import org.mozilla.scryer.promote.PromoteShareHelper
-import org.mozilla.scryer.telemetry.TelemetryWrapper
 
 class SettingsFragment : PreferenceFragmentCompat(), Preference.OnPreferenceChangeListener, Preference.OnPreferenceClickListener {
 
     private val enableCaptureService: SwitchPreferenceCompat by lazy { findPreference(getString(R.string.pref_key_enable_capture_service)) as SwitchPreferenceCompat }
     private val enableFloatingScreenshotButton: SwitchPreferenceCompat by lazy { findPreference(getString(R.string.pref_key_enable_floating_screenshot_button)) as SwitchPreferenceCompat }
     private val enableAddToCollectionButton: SwitchPreferenceCompat by lazy { findPreference(getString(R.string.pref_key_enable_add_to_collection)) as SwitchPreferenceCompat }
-    private val enableSendUsageDataButton: SwitchPreferenceCompat by lazy { findPreference(getString(R.string.pref_key_enable_send_usage_data)) as SwitchPreferenceCompat }
     private val giveFeedbackPreference: Preference by lazy { findPreference(getString(R.string.pref_key_give_feedback)) }
     private val shareWithFriendsPreference: Preference by lazy { findPreference(getString(R.string.pref_key_share_with_friends)) }
     private val aboutPreference: Preference by lazy { findPreference(getString(R.string.pref_key_about)) }
@@ -83,8 +80,6 @@ class SettingsFragment : PreferenceFragmentCompat(), Preference.OnPreferenceChan
             enableAddToCollectionButton.isChecked = enabled
         })
 
-        enableSendUsageDataButton.summary = getString(R.string.settings_detail_mozilla, getString(R.string.app_full_name))
-
         giveFeedbackPreference.onPreferenceClickListener = this
         giveFeedbackPreference.isIconSpaceReserved = false
 
@@ -121,16 +116,9 @@ class SettingsFragment : PreferenceFragmentCompat(), Preference.OnPreferenceChan
                 pref?.setShouldPromptEnableService(false)
             }
 
-            if (!enable) {
-                TelemetryWrapper.stopCaptureService(TelemetryWrapper.Value.SETTINGS)
-            }
             return true
         } else if (preference == enableFloatingScreenshotButton) {
             repository.floatingEnable = newValue as Boolean
-
-            if (!repository.floatingEnable) {
-                TelemetryWrapper.closeFAB()
-            }
             return true
         } else if (preference == enableAddToCollectionButton) {
             repository.addToCollectionEnable = newValue as Boolean
@@ -145,10 +133,7 @@ class SettingsFragment : PreferenceFragmentCompat(), Preference.OnPreferenceChan
         when (preference) {
             giveFeedbackPreference -> context?.let { showFeedbackDialog(it); return true }
             shareWithFriendsPreference -> context?.let {
-                if (!showFirebaseDebugDialog(it)) {
-                    showShareAppDialog(it)
-                }
-                TelemetryWrapper.shareApp()
+                showShareAppDialog(it)
                 return true
             }
             aboutPreference -> context?.let { showAboutPage(); return true }
@@ -164,46 +149,23 @@ class SettingsFragment : PreferenceFragmentCompat(), Preference.OnPreferenceChan
 
     private fun showFeedbackDialog(context: Context) {
         val dialog = AlertDialog.Builder(context).create()
-        dialog?.setOnCancelListener {
-            // TODO: telemetry
-        }
 
         val dialogView = LayoutInflater.from(context).inflate(R.layout.dialog_give_feedback, null as ViewGroup?)
         dialogView.findViewById<Button>(R.id.dialog_give_feedback_btn_go_rate).setOnClickListener {
             goToPlayStore(context)
             dialog?.dismiss()
-            TelemetryWrapper.clickFeedback(TelemetryWrapper.Value.POSITIVE,
-                    TelemetryWrapper.ExtraValue.FROM_SETTINGS)
         }
         dialogView.findViewById<Button>(R.id.dialog_give_feedback_btn_feedback).setOnClickListener {
             goToFeedback(context)
             dialog?.dismiss()
-            TelemetryWrapper.clickFeedback(TelemetryWrapper.Value.NEGATIVE,
-                    TelemetryWrapper.ExtraValue.FROM_SETTINGS)
         }
         dialog.setView(dialogView)
         dialog.setCanceledOnTouchOutside(true)
         dialog.show()
-
-        TelemetryWrapper.promptFeedbackDialog(TelemetryWrapper.ExtraValue.FROM_SETTINGS)
     }
 
     private fun showShareAppDialog(context: Context) {
         PromoteShareHelper.showShareAppDialog(context)
-        TelemetryWrapper.promptShareDialog(TelemetryWrapper.ExtraValue.FROM_SETTINGS)
-    }
-
-    private fun showFirebaseDebugDialog(context: Context): Boolean {
-        debugClicks++
-        if (debugClicks > DEBUG_CLICKS_THRESHOLD) {
-            val sendIntent = Intent(Intent.ACTION_SEND)
-            sendIntent.type = "text/plain"
-            sendIntent.putExtra(Intent.EXTRA_TEXT, getFcmToken())
-            context.startActivity(Intent.createChooser(sendIntent, "This token is only for QA to test in Nightly and debug build"))
-            return true
-        }
-
-        return false
     }
 
     private fun showAboutPage() {
@@ -263,15 +225,7 @@ class SettingsFragment : PreferenceFragmentCompat(), Preference.OnPreferenceChan
         activity?.startService(intent)
     }
 
-    private fun getFcmToken(): String? {
-        return try {
-            FirebaseInstanceId.getInstance().token
-        } catch (e: Exception) {
-            // If Firebase is not initialized, getInstance() will throw an exception here
-            // Since  This method is for debugging, return empty string is acceptable
-            ""
-        }
-    }
+
 
     companion object {
         private const val DEBUG_CLICKS_THRESHOLD = 18
