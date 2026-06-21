@@ -147,8 +147,8 @@ dependencies {
     // Glide
     implementation(libs.glide)
 
-    // Firebase ML Kit — replaced with standalone ML Kit in Tier 2 (issue 12).
-    implementation(libs.firebase.ml.vision)
+    // ML Kit text recognition (standalone — bundled model, no Firebase needed).
+    implementation(libs.mlkit.text.recognition)
 
     // SubsamplingScaleImageView
     implementation(libs.subsampling.scale.image.view)

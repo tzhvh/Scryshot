@@ -6,12 +6,15 @@ package org.mozilla.scryer.scan
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import com.google.firebase.ml.common.FirebaseMLException
-import com.google.firebase.ml.vision.FirebaseVision
-import com.google.firebase.ml.vision.common.FirebaseVisionImage
-import com.google.firebase.ml.vision.text.FirebaseVisionText
+import com.google.mlkit.common.MlKitException
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.TextRecognizer
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.mozilla.scryer.ScryerApplication
 import org.mozilla.scryer.persistence.ScreenshotContentModel
@@ -19,11 +22,14 @@ import org.mozilla.scryer.persistence.ScreenshotModel
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import kotlin.coroutines.suspendCoroutine
 
-class FirebaseVisionTextHelper {
+class OcrTextHelper {
     companion object {
-        private const val TAG = "FirebaseVisionTextHelper"
+        private const val TAG = "OcrTextHelper"
+
+        private val textRecognizer: TextRecognizer by lazy {
+            TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        }
 
         /** Cancellable scan **/
         suspend fun scan(
@@ -59,7 +65,7 @@ class FirebaseVisionTextHelper {
         suspend fun scanAndSave(updateListener: ((index: Int, total: Int) -> Unit)? = null) {
             scan { model, index, total ->
                 model?.let {
-                    writeContentTextToDb(model, extractText((model)))
+                    writeContentTextToDb(model, extractText(model))
                 }
                 updateListener?.invoke(index, total)
             }
@@ -78,11 +84,10 @@ class FirebaseVisionTextHelper {
             }
         }
 
-        suspend fun extractText(selectedImage: Bitmap): FirebaseVisionText {
-            return suspendCoroutine { cont ->
-                val image = FirebaseVisionImage.fromBitmap(selectedImage)
-                val detector = FirebaseVision.getInstance().onDeviceTextRecognizer
-                detector.processImage(image)
+        suspend fun extractText(selectedImage: Bitmap): Text {
+            return suspendCancellableCoroutine { cont ->
+                val image = InputImage.fromBitmap(selectedImage, 0)
+                textRecognizer.process(image)
                         .addOnSuccessListener { texts ->
                             cont.resume(texts)
                         }
@@ -108,7 +113,7 @@ class FirebaseVisionTextHelper {
         }
 
         private fun isModelUnavailableException(e: Throwable): Boolean {
-            return (e as? FirebaseMLException)?.code == FirebaseMLException.UNAVAILABLE
+            return (e as? MlKitException)?.errorCode == MlKitException.UNAVAILABLE
         }
     }
 }

@@ -26,7 +26,7 @@ class BackgroundScanner(
         val future = SettableFuture.create<Result>()
 
         launch {
-            FirebaseVisionTextHelper.scanAndSave()
+            OcrTextHelper.scanAndSave()
         }.invokeOnCompletion {
             future.set(Result.success())
             workerJob.cancel()

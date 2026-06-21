@@ -1,3 +1,4 @@
+# ATTENTION: check .git /info/exclude since I've excluded some in the local clone
 # Built application files
 *.apk
 *.ap_

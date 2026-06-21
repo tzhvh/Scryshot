@@ -22,8 +22,8 @@ import androidx.viewpager.widget.ViewPager
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.snackbar.Snackbar
-import com.google.firebase.ml.common.FirebaseMLException
-import com.google.firebase.ml.vision.text.FirebaseVisionText
+import com.google.mlkit.common.MlKitException
+import com.google.mlkit.vision.text.Text
 import kotlinx.coroutines.*
 import me.saket.bettermovementmethod.BetterLinkMovementMethod
 import org.mozilla.scryer.R
@@ -36,7 +36,7 @@ import org.mozilla.scryer.persistence.CollectionModel
 import org.mozilla.scryer.persistence.ScreenshotModel
 import org.mozilla.scryer.preference.PreferenceWrapper
 import org.mozilla.scryer.promote.Promoter
-import org.mozilla.scryer.scan.FirebaseVisionTextHelper
+import org.mozilla.scryer.scan.OcrTextHelper
 import org.mozilla.scryer.sortingpanel.SortingPanelActivity
 import org.mozilla.scryer.ui.ScryerToast
 import org.mozilla.scryer.viewmodel.ScreenshotViewModel
@@ -364,7 +364,7 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
                             Toast.LENGTH_SHORT).show()
                 }
 
-                FirebaseVisionTextHelper.writeContentTextToDb(screenshot, result.value.text)
+                OcrTextHelper.writeContentTextToDb(screenshot, result.value.text)
 
                 if (isRecognizing) {
                     isTextMode = true
@@ -407,7 +407,7 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         }
 
         return try {
-            val result = FirebaseVisionTextHelper.extractText(decoded)
+            val result = OcrTextHelper.extractText(decoded)
             if (isValidSize(decoded)) {
                 Result.Success(result)
             } else {
@@ -418,7 +418,7 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
             }
 
         } catch (e: Exception) {
-            if ((e as? FirebaseMLException)?.code == FirebaseMLException.UNAVAILABLE) {
+            if ((e as? MlKitException)?.errorCode == MlKitException.UNAVAILABLE) {
                 Result.Unavailable("recognize failed: " + e.message)
             } else {
                 Result.Failed("recognize failed: " + e.message)
@@ -586,7 +586,7 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         }
     }
 
-    private fun processTextRecognitionResult(result: FirebaseVisionText) {
+    private fun processTextRecognitionResult(result: Text) {
         val pageView = adapter.findViewForPosition(binding.viewPager.currentItem) ?: return
 
         val graphicBlocks = graphicOverlayHelper.convertToGraphicBlocks(result, pageView)
@@ -718,9 +718,9 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
     }
 
     sealed class Result {
-        open class Success(val value: FirebaseVisionText) : Result()
+        open class Success(val value: Text) : Result()
         class WeiredImageSize(
-                value: FirebaseVisionText,
+                value: Text,
                 @Suppress("unused") val msg: String
         ) : Success(value)
         open class Failed(@Suppress("unused") val msg: String) : Result()

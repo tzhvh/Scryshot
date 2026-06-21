@@ -29,8 +29,8 @@ room = "2.6.1"
 navigation = "1.0.0-alpha05"  # android.arch group; issue 14 moves to androidx
 work = "1.0.0-beta05"        # android.arch group; issue 15 moves to androidx
 
-# Firebase (Tier 2 — ML Kit OCR migration in issue 12, BoM in 13)
-firebaseMlVision = "18.0.2"
+# ML Kit (Tier 2 — OCR migration in issue 12)
+mlkitTextRecognition = "16.0.1"
 
 # Test
 junit = "4.13.2"
@@ -78,8 +78,8 @@ work-runtime = { module = "android.arch.work:work-runtime", version.ref = "work"
 kotlin-stdlib-jdk8 = { module = "org.jetbrains.kotlin:kotlin-stdlib-jdk8", version.ref = "kotlin" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinCoroutines" }
 
-# Firebase (Tier 2)
-firebase-ml-vision = { module = "com.google.firebase:firebase-ml-vision", version.ref = "firebaseMlVision" }
+# ML Kit (Tier 2)
+mlkit-text-recognition = { module = "com.google.mlkit:text-recognition", version.ref = "mlkitTextRecognition" }
 
 # Glide / images
 glide = { module = "com.github.bumptech.glide:glide", version.ref = "glide" }

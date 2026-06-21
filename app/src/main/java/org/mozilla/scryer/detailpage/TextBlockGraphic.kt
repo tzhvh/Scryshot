@@ -6,7 +6,7 @@ package org.mozilla.scryer.detailpage
 
 import android.graphics.*
 import androidx.core.content.ContextCompat
-import com.google.firebase.ml.vision.text.FirebaseVisionText
+import com.google.mlkit.vision.text.Text
 import org.mozilla.scryer.BuildConfig
 import org.mozilla.scryer.R
 import org.mozilla.scryer.extension.dpToPx
@@ -61,9 +61,9 @@ class TextBlockGraphic internal constructor(
             postInvalidate()
         }
 
-    var textBlock: FirebaseVisionText.TextBlock? = null
-    var lineBlock: FirebaseVisionText.Line? = null
-    var elementBlock: FirebaseVisionText.Element? = null
+    var textBlock: Text.TextBlock? = null
+    var lineBlock: Text.Line? = null
+    var elementBlock: Text.Element? = null
 
     init {
         rectPaint.apply {

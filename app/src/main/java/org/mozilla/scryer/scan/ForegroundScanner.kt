@@ -7,7 +7,7 @@ package org.mozilla.scryer.scan
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.Observer
-import com.google.firebase.ml.common.FirebaseMLException
+import com.google.mlkit.common.MlKitException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -78,11 +78,11 @@ class ForegroundScanner : CoroutineScope {
         try {
             isScanning = true
             updateProgressData(current = 0, total = 0)
-            FirebaseVisionTextHelper.scanAndSave { current, total ->
+            OcrTextHelper.scanAndSave { current, total ->
                 updateProgressData(current = current, total = total)
             }
             isScanning = false
-        } catch (e: FirebaseMLException) {
+        } catch (e: MlKitException) {
             updateProgressData(isUnavailable = true)
         }
     }

@@ -3,11 +3,11 @@ package org.mozilla.scryer.detailpage
 import android.graphics.*
 import android.util.Log
 
-import com.google.firebase.ml.vision.text.FirebaseVisionText
+import com.google.mlkit.vision.text.Text
 
 class TextGraphic internal constructor(
         overlay: GraphicOverlay,
-        private val block: FirebaseVisionText.TextBlock?
+        private val block: Text.TextBlock?
 ) : GraphicOverlay.Graphic(overlay) {
 
     private val rectPaint: Paint = Paint()

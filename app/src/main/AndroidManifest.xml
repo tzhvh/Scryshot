@@ -66,9 +66,6 @@
 
 
 
-        <meta-data
-            android:name="com.google.firebase.ml.vision.DEPENDENCIES"
-            android:value="ocr" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

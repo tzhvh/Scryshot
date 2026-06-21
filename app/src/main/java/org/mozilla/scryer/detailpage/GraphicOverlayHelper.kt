@@ -4,7 +4,7 @@
 
 package org.mozilla.scryer.detailpage
 
-import com.google.firebase.ml.vision.text.FirebaseVisionText
+import com.google.mlkit.vision.text.Text
 
 class GraphicOverlayHelper(private val overlay: GraphicOverlay) {
     var blocks = listOf<TextBlockGraphic>()
@@ -31,20 +31,20 @@ class GraphicOverlayHelper(private val overlay: GraphicOverlay) {
     }
 
     fun convertToGraphicBlocks(
-            firebaseText: FirebaseVisionText,
+            text: Text,
             pageView: DetailPageAdapter.PageView
     ): List<TextBlockGraphic> {
-        return convertToGraphicBlocks(convertToTextBlocks(firebaseText), pageView, overlay)
+        return convertToGraphicBlocks(convertToTextBlocks(text), pageView, overlay)
     }
 
     @Suppress("unused")
     fun convertWordsToGraphicBlocks(
-            firebaseText: FirebaseVisionText,
+            text: Text,
             words: List<String>,
             pageView: DetailPageAdapter.PageView
     ): List<TextBlockGraphic> {
-        val matchedElements = mutableListOf<FirebaseVisionText.Element>()
-        for (block in firebaseText.textBlocks) {
+        val matchedElements = mutableListOf<Text.Element>()
+        for (block in text.textBlocks) {
             for (line in block.lines) {
                 for (element in line.elements) {
                     for (word in words) {
@@ -88,7 +88,7 @@ class GraphicOverlayHelper(private val overlay: GraphicOverlay) {
         return builder.toString()
     }
 
-    private fun buildLine(block: FirebaseVisionText.TextBlock): String {
+    private fun buildLine(block: Text.TextBlock): String {
         val builder = StringBuilder()
         val lines = block.lines.toMutableList().apply {
             sortBy {
@@ -102,13 +102,13 @@ class GraphicOverlayHelper(private val overlay: GraphicOverlay) {
     }
 
     private fun convertToTextBlocks(
-            firebaseText: FirebaseVisionText
-    ): List<FirebaseVisionText.TextBlock> {
-        return getSortedTextBlocks(firebaseText)
+            text: Text
+    ): List<Text.TextBlock> {
+        return getSortedTextBlocks(text)
     }
 
     private fun convertToGraphicBlocks(
-            textBlocks: List<FirebaseVisionText.TextBlock>,
+            textBlocks: List<Text.TextBlock>,
             pageView: DetailPageAdapter.PageView,
             overlay: GraphicOverlay
     ): List<TextBlockGraphic> {
@@ -156,7 +156,7 @@ class GraphicOverlayHelper(private val overlay: GraphicOverlay) {
         }
     }
 
-    private fun getSortedTextBlocks(result: FirebaseVisionText): List<FirebaseVisionText.TextBlock> {
+    private fun getSortedTextBlocks(result: Text): List<Text.TextBlock> {
         return result.textBlocks.toMutableList().apply {
             sortBy { it.boundingBox?.centerY() }
         }
