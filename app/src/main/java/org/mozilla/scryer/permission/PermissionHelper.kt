@@ -5,8 +5,8 @@
 
 package org.mozilla.scryer.permission
 
-import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
@@ -19,14 +19,17 @@ class PermissionHelper {
                     || OverlayPermission.hasPermission(context)
         }
 
-        fun requestOverlayPermission(activity: Activity?, requestCode: Int) {
+        /**
+         * Returns an Intent to open the system overlay-permission settings page, or null
+         * pre-M where overlay is always granted. Callers launch this via
+         * [ActivityResultContracts.StartActivityForResult] and re-evaluate the permission
+         * on return.
+         */
+        fun getOverlayPermissionIntent(context: Context): Intent? {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-                return
+                return null
             }
-            activity?.let {
-                val intent = OverlayPermission.createPermissionIntent(it)
-                it.startActivityForResult(intent, requestCode)
-            }
+            return OverlayPermission.createPermissionIntent(context)
         }
 
         /** Issue 23: POST_NOTIFICATIONS gate (Android 13+). Below API 33 it doesn't exist. */
@@ -39,16 +42,28 @@ class PermissionHelper {
             ) == PackageManager.PERMISSION_GRANTED
         }
 
-        /** Issue 23: fire the system POST_NOTIFICATIONS request (API 33+ only). */
-        fun requestPostNotificationsPermission(activity: Activity?, requestCode: Int) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                return
+        /**
+         * READ_MEDIA_IMAGES gate (Android 13+) / READ_EXTERNAL_STORAGE (API 29–32).
+         * With minSdk 29, never falls below. Returns true when the runtime permission
+         * needed to query foreign MediaStore rows is already granted.
+         */
+        fun hasReadMediaPermission(context: Context): Boolean {
+            val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                android.Manifest.permission.READ_MEDIA_IMAGES
+            } else {
+                android.Manifest.permission.READ_EXTERNAL_STORAGE
             }
-            activity?.let {
-                it.requestPermissions(
-                        arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
-                        requestCode
-                )
+            return ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        }
+
+        /**
+         * The manifest-declared permission string to request at runtime, based on API level.
+         */
+        fun getReadMediaPermissionString(): String {
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                android.Manifest.permission.READ_MEDIA_IMAGES
+            } else {
+                android.Manifest.permission.READ_EXTERNAL_STORAGE
             }
         }
     }

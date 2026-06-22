@@ -20,12 +20,17 @@ class PermissionFlow(private var permissionState: PermissionStateProvider,
         private const val KEY_OVERLAY_PAGE_SHOWN = "overlay_page_shown"
         private const val KEY_CAPTURE_PAGE_SHOWN = "capture_page_shown"
 
-        /** Request code for the POST_NOTIFICATIONS runtime permission (issue 23, API 33+). */
-        const val REQUEST_CODE_POST_NOTIFICATIONS = 1001
-
         /** Whether the POST_NOTIFICATIONS step is active at all — only on Android 13+. */
         val postNotificationsStepEnabled: Boolean
             get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+
+        /**
+         * Whether the READ_MEDIA_IMAGES / READ_EXTERNAL_STORAGE step is active. With minSdk 29,
+         * always active — the app needs this permission to query foreign MediaStore rows.
+         * On JVM (tests), SDK_INT is 0 so this returns false → pass-through.
+         */
+        val readMediaStepEnabled: Boolean
+            get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
 
         fun createDefaultPermissionProvider(activity: FragmentActivity?): PermissionStateProvider {
             val weakActivity = WeakReference<FragmentActivity>(activity)
@@ -45,6 +50,15 @@ class PermissionFlow(private var permissionState: PermissionStateProvider,
                     }
                     return weakActivity.get()?.let {
                         PermissionHelper.hasPostNotificationsPermission(it)
+                    } ?: false
+                }
+
+                override fun isReadMediaGranted(): Boolean {
+                    if (!readMediaStepEnabled) {
+                        return true
+                    }
+                    return weakActivity.get()?.let {
+                        PermissionHelper.hasReadMediaPermission(it)
                     } ?: false
                 }
             }
@@ -96,19 +110,22 @@ class PermissionFlow(private var permissionState: PermissionStateProvider,
         return state is FinishState
     }
 
-    @Suppress("UNUSED_PARAMETER")
-    fun onPermissionResult(requestCode: Int, results: BooleanArray) {
-        if (results.isEmpty()) {
-            return
-        }
-        // Issue 23: POST_NOTIFICATIONS result. The result is observed on the next
-        // PermissionFlow.start() (called from HomeFragment.onResume) via
-        // isPostNotificationsGranted(); no synchronous state push is needed here. Whether
-        // the user granted or denied, capture proceeds — only capture-result notifications
-        // are gated by this permission (the foreground-service notification is exempt by type).
-        if (requestCode == REQUEST_CODE_POST_NOTIFICATIONS) {
-            state = state.transfer(CaptureState(this))
-        }
+    /**
+     * Called when the POST_NOTIFICATIONS system dialog has been dismissed (grant or deny).
+     * Advances to CaptureState unconditionally — capture is unaffected by denial; only
+     * capture-result notifications are gated by this permission.
+     */
+    fun onPostNotificationsResult() {
+        state = state.transfer(CaptureState(this))
+    }
+
+    /**
+     * Called when the READ_MEDIA_IMAGES / READ_EXTERNAL_STORAGE system dialog has been
+     * dismissed (grant or deny). Advances to PostNotificationsState unconditionally —
+     * capture is unaffected; only foreign-screenshot discovery is gated.
+     */
+    fun onReadMediaResult() {
+        state = state.transfer(PostNotificationsState(this))
     }
 
     interface ViewDelegate {
@@ -128,6 +145,9 @@ class PermissionFlow(private var permissionState: PermissionStateProvider,
         /** Issue 23: fire the system POST_NOTIFICATIONS permission request (API 33+). */
         fun requestPostNotificationsPermission()
 
+        /** Fire the system READ_MEDIA_IMAGES / READ_EXTERNAL_STORAGE permission request. */
+        fun requestReadMediaPermission()
+
         fun launchSystemSettingPage()
     }
 
@@ -136,6 +156,9 @@ class PermissionFlow(private var permissionState: PermissionStateProvider,
 
         /** Issue 23: whether POST_NOTIFICATIONS is granted (always true below Android 13). */
         fun isPostNotificationsGranted(): Boolean
+
+        /** Whether READ_MEDIA_IMAGES / READ_EXTERNAL_STORAGE is granted. */
+        fun isReadMediaGranted(): Boolean
     }
 
     interface PageStateProvider {
@@ -196,14 +219,25 @@ class PermissionFlow(private var permissionState: PermissionStateProvider,
             override fun execute(): State {
                 flow.viewDelegate.onOverlayGranted()
 
-                return if (flow.pageState.isOverlayPageShown()) {
+                // Gate the post-overlay onboarding (ReadMedia → PostNotifications →
+                // Capture) on the capture page being shown — CaptureState is the terminal
+                // step and sets that flag itself, so capturePageShown == "the whole
+                // post-overlay onboarding already ran once".
+                //
+                // Do NOT gate on isOverlayPageShown: FirstTimeRequest sets that flag the
+                // moment it shows the overlay dialog, *before* the user grants overlay
+                // (it's how we suppress re-asking). So on the normal path the user
+                // returns from Settings with overlay granted but isOverlayPageShown
+                // already true, and gating on it would skip straight to Finish — never
+                // prompting for READ_MEDIA_IMAGES or POST_NOTIFICATIONS. ReadMedia /
+                // PostNotifications / Capture each self-gate via their own permission /
+                // page checks, so re-routing through them on every granted-overlay entry
+                // is safe.
+                return if (flow.pageState.isCapturePageShown()) {
                     transfer(FinishState(flow))
                 } else {
                     flow.pageState.setOverlayPageShown()
-                    // Issue 23: route through PostNotificationsState (Android 13+) before
-                    // CaptureState. PostNotificationsState short-circuits to CaptureState when
-                    // the step is disabled (< API 33) or already granted.
-                    transfer(PostNotificationsState(flow))
+                    transfer(ReadMediaState(flow))
                 }
             }
         }
@@ -225,6 +259,28 @@ class PermissionFlow(private var permissionState: PermissionStateProvider,
             override fun execute(): State {
                 flow.viewDelegate.onOverlayDenied()
                 return transfer(FinishState(flow))
+            }
+        }
+    }
+
+    /**
+     * Requests READ_MEDIA_IMAGES (API 33+) / READ_EXTERNAL_STORAGE (API 29–32) so the
+     * read path (ScreenshotFetcher, MediaProviderDelegate) can query foreign MediaStore
+     * rows — screenshots the system or other apps saved outside the app's own
+     * Pictures/ScreenshotGo/ folder.
+     *
+     * The actual system request is fired by the ViewDelegate; the result comes back
+     * asynchronously via [onReadMediaResult], which advances to PostNotificationsState.
+     * If the step is disabled (JVM tests) or the permission is already granted, this
+     * state is a pass-through.
+     */
+    open class ReadMediaState(private val flow: PermissionFlow) : State {
+        override fun execute(): State {
+            return if (readMediaStepEnabled && !flow.permissionState.isReadMediaGranted()) {
+                flow.viewDelegate.requestReadMediaPermission()
+                this
+            } else {
+                transfer(PostNotificationsState(flow))
             }
         }
     }
