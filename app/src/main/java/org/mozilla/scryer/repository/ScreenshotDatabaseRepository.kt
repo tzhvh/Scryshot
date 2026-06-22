@@ -32,7 +32,7 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
             return ScreenshotDatabaseRepository(
                     Room.databaseBuilder(context.applicationContext, ScreenshotDatabase::class.java,
                             "screenshot-db")
-                            .addMigrations(MIGRATION_1_2)
+                            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                             .addCallback(callback)
                             .build()
             )
@@ -48,6 +48,34 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
                         "`content_text`, " +
                         "content=`screenshot_content`)"
                 )
+            }
+        }
+
+        /**
+         * Issue 21: destructive v2→v3 migration. The screenshot identity column changes from
+         * `absolute_path` (filesystem path) to `uri` (content:// MediaStore URI), and two cached
+         * columns (`display_name`, `size`) are added so list rendering avoids ContentResolver
+         * queries on the UI thread. Old rows held filesystem paths that are meaningless under
+         * scoped storage, so the table is wiped and recreated rather than transformed. This is a
+         * personal fork with no users to migrate; zvec treats path/URI as an opaque locator.
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // Drop old screenshot artifacts (table, indices, FTS content) and let Room
+                // recreate the v3 schema from the @Entity definitions on first access.
+                database.execSQL("DROP TABLE IF EXISTS `screenshot`")
+                database.execSQL(
+                        "CREATE TABLE IF NOT EXISTS `screenshot` (" +
+                        "`id` TEXT NOT NULL, " +
+                        "`uri` TEXT NOT NULL, " +
+                        "`display_name` TEXT NOT NULL, " +
+                        "`size` INTEGER NOT NULL, " +
+                        "`last_modified` INTEGER NOT NULL, " +
+                        "`collection_id` TEXT NOT NULL, " +
+                        "PRIMARY KEY(`id`))"
+                )
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_screenshot_uri` ON `screenshot` (`uri`)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS `index_screenshot_collection_id` ON `screenshot` (`collection_id`)")
             }
         }
     }

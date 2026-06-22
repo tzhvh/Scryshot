@@ -401,7 +401,10 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
 
     private suspend fun runTextRecognition(screenshot: ScreenshotModel): Result {
         val decoded = try {
-            BitmapFactory.decodeFile(screenshot.absolutePath)
+            val resolver = contentResolver
+            resolver.openInputStream(android.net.Uri.parse(screenshot.uri))?.use { input ->
+                BitmapFactory.decodeStream(input)
+            } ?: return Result.Failed("decode failed: unable to open screenshot uri")
         } catch (e: Error) {
             return Result.Failed("decode failed: " + e.message)
         }

@@ -1,12 +1,19 @@
 package org.mozilla.scryer.filemonitor
 
+import android.content.ContentUris
 import android.content.Context
 import android.database.Cursor
 import android.provider.MediaStore
 import org.mozilla.scryer.persistence.CollectionModel
 import org.mozilla.scryer.persistence.ScreenshotModel
-import java.io.File
 
+/**
+ * Issue 21: the read path no longer walks the filesystem (`File(dirPath).listFiles()`).
+ * Instead it queries MediaStore.Images for screenshots in other apps' folders (not the app's
+ * own ScreenshotGo/ folder — those arrive via issue 20's write path), building
+ * [ScreenshotModel]s with the content URI as identity and caching display_name + size so the
+ * UI doesn't have to resolve them per-row.
+ */
 class ScreenshotFetcher {
 
     companion object {
@@ -19,72 +26,57 @@ class ScreenshotFetcher {
     }
 
     fun fetchScreenshots(context: Context): List<ScreenshotModel> {
-        val folders = getFolders(context)
-        val screenshots = mutableListOf<ScreenshotModel>()
-        folders.forEach { folderPath ->
-            screenshots.addAll(fetchScreenshots(folderPath))
-        }
-        return screenshots
-    }
-
-    private fun getFolders(context: Context): List<String> {
         val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        val columns = arrayOf(MediaStore.Images.Media.DATA, MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME)
-        val selection = "${MediaStore.Images.ImageColumns.BUCKET_ID} IS NOT NULL"
-        val results = mutableSetOf<String>()
+        val columns = arrayOf(
+                MediaStore.Images.Media._ID,
+                MediaStore.Images.Media.DISPLAY_NAME,
+                MediaStore.Images.Media.DATE_ADDED,
+                MediaStore.Images.Media.SIZE,
+                MediaStore.Images.Media.RELATIVE_PATH)
+        // Foreign screenshots only — exclude the app's own ScreenshotGo/ captures (those are
+        // inserted directly into the DB by the capture pipeline). Match any image whose
+        // filename or folder mentions "screenshot".
+        val selection = "${MediaStore.Images.Media.DISPLAY_NAME} LIKE '%screenshot%' " +
+                "AND (${MediaStore.Images.Media.RELATIVE_PATH} NOT LIKE '%ScreenshotGo%')"
+        val results = mutableListOf<ScreenshotModel>()
 
         try {
             context.contentResolver.query(uri,
                     columns,
                     selection,
                     null,
-                    null
+                    MediaStore.Images.Media.DATE_ADDED + " DESC"
             ).use {
                 val cursor = it ?: return@use
-                val index = cursor.getColumnIndex(MediaStore.Images.Media.DATA)
-                if (index < 0) {
-                    return@use
-                }
+                val idIdx = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                val nameIdx = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+                val dateIdx = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
+                val sizeIdx = cursor.getColumnIndex(MediaStore.Images.Media.SIZE)
                 while (cursor.moveToNext()) {
-                    // whether getString() throws exception is not defined and depends on implementation,
-                    // so here simply catch the exception and ignore fail cases
-                    val path = getCursorStringOrEmpty(cursor, index)
-                    if (path.contains("screenshot", true)) {
-                        val folder = File(path).parent?.trimEnd(File.separatorChar) ?: continue
-                        results.add(folder)
+                    val displayName = cursor.getString(nameIdx) ?: continue
+                    if (!isExtSupported(displayName)) {
+                        continue
                     }
+                    val id = cursor.getLong(idIdx)
+                    val contentUri = ContentUris.withAppendedId(
+                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                    val size = if (sizeIdx >= 0) cursor.getLong(sizeIdx) else 0L
+                    val dateAdded = cursor.getLong(dateIdx) * 1000L
+
+                    results.add(ScreenshotModel(
+                            uri = contentUri.toString(),
+                            displayName = displayName,
+                            size = size,
+                            lastModified = dateAdded,
+                            collectionId = CollectionModel.UNCATEGORIZED
+                    ))
                 }
             }
         } catch (e: SecurityException) {
-            // TODO: It's unclear what king of permission is needed from the log on Crashlytics,
-            // maybe there're some others permissions that are needed on some devices (e.g. Redmi 5 Plus)
-            // Permission Denial: reading com.android.providers.media.MediaProvider uri
-            // content://media/external/images/media from pid=4453, uid=1410264 requires null,
-            // or grantUriPermission()
-            android.util.Log.w("ScreenshotFetcher", "Failed to read screenshot", e)
-        }
-
-        return results.toList()
-    }
-
-    private fun getCursorStringOrEmpty(cursor: Cursor, idx: Int): String {
-        return try {
-            cursor.getString(idx).trim()
-        } catch (e: Exception) {
-            ""
-        }
-    }
-
-    private fun fetchScreenshots(dirPath: String): List<ScreenshotModel> {
-        val results = mutableListOf<ScreenshotModel>()
-
-        File(dirPath).listFiles()?.filter { file ->
-            isExtSupported(file.name.lowercase())
-
-        }?.forEach {
-            val model = ScreenshotModel(it.absolutePath, it.lastModified(),
-                    CollectionModel.UNCATEGORIZED)
-            results.add(model)
+            // Reading foreign MediaStore rows may require READ_MEDIA_IMAGES / READ_EXTERNAL_STORAGE
+            // (declared in the manifest via issue 23). If a row is from another app and the
+            // permission isn't granted, the query throws — degrade to an empty list rather than crash.
+            android.util.Log.w("ScreenshotFetcher", "Failed to read screenshots", e)
         }
 
         return results

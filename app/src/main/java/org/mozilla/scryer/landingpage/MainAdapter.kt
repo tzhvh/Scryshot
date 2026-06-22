@@ -32,7 +32,6 @@ import org.mozilla.scryer.persistence.ScreenshotModel
 import org.mozilla.scryer.ui.CollectionNameDialog
 import org.mozilla.scryer.ui.GridItemDecoration
 import org.mozilla.scryer.viewmodel.ScreenshotViewModel
-import java.io.File
 
 class MainAdapter(private val fragment: Fragment?): RecyclerView.Adapter<RecyclerView.ViewHolder>(),
         OnContextMenuActionListener {
@@ -225,14 +224,16 @@ class MainAdapter(private val fragment: Fragment?): RecyclerView.Adapter<Recycle
             }
             holder.badge?.count = uncategorizedCount
         } else {
-            path = coverList[model.id]?.absolutePath
+            path = coverList[model.id]?.uri
             holder.overlay?.background = ContextCompat.getDrawable(holder.itemView.context,
                     R.drawable.sorted_collection_item_bkg)
             holder.badge?.visibility = View.INVISIBLE
         }
 
-        if (!path.isNullOrEmpty() && File(path).exists()) {
-            Glide.with(holder.itemView).load(File(path)).into(holder.image!!)
+        if (!path.isNullOrEmpty()) {
+            Glide.with(holder.itemView).load(android.net.Uri.parse(path))
+                    .error(R.drawable.image_emptyfolder)
+                    .into(holder.image!!)
         } else {
             holder.image?.setImageDrawable(ContextCompat.getDrawable(holder.itemView.context,
                     R.drawable.image_emptyfolder))
@@ -244,13 +245,13 @@ class MainAdapter(private val fragment: Fragment?): RecyclerView.Adapter<Recycle
      * as the cover image
      */
     private fun getCoverPathForUnsortedCollection(): String {
-        val dummy = ScreenshotModel("", 0, "")
+        val dummy = ScreenshotModel(uri = "", displayName = "", size = 0, lastModified = 0, collectionId = "")
         val categoryNone = coverList[CollectionModel.CATEGORY_NONE]?: dummy
         val uncategorized = coverList[CollectionModel.UNCATEGORIZED]?: dummy
 
         return when {
-            categoryNone.lastModified > uncategorized.lastModified -> categoryNone.absolutePath
-            categoryNone.lastModified < uncategorized.lastModified -> uncategorized.absolutePath
+            categoryNone.lastModified > uncategorized.lastModified -> categoryNone.uri
+            categoryNone.lastModified < uncategorized.lastModified -> uncategorized.uri
             else -> ""
         }
     }

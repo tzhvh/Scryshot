@@ -70,7 +70,7 @@ class DetailPageAdapter : PagerAdapter() {
         })
 
         val item = screenshots[position]
-        val path = item.absolutePath
+        val path = item.uri
 //        Glide.with(container.context)
 //                .asBitmap()
 //                .load(path)

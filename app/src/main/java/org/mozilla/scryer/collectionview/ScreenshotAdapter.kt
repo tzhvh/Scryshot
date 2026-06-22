@@ -20,7 +20,6 @@ import org.mozilla.scryer.R
 import org.mozilla.scryer.extension.getValidPosition
 import org.mozilla.scryer.persistence.ScreenshotModel
 import org.mozilla.scryer.sortingpanel.SortingPanelActivity
-import java.io.File
 
 open class ScreenshotAdapter(
         private val context: Context?,
@@ -86,7 +85,7 @@ open class ScreenshotAdapter(
         holder.title?.text = screenshot.collectionId
         holder.image?.let {
             Glide.with(holder.itemView.context)
-                    .load(File(screenshot.absolutePath))
+                    .load(android.net.Uri.parse(screenshot.uri))
                     .into(it)
         }
 
@@ -130,7 +129,7 @@ open class ScreenshotAdapter(
 
     fun getItemFileName(position: Int): String {
         val item = screenshotList[position]
-        return item.absolutePath.substring(item.absolutePath.lastIndexOf(File.separator) + 1)
+        return item.displayName
     }
 
     fun getItem(position: Int): ScreenshotModel {
