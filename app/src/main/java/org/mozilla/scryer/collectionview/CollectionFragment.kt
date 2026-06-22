@@ -20,7 +20,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.view.ActionMode
 import androidx.appcompat.widget.AppCompatCheckBox
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
 import androidx.core.graphics.drawable.DrawableCompat
 import androidx.core.view.ViewCompat
 import androidx.fragment.app.Fragment
@@ -446,9 +445,9 @@ interface OnDeleteCollectionListener {
 
 fun showScreenshotInfoDialog(context: Context, screenshotModel: ScreenshotModel) {
     val binding = DialogScreenshotInfoBinding.inflate(LayoutInflater.from(context))
-    binding.screenshotInfoNameContent.text = getFileNameText(screenshotModel.absolutePath)
-    binding.screenshotInfoFileSizeAmount.text = getFileSizeText(File(screenshotModel.absolutePath).length())
-    binding.screenshotInfoLastEditTime.text = getFileDateText(File(screenshotModel.absolutePath).lastModified())
+    binding.screenshotInfoNameContent.text = screenshotModel.displayName
+    binding.screenshotInfoFileSizeAmount.text = getFileSizeText(screenshotModel.size)
+    binding.screenshotInfoLastEditTime.text = getFileDateText(screenshotModel.lastModified)
 
     AlertDialog.Builder(context)
             .setTitle(context.getString(R.string.info_info))
@@ -465,6 +464,21 @@ fun getFileNameText(fullPath: String): String {
         fullPath.substring(lastSeparatorIndex + 1)
     } else {
         fullPath
+    }
+}
+
+/**
+ * Issue 21: delete a screenshot's backing bytes via its content URI. Replaces
+ * File(path).delete(). Best-effort — a SecurityException (row owned by another app) is
+ * swallowed since the DB row is removed regardless.
+ */
+fun deleteScreenshotContent(context: Context, uriString: String) {
+    try {
+        context.contentResolver.delete(Uri.parse(uriString), null, null)
+    } catch (e: SecurityException) {
+        android.util.Log.w("CollectionFragment", "Cannot delete screenshot content", e)
+    } catch (e: Exception) {
+        android.util.Log.w("CollectionFragment", "Failed to delete screenshot content", e)
     }
 }
 
@@ -510,9 +524,10 @@ fun showDeleteScreenshotDialog(
             context.getString(R.string.action_delete),
             DialogInterface.OnClickListener { dialog, _ ->
                 launchIO {
+                    val resolver = context.contentResolver
                     screenshotModels.forEach {
                         ScryerApplication.getScreenshotRepository().deleteScreenshot(it)
-                        File(it.absolutePath).delete()
+                        deleteScreenshotContent(context, it.uri)
                     }
                 }
                 dialog?.dismiss()
@@ -529,7 +544,7 @@ fun showDeleteScreenshotDialog(
         val size = withContext(Dispatchers.Default) {
             var totalSize = 0L
             screenshotModels.forEach {
-                totalSize += File(it.absolutePath).length()
+                totalSize += it.size
             }
             totalSize
         }
@@ -550,18 +565,16 @@ fun showShareScreenshotDialog(context: Context, screenshotModels: List<Screensho
     }
 
     GlobalScope.launch(Dispatchers.IO) {
-        val authorities = BuildConfig.APPLICATION_ID + ".provider.fileprovider"
         val share = Intent()
+        // Issue 21: screenshots are already content:// URIs (MediaStore-owned), so share them
+        // directly with FLAG_GRANT_READ_URI_PERMISSION — no FileProvider indirection needed.
         if (screenshotModels.size == 1) {
-            val file = File(screenshotModels[0].absolutePath)
-            val fileUri = FileProvider.getUriForFile(context, authorities, file)
             share.action = Intent.ACTION_SEND
-            share.putExtra(Intent.EXTRA_STREAM, fileUri)
+            share.putExtra(Intent.EXTRA_STREAM, Uri.parse(screenshotModels[0].uri))
         } else {
             val uriList = ArrayList<Uri>()
             screenshotModels.forEach {
-                val file = File(it.absolutePath)
-                uriList.add(FileProvider.getUriForFile(context, authorities, file))
+                uriList.add(Uri.parse(it.uri))
             }
             share.action = Intent.ACTION_SEND_MULTIPLE
             share.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uriList)
@@ -589,8 +602,7 @@ fun showCollectionInfo(context: Context, viewModel: ScreenshotViewModel, collect
         val screenshots = viewModel.getScreenshotList(idList)
         var totalFileSize = 0L
         for (screenshot in screenshots) {
-            val file = File(screenshot.absolutePath)
-            totalFileSize += file.length()
+            totalFileSize += screenshot.size
         }
 
         val collection = viewModel.getCollection(collectionId)
@@ -643,8 +655,7 @@ fun showDeleteCollectionDialog(
             val totalFileSize = withContext(Dispatchers.Default) {
                 var totalFileSize = 0L
                 for (screenshot in screenshots) {
-                    val file = File(screenshot.absolutePath)
-                    totalFileSize += file.length()
+                    totalFileSize += screenshot.size
                 }
                 totalFileSize
             }
@@ -659,7 +670,7 @@ fun showDeleteCollectionDialog(
                         GlobalScope.launch(Dispatchers.IO) {
                             viewModel.deleteCollection(collection)
                             screenshots.forEach { screenshot ->
-                                File(screenshot.absolutePath).delete()
+                                deleteScreenshotContent(context, screenshot.uri)
                                 viewModel.deleteScreenshot(screenshot)
                             }
                         }

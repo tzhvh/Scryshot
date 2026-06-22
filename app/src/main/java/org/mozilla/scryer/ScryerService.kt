@@ -208,16 +208,49 @@ class ScryerService : Service(), CaptureButtonController.ClickListener, ScreenCa
 
     private fun initFileMonitors() {
         fileMonitor.startMonitor(object : FileMonitor.ChangeListener {
-            override fun onChangeFinish(path: String) {
+            override fun onChangeFinish(uri: String) {
                 postNotification(getScreenshotDetectedNotification())
-                val model = ScreenshotModel(path,
-                        System.currentTimeMillis(),
-                        CollectionModel.UNCATEGORIZED)
+                val (displayName, size) = resolveScreenshotMetadata(uri)
+                val model = ScreenshotModel(
+                        uri = uri,
+                        displayName = displayName,
+                        size = size,
+                        lastModified = System.currentTimeMillis(),
+                        collectionId = CollectionModel.UNCATEGORIZED)
                 launchIO {
                     ScryerApplication.getScreenshotRepository().addScreenshot(listOf(model))
                 }
             }
         })
+    }
+
+    /**
+     * Issue 21: resolve the display name + byte size for a foreign screenshot from its
+     * content URI, so they can be cached on the ScreenshotModel at insert time rather than
+     * queried per-row during list rendering.
+     */
+    private fun resolveScreenshotMetadata(uri: String): Pair<String, Long> {
+        var displayName = ""
+        var size = 0L
+        try {
+            contentResolver.query(
+                    android.net.Uri.parse(uri),
+                    arrayOf(
+                            android.provider.MediaStore.Images.Media.DISPLAY_NAME,
+                            android.provider.MediaStore.Images.Media.SIZE),
+                    null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIdx = cursor.getColumnIndex(android.provider.MediaStore.Images.Media.DISPLAY_NAME)
+                    val sizeIdx = cursor.getColumnIndex(android.provider.MediaStore.Images.Media.SIZE)
+                    if (nameIdx >= 0) displayName = cursor.getString(nameIdx) ?: ""
+                    if (sizeIdx >= 0) size = cursor.getLong(sizeIdx)
+                }
+            }
+        } catch (e: SecurityException) {
+            // Foreign image — may not be readable without READ_MEDIA_IMAGES; degrade gracefully.
+            displayName = ""
+        }
+        return displayName to size
     }
 
     override fun onScreenshotButtonClicked() {

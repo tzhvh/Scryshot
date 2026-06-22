@@ -30,6 +30,11 @@ class ScryerApplication : Application() {
         fun getContentScanner(): ContentScanner {
             return instance.contentScanner
         }
+
+        /** Issue 21: app-wide ContentResolver for decode/size queries against content URIs. */
+        fun getContentResolver(): android.content.ContentResolver {
+            return instance.contentResolver
+        }
     }
 
     private object ApplicationHolder {

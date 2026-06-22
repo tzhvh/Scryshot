@@ -19,7 +19,6 @@ import kotlinx.coroutines.withContext
 import org.mozilla.scryer.ScryerApplication
 import org.mozilla.scryer.persistence.ScreenshotContentModel
 import org.mozilla.scryer.persistence.ScreenshotModel
-import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -73,7 +72,7 @@ class OcrTextHelper {
 
         suspend fun extractText(screenshot: ScreenshotModel): String {
             return try {
-                BitmapFactory.decodeFile(screenshot.absolutePath)?.let {
+                decodeFromUri(screenshot.uri)?.let {
                     extractText(it).text
                 } ?: ""
             } catch (e: Throwable) {
@@ -102,7 +101,7 @@ class OcrTextHelper {
                 contentText: String
         ) = withContext(Dispatchers.IO) {
             val model = ScreenshotContentModel(screenshot.id, contentText)
-            val fileExisted = File(screenshot.absolutePath).exists()
+            val fileExisted = isUriReadable(screenshot.uri)
             val recordExist = ScryerApplication.getScreenshotRepository()
                     .getScreenshotList()
                     .find { it.id == screenshot.id }
@@ -114,6 +113,28 @@ class OcrTextHelper {
 
         private fun isModelUnavailableException(e: Throwable): Boolean {
             return (e as? MlKitException)?.errorCode == MlKitException.UNAVAILABLE
+        }
+
+        /** Issue 21: decode a screenshot bitmap from its content URI via ContentResolver. */
+        private fun decodeFromUri(uriString: String): Bitmap? {
+            return try {
+                val resolver = ScryerApplication.getContentResolver()
+                resolver.openInputStream(android.net.Uri.parse(uriString))?.use { input ->
+                    BitmapFactory.decodeStream(input)
+                }
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        /** Issue 21: probe whether a content URI is still readable (replaces File.exists()). */
+        private fun isUriReadable(uriString: String): Boolean {
+            return try {
+                val resolver = ScryerApplication.getContentResolver()
+                resolver.openInputStream(android.net.Uri.parse(uriString))?.use { true } ?: false
+            } catch (e: Exception) {
+                false
+            }
         }
     }
 }

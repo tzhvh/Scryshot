@@ -672,15 +672,15 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
             externalList: List<ScreenshotModel>,
             dbList: List<ScreenshotModel>
     ): List<ScreenshotModel> {
-        // A lookup table consist of files recorded in the database, so we can quickly check whether each file
-        // from external storage had already been recorded before
-        val localModels = dbList.map { it.absolutePath to it }.toMap().toMutableMap()
+        // A lookup table of DB rows keyed by uri, so we can quickly check whether each
+        // screenshot from MediaStore had already been recorded before.
+        val localModels = dbList.map { it.uri to it }.toMap().toMutableMap()
 
         val results = mutableListOf<ScreenshotModel>()
         externalList.forEach { externalModel ->
-            val localModel = localModels[externalModel.absolutePath]
+            val localModel = localModels[externalModel.uri]
             localModel?.let {
-                localModels.remove(externalModel.absolutePath)
+                localModels.remove(externalModel.uri)
 
             }?: run {
                 // No record found, make a new uncategorized item
@@ -691,18 +691,18 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
             }
         }
 
+        // Drop DB rows whose backing content URI is no longer readable (user deleted the
+        // screenshot from MediaStore via another app). Issue 21: replaces the old
+        // File(path).exists() gate, which was meaningless for content URIs.
+        val resolver = context?.contentResolver
         for (entry in localModels) {
             val model = entry.value
-            // Issue 20 safeguard: freshly-captured screenshots now store a content://
-            // MediaStore URI in absolutePath. File(uriString).exists() is always false
-            // for URIs, so the deletion gate would wrongly drop every new capture.
-            // Skip the existence check for content URIs — the full identity migration
-            // (Room v3 + URI-aware queries) lands in issue 21.
-            if (model.absolutePath.startsWith("content://")) {
-                continue
+            val readable = try {
+                resolver?.openInputStream(android.net.Uri.parse(model.uri))?.use { true } ?: false
+            } catch (e: Exception) {
+                false
             }
-            val file = File(model.absolutePath)
-            if (!file.exists()) {
+            if (!readable) {
                 viewModel.deleteScreenshot(model)
             }
         }

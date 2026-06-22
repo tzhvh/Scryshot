@@ -41,7 +41,6 @@ import org.mozilla.scryer.ui.ScryerToast
 import org.mozilla.scryer.util.CollectionListHelper
 import org.mozilla.scryer.util.launchIO
 import org.mozilla.scryer.viewmodel.ScreenshotViewModel
-import java.io.File
 import java.util.*
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.resume
@@ -253,7 +252,11 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
                 launchIO {
                     currentScreenshot?.let {
                         ScryerApplication.getScreenshotRepository().deleteScreenshot(it)
-                        File(it.absolutePath).delete()
+                        try {
+                            contentResolver.delete(android.net.Uri.parse(it.uri), null, null)
+                        } catch (e: Exception) {
+                            android.util.Log.w("SortingPanelActivity", "Cannot delete capture content", e)
+                        }
                     }
                 }
                 finishAndRemoveTask()
@@ -570,25 +573,50 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
         }
     }
 
-    private fun createNewScreenshot(path: String): ScreenshotModel? {
-        if (path.isNotEmpty()) {
-            return ScreenshotModel(path, System.currentTimeMillis(), CollectionModel.UNCATEGORIZED)
+    private fun createNewScreenshot(uri: String): ScreenshotModel? {
+        if (uri.isNotEmpty()) {
+            val (displayName, size) = resolveScreenshotMetadata(uri)
+            return ScreenshotModel(
+                    uri = uri,
+                    displayName = displayName,
+                    size = size,
+                    lastModified = System.currentTimeMillis(),
+                    collectionId = CollectionModel.UNCATEGORIZED)
         }
         return null
     }
 
-    private fun getFilePath(intent: Intent): String {
-        val path = intent.getStringExtra(EXTRA_PATH) ?: return ""
-        // After issue 20, captures arrive as content:// MediaStore URIs, not file paths.
-        // A File-existence check on a URI string is meaningless (always false), so pass
-        // content URIs through directly. The legacy file-path gate only applies to
-        // absolute filesystem paths, which are gone after issue 21.
-        return if (path.startsWith("content://")) {
-            path
-        } else {
-            val file = File(path)
-            if (file.exists()) file.absolutePath else ""
+    /**
+     * Issue 21: resolve display name + size from the captured screenshot's content URI so
+     * they are cached on the model at insert time.
+     */
+    private fun resolveScreenshotMetadata(uri: String): Pair<String, Long> {
+        var displayName = ""
+        var size = 0L
+        try {
+            contentResolver.query(
+                    android.net.Uri.parse(uri),
+                    arrayOf(
+                            android.provider.MediaStore.Images.Media.DISPLAY_NAME,
+                            android.provider.MediaStore.Images.Media.SIZE),
+                    null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIdx = cursor.getColumnIndex(android.provider.MediaStore.Images.Media.DISPLAY_NAME)
+                    val sizeIdx = cursor.getColumnIndex(android.provider.MediaStore.Images.Media.SIZE)
+                    if (nameIdx >= 0) displayName = cursor.getString(nameIdx) ?: ""
+                    if (sizeIdx >= 0) size = cursor.getLong(sizeIdx)
+                }
+            }
+        } catch (e: SecurityException) {
+            displayName = ""
         }
+        return displayName to size
+    }
+
+    private fun getFilePath(intent: Intent): String {
+        // Issue 21: the capture pipeline always delivers a content:// URI here (issue 20);
+        // the legacy File-existence gate is gone since paths are no longer filesystem locators.
+        return intent.getStringExtra(EXTRA_PATH) ?: ""
     }
 
     private suspend fun showNoMoreDialogIfNeeded() = suspendCoroutine<Unit> { cont ->

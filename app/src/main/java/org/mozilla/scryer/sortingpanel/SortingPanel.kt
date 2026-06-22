@@ -26,7 +26,6 @@ import org.mozilla.scryer.R
 import org.mozilla.scryer.persistence.CollectionModel
 import org.mozilla.scryer.persistence.ScreenshotModel
 import org.mozilla.scryer.ui.InnerSpaceDecoration
-import java.io.File
 
 open class SortingPanel : FrameLayout, DefaultLifecycleObserver {
 
@@ -68,12 +67,8 @@ open class SortingPanel : FrameLayout, DefaultLifecycleObserver {
         set(value) {
             value?.let {
                 // TODO: Loading view
-                // After issue 20, absolutePath may hold a content:// URI (fresh captures)
-                // or a legacy filesystem path. Glide loads both transparently when handed
-                // the raw string; File() only works for filesystem paths.
-                val locator = it.absolutePath
-                val model: Any = if (locator.startsWith("content://")) locator else File(locator)
-                Glide.with(this).load(model).into(imageView)
+                // Issue 21: the identity column is now `uri` (always a content:// URI).
+                Glide.with(this).load(android.net.Uri.parse(it.uri)).into(imageView)
                 adapter.onNewScreenshotReady()
                 field = value
             }

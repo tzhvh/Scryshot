@@ -21,7 +21,6 @@ import org.mozilla.scryer.extension.getValidPosition
 import org.mozilla.scryer.persistence.ScreenshotModel
 import org.mozilla.scryer.preference.PreferenceWrapper
 import org.mozilla.scryer.sortingpanel.SortingPanelActivity
-import java.io.File
 
 class QuickAccessAdapter(
         val context: Context?
@@ -114,8 +113,8 @@ class QuickAccessAdapter(
     }
 
     private fun bindItemHolder(holder: RecyclerView.ViewHolder, position: Int) {
-        val path = list[position].absolutePath
-        val fileName = path.substring(path.lastIndexOf(File.separator) + 1)
+        val item = list[position]
+        val fileName = item.displayName
         if (position == 0) {
             holder.setIsRecyclable(false)
         }
@@ -123,7 +122,7 @@ class QuickAccessAdapter(
             holder.title?.text = fileName
             holder.image?.let {
                 Glide.with(holder.itemView.context)
-                        .load(File(list[position].absolutePath)).into(it)
+                        .load(android.net.Uri.parse(item.uri)).into(it)
             }
 
             if (shouldPlayOcrHint(this)) {
