@@ -5,7 +5,6 @@
 
 package org.mozilla.scryer.landingpage
 
-import android.Manifest
 import android.app.Activity
 import android.app.SearchManager
 import android.content.*
@@ -22,7 +21,6 @@ import androidx.appcompat.app.ActionBar
 import androidx.appcompat.app.AppCompatDialog
 import androidx.appcompat.widget.AppCompatCheckBox
 import androidx.appcompat.widget.SearchView
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.LiveData
@@ -46,7 +44,6 @@ import org.mozilla.scryer.extension.navigateSafely
 import org.mozilla.scryer.filemonitor.ScreenshotFetcher
 import org.mozilla.scryer.permission.PermissionFlow
 import org.mozilla.scryer.permission.PermissionHelper
-import org.mozilla.scryer.permission.PermissionViewModel
 import org.mozilla.scryer.persistence.CollectionModel
 import org.mozilla.scryer.persistence.ScreenshotModel
 import org.mozilla.scryer.persistence.SuggestCollectionHelper
@@ -90,7 +87,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
     private var mainAdapter: MainAdapter? = null
 
     private lateinit var permissionFlow: PermissionFlow
-    private var storagePermissionView: View? = null
     private var welcomeView: View? = null
 
     private var permissionDialog: BottomSheetDialog? = null
@@ -176,7 +172,7 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         }
     }
 
-    override fun showWelcomePage(action: Runnable, withStoragePermission: Boolean) {
+    override fun showWelcomePage(action: Runnable) {
         welcomeView = welcomeView?.let {
             it.visibility = View.VISIBLE
             it
@@ -190,54 +186,13 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
             findViewById<TextView>(R.id.title).text = getString(R.string.onboarding_storage_title_welcome,
                     getString(R.string.app_full_name))
 
-            findViewById<TextView>(R.id.description).text = getString(if (withStoragePermission) {
-                    R.string.onboarding_storage_content_permission
+            findViewById<TextView>(R.id.description).text = getString(
+                    R.string.onboarding_welcome_content,
+                    getString(R.string.app_full_name))
 
-                } else {
-                    R.string.onboarding_storage_content_autogrant
-
-                }, getString(R.string.app_full_name))
-
-            showStoragePermissionView(this, action)
-        }
-
-    }
-
-    override fun showStoragePermissionView(isRational: Boolean, action: Runnable) {
-        storagePermissionView = (storagePermissionView?.let {
-            it.visibility = View.VISIBLE
-            it
-
-        }?: run {
-            val stub = view!!.findViewById<ViewStub>(R.id.storage_permission_stub)
-            stub.inflate()
-
-        })?.apply {
-            val appName = getString(R.string.app_full_name)
-            val description = findViewById<TextView>(R.id.description)
-            val actionButton = findViewById<TextView>(R.id.action_button)
-            if (isRational) {
-                description.text = getString(R.string.onboarding_error_content_permission, appName)
-                actionButton.setText(R.string.onboarding_error_action_allow)
-            } else {
-                description.text = getString(R.string.onboarding_rareerror_content_permission, appName)
-                actionButton.setText(R.string.onboarding_rareerror_action_goto)
+            findViewById<View>(R.id.action_button)?.setOnClickListener {
+                action.run()
             }
-            showStoragePermissionView(this, action)
-        }
-
-    }
-
-    private fun showStoragePermissionView(view: View, action: Runnable) {
-        val activity = activity?: return
-
-        val model = ViewModelProvider(activity).get(PermissionViewModel::class.java)
-        model.permissionRequest.observe(this, EventObserver {
-            permissionFlow.onPermissionResult(MainActivity.REQUEST_CODE_WRITE_EXTERNAL_PERMISSION, it)
-        })
-
-        view.findViewById<View>(R.id.action_button)?.setOnClickListener {
-            action.run()
         }
     }
 
@@ -323,10 +278,9 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         })
     }
 
-    override fun onStorageGranted() {
-        log(LOG_TAG, "onStorageGranted")
+    override fun onWelcomeDone() {
+        log(LOG_TAG, "onWelcomeDone")
         welcomeView?.visibility = View.GONE
-        storagePermissionView?.visibility = View.GONE
 
         launch(Dispatchers.Main) {
             checkNewScreenshots()
@@ -356,13 +310,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         log(LOG_TAG, "onPermissionFlowFinish")
         if (shouldShowSearchOnboarding()) {
             showSearchOnboarding()
-        }
-    }
-
-    override fun requestStoragePermission() {
-        activity?.let {
-            ActivityCompat.requestPermissions(it, arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                    MainActivity.REQUEST_CODE_WRITE_EXTERNAL_PERMISSION)
         }
     }
 

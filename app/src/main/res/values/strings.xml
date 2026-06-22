@@ -169,13 +169,9 @@
     <string name="about_list_right">Your Rights</string>
     <string name="about_list_privacy">Privacy Notice</string>
 
-    <!-- Onboarding: strings to onboard users to grant permissions,
-    Refer to UX spec 7.1: https://mozilla.invisionapp.com/share/24N3MMQB986#/310133929_7-1_Onboarding Parameter %1$s is the app name, i.e. Firefox ScreenshotGo -->
+    <!-- Onboarding: first-run welcome screen. Parameter %1$s is the app name. -->
     <string name="onboarding_storage_title_welcome">Welcome to %1$s</string>
-    <string name="onboarding_storage_content_permission">To help you organize and find your screenshots better, we’ll need your permission to access phone storage.</string>
-    <string name="onboarding_storage_caption_duplicates">*Don’t worry, this won’t duplicate files.</string>
-    <!-- The string displays if the system autogrants storage permission. Parameter %1$s is the app name, i.e. Firefox ScreenshotGo -->
-    <string name="onboarding_storage_content_autogrant">%1$s helps you organize and find your screenshots better.</string>
+    <string name="onboarding_welcome_content">%1$s helps you organize and find your screenshots better.</string>
     <string name="onboarding_storage_action_confirm" translatable="false">Let’s GO</string>
     <string name="onboarding_transition_loading">Loading</string>
     <!-- Overlay permission prompt: strings to onboard users to grant permissions, and the placeholder %1$s is "GO" from the product name -->
@@ -185,14 +181,6 @@
     <!-- Auto-grant overlay permission prompt. The placeholder %1$s is "GO" from the product name -->
     <string name="onboarding_autogrant_overlay_title">Use the %1$s button to take and organize screenshots anytime, anywhere.</string>
     <string name="onboarding_autogrant_overlay_gotit">Got it</string>
-    <!-- Onboarding: strings to inform users when keeping denying permission -->
-    <string name="onboarding_error_title_wrong">Oops! Something’s wrong</string>
-    <!-- Parameter %1$s is the app name, i.e. Firefox ScreenshotGo -->
-    <string name="onboarding_error_content_permission">%1$s needs this permission to work correctly.</string>
-    <string name="onboarding_error_action_allow">Allow permission</string>
-    <!-- Parameter %1$s is the app name, i.e. Firefox ScreenshotGo -->
-    <string name="onboarding_rareerror_content_permission">%1$s needs permission to access your phone’s storage. Please find Permission to turn on Storage.</string>
-    <string name="onboarding_rareerror_action_goto">Go to permission</string>
     <!-- Onboarding: strings to inform users that the search feature is WIP,
     Refer to UX spec 7.3: https://mozilla.invisionapp.com/share/24N3MMQB986#/310133930_7-3_Other_Oborading -->
     <string name="onboarding_search_title_soon">Search is coming soon!</string>

@@ -52,16 +52,6 @@
         app:layout_constraintRight_toRightOf="parent"
         app:layout_constraintBottom_toBottomOf="parent" />
 
-    <ViewStub
-        android:id="@+id/storage_permission_stub"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout="@layout/view_storage_permission"
-        app:layout_constraintLeft_toLeftOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintRight_toRightOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent" />
-
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/onboarding_view"
         android:layout_width="match_parent"

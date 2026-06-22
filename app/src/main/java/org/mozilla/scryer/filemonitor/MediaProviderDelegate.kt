@@ -14,7 +14,6 @@ import android.provider.MediaStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.mozilla.scryer.capture.ScreenCaptureManager
-import org.mozilla.scryer.permission.PermissionHelper
 import org.mozilla.scryer.util.launchIO
 import java.io.File
 
@@ -26,10 +25,6 @@ class MediaProviderDelegate(private val context: Context, private val handler: H
         observer = object : ContentObserver(handler) {
             override fun onChange(selfChange: Boolean, uri: Uri?) {
                 uri ?: return
-
-                if (!PermissionHelper.hasStoragePermission(context)) {
-                    return
-                }
 
                 if (!uri.toString().contains(MediaStore.Images.Media.EXTERNAL_CONTENT_URI.toString())) {
                     return

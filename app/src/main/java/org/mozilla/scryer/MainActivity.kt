@@ -26,7 +26,6 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         const val REQUEST_CODE_OVERLAY_PERMISSION = 1000
-        const val REQUEST_CODE_WRITE_EXTERNAL_PERMISSION = 1001
     }
 
     private lateinit var binding: ActivityMainBinding

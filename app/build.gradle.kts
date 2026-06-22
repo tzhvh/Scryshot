@@ -19,7 +19,7 @@ android {
 
     defaultConfig {
         applicationId = "org.mozilla.screenshot.go"
-        minSdk = 21
+        minSdk = 29
         targetSdk = 35
         versionCode = 1
         versionName = "0.8"
