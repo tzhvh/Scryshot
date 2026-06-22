@@ -11,7 +11,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.media.MediaScannerConnection
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -261,17 +260,19 @@ class ScryerService : Service(), CaptureButtonController.ClickListener, ScreenCa
         }
     }
 
-    override fun onScreenShotTaken(path: String) {
+    override fun onScreenShotTaken(uri: String) {
         captureButtonController?.show()
-        if (!TextUtils.isEmpty(path)) {
-            startSortingPanelActivity(path)
-            MediaScannerConnection.scanFile(applicationContext, arrayOf(path), null, null)
+        if (!TextUtils.isEmpty(uri)) {
+            startSortingPanelActivity(uri)
+            // MediaScannerConnection.scanFile was removed in issue 20: the screenshot is
+            // now inserted straight into MediaStore (ScreenCaptureManager.insertScreenshot),
+            // which already indexes the row, so a separate scanFile call is a no-op.
             Promoter.onScreenshotTaken(this)
         }
     }
 
-    private fun startSortingPanelActivity(path: String) {
-        val intent = SortingPanelActivity.sortNewScreenshot(this, path, ScryerApplication.getSettingsRepository().addToCollectionEnable)
+    private fun startSortingPanelActivity(uri: String) {
+        val intent = SortingPanelActivity.sortNewScreenshot(this, uri, ScryerApplication.getSettingsRepository().addToCollectionEnable)
         intent.flags = intent.flags or Intent.FLAG_ACTIVITY_NEW_TASK
         startActivity(intent)
     }
