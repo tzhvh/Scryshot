@@ -16,16 +16,13 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Observer
-import androidx.lifecycle.ViewModelProvider
 import org.mozilla.scryer.databinding.ActivityMainBinding
-import org.mozilla.scryer.permission.PermissionViewModel
 import org.mozilla.scryer.preference.PreferenceWrapper
 import org.mozilla.scryer.scan.ContentScanner
 
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        const val REQUEST_CODE_OVERLAY_PERMISSION = 1000
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -67,13 +64,6 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>,
-                                            grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        ViewModelProvider(this).get(PermissionViewModel::class.java)
-                .permissionRequest.notify(grantResults)
-    }
 
     private fun updateDebugProgress(progress: ContentScanner.ProgressState.Progress) {
         binding.scanProgressBar.progress = if (progress.current == progress.total) {
