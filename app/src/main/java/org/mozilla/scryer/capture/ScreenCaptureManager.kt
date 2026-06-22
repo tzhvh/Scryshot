@@ -1,6 +1,7 @@
 package org.mozilla.scryer.capture
 
 import android.app.Activity
+import android.content.ContentValues
 import android.content.Context
 import android.content.Context.WINDOW_SERVICE
 import android.content.Intent
@@ -12,18 +13,21 @@ import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
+import android.provider.MediaStore
 import android.util.DisplayMetrics
 import android.view.Display
 import android.view.WindowManager
-import java.io.File
-import java.io.FileOutputStream
 
-class ScreenCaptureManager(context: Context, private val screenCapturePermissionIntent: Intent, private val screenCaptureListener: ScreenCaptureListener) {
+class ScreenCaptureManager(private val context: Context, private val screenCapturePermissionIntent: Intent, private val screenCaptureListener: ScreenCaptureListener) {
     companion object {
         const val SCREENSHOT_DIR = "ScreenshotGo"
+
+        /** MediaStore subfolder the app writes captures into. */
+        private val RELATIVE_PATH = "${Environment.DIRECTORY_PICTURES}/$SCREENSHOT_DIR"
     }
 
     private val projectionManager: MediaProjectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -37,13 +41,8 @@ class ScreenCaptureManager(context: Context, private val screenCapturePermission
     private val density: Int
     private var width = 0
     private var height = 0
-    private val screenshotPath: String
 
     init {
-        val screenshotDirectory = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), SCREENSHOT_DIR)
-        ensureDir(screenshotDirectory)
-        screenshotPath = screenshotDirectory.absolutePath
-
         val windowManager = context.getSystemService(WINDOW_SERVICE) as WindowManager
         defaultDisplay = windowManager.defaultDisplay
         defaultDisplay.getMetrics(metrics)
@@ -95,24 +94,18 @@ class ScreenCaptureManager(context: Context, private val screenCapturePermission
         imageReader?.setOnImageAvailableListener(ImageAvailableListener(), workerHandler)
     }
 
-    private fun ensureDir(dir: File): Boolean {
-        return if (dir.mkdirs()) {
-            true
-        } else {
-            dir.exists() && dir.isDirectory && dir.canWrite()
-        }
-    }
-
     private inner class ImageAvailableListener : ImageReader.OnImageAvailableListener {
         override fun onImageAvailable(reader: ImageReader) {
             imageReader?.setOnImageAvailableListener(null, null)
 
-            val filePath: String = screenshotPath + "/Screenshot_" + System.currentTimeMillis() + ".jpg"
+            val displayName = "Screenshot_" + System.currentTimeMillis() + ".jpg"
             var bitmap: Bitmap? = null
             var croppedBitmap: Bitmap? = null
+            var capturedUri: Uri? = null
 
             try {
-                reader.acquireLatestImage()?.use {
+                val image = reader.acquireLatestImage() ?: return
+                image.use {
                     val planes = it.planes
                     val buffer = planes[0].buffer
                     val pixelStride = planes[0].pixelStride
@@ -125,13 +118,12 @@ class ScreenCaptureManager(context: Context, private val screenCapturePermission
 
                     // trim the screenshot to the correct size.
                     croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height)
-
-                    // write bitmap to a file
-                    FileOutputStream(filePath).use {
-                        croppedBitmap?.compress(Bitmap.CompressFormat.JPEG, 100, it)
-                    }
                 }
 
+                // Write the cropped bitmap to MediaStore under Pictures/ScreenshotGo.
+                // minSdk 29, so RELATIVE_PATH + IS_PENDING are always available — no
+                // legacy File-branch fallback.
+                capturedUri = insertScreenshot(croppedBitmap, displayName)
             } catch (e: Exception) {
                 e.printStackTrace()
             } finally {
@@ -141,7 +133,45 @@ class ScreenCaptureManager(context: Context, private val screenCapturePermission
                 stopProjection()
             }
 
-            uiHandler.post { screenCaptureListener.onScreenShotTaken(filePath) }
+            // Empty string signals a failed capture (the capture-listener contract).
+            uiHandler.post { screenCaptureListener.onScreenShotTaken(capturedUri?.toString() ?: "") }
+        }
+
+        /**
+         * Insert the captured [bitmap] into MediaStore.Images under Pictures/ScreenshotGo
+         * and return the content URI, which becomes the screenshot's stable identity.
+         * The [IS_PENDING] flag is set while writing and cleared once the bytes land so
+         * other apps can see the image.
+         */
+        private fun insertScreenshot(bitmap: Bitmap?, displayName: String): Uri? {
+            bitmap ?: return null
+            val resolver = context.contentResolver
+
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH, RELATIVE_PATH)
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                    ?: return null
+
+            try {
+                resolver.openOutputStream(uri)?.use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                // Best-effort cleanup so we don't leave a dangling IS_PENDING row.
+                resolver.delete(uri, null, null)
+                return null
+            }
+
+            val updateValues = ContentValues().apply {
+                put(MediaStore.Images.Media.IS_PENDING, 0)
+            }
+            resolver.update(uri, updateValues, null, null)
+            return uri
         }
     }
 

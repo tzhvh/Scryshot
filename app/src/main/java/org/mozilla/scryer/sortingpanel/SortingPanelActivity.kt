@@ -578,9 +578,17 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
     }
 
     private fun getFilePath(intent: Intent): String {
-        val path = intent.getStringExtra(EXTRA_PATH)
-        val file = File(path)
-        return if (file.exists()) file.absolutePath else ""
+        val path = intent.getStringExtra(EXTRA_PATH) ?: return ""
+        // After issue 20, captures arrive as content:// MediaStore URIs, not file paths.
+        // A File-existence check on a URI string is meaningless (always false), so pass
+        // content URIs through directly. The legacy file-path gate only applies to
+        // absolute filesystem paths, which are gone after issue 21.
+        return if (path.startsWith("content://")) {
+            path
+        } else {
+            val file = File(path)
+            if (file.exists()) file.absolutePath else ""
+        }
     }
 
     private suspend fun showNoMoreDialogIfNeeded() = suspendCoroutine<Unit> { cont ->

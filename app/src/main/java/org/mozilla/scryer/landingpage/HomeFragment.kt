@@ -675,6 +675,14 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
 
         for (entry in localModels) {
             val model = entry.value
+            // Issue 20 safeguard: freshly-captured screenshots now store a content://
+            // MediaStore URI in absolutePath. File(uriString).exists() is always false
+            // for URIs, so the deletion gate would wrongly drop every new capture.
+            // Skip the existence check for content URIs — the full identity migration
+            // (Room v3 + URI-aware queries) lands in issue 21.
+            if (model.absolutePath.startsWith("content://")) {
+                continue
+            }
             val file = File(model.absolutePath)
             if (!file.exists()) {
                 viewModel.deleteScreenshot(model)
