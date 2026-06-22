@@ -17,7 +17,7 @@ class PermissionFlowTest {
     @Mock
     private lateinit var viewDelegate: PermissionFlow.ViewDelegate
 
-    private var permissions = mutableListOf(false, false)
+    private var permissions = mutableListOf(false, false, false)
 
     @Captor
     private lateinit var runnableCaptor: ArgumentCaptor<Runnable>
@@ -27,7 +27,7 @@ class PermissionFlowTest {
 
     @Before
     fun setUp() {
-        permissions = mutableListOf(false, false)
+        permissions = mutableListOf(false, false, false)
         pageStateData = mutableListOf(false, false, false)
         permissionState = object : PermissionFlow.PermissionStateProvider {
             override fun isOverlayGranted(): Boolean {
@@ -36,6 +36,10 @@ class PermissionFlowTest {
 
             override fun isPostNotificationsGranted(): Boolean {
                 return permissions[0]
+            }
+
+            override fun isReadMediaGranted(): Boolean {
+                return permissions[2]
             }
         }
 
@@ -165,6 +169,81 @@ class PermissionFlowTest {
         flow.initialState = PermissionFlow.PostNotificationsState(flow)
         flow.start()
         verifyMethod().showCapturePermissionView(any(), any())
+    }
+
+    /**
+     * On JVM, readMediaStepEnabled is false (SDK_INT < Q), so ReadMediaState is a
+     * pass-through to PostNotificationsState → CaptureState. This test confirms the
+     * routing: overlay granted → ReadMediaState (pass-through) → PostNotificationsState
+     * (pass-through) → CaptureState shows the capture view.
+     */
+    @Test
+    fun overlayGranted_readMediaPassesThroughToCapture() {
+        permissions[0] = true   // post-notifications granted
+        permissions[1] = true   // overlay granted
+        permissions[2] = false  // read-media not granted, but step disabled on JVM
+        pageState.setWelcomePageShown()
+
+        flow.start()
+        verifyMethod().showCapturePermissionView(any(), any())
+    }
+
+    /**
+     * Regression for issue 25: on a real device the user walks through the overlay
+     * dialog *before* granting overlay. OverlayState.FirstTimeRequest marks
+     * overlayPageShown at dialog-show time (to suppress re-asking). When the user then
+     * returns from Settings with overlay granted, OverlayState.Granted must still route
+     * through the post-overlay onboarding (ReadMedia → PostNotifications → Capture) —
+     * not skip to Finish.
+     *
+     * On JVM both runtime-permission steps are pass-throughs, so the observable
+     * assertion is: after the FirstTimeRequest → Granted round-trip, capture view is
+     * shown (not Finish-only).
+     */
+    @Test
+    fun overlayGranted_afterFirstTimeRequest_routesThroughCapture() {
+        permissions[0] = true   // post-notifications granted → pass-through
+        permissions[1] = false  // overlay not granted yet
+        pageState.setWelcomePageShown()
+
+        // Step 1: start → OverlayState.FirstTimeRequest shows the overlay dialog and
+        // marks overlayPageShown (this is what poisons the old isOverlayPageShown gate).
+        flow.start()
+        assertTrue(flow.state is PermissionFlow.OverlayState.FirstTimeRequest)
+        assertTrue(pageState.isOverlayPageShown())
+
+        // Step 2: user grants overlay in Settings, returns, onResume() → start() again.
+        permissions[1] = true
+        flow.start()
+
+        // Must reach CaptureState and show the capture view — not Finish-only.
+        verifyMethod().showCapturePermissionView(any(), any())
+    }
+
+    /**
+     * ReadMediaState direct entry also chains to PostNotificationsState → CaptureState
+     * on JVM (pass-through).
+     */
+    @Test
+    fun readMediaState_passesThroughToCapture() {
+        permissions[0] = true   // post-notifications granted → pass-through
+        flow.initialState = PermissionFlow.ReadMediaState(flow)
+        flow.start()
+        verifyMethod().showCapturePermissionView(any(), any())
+    }
+
+    /**
+     * Issue 25: onPostNotificationsResult() advances from PostNotificationsState
+     * to CaptureState, independent of the permission result.
+     */
+    @Test
+    fun onPostNotificationsResult_advancesToCaptureState() {
+        flow.initialState = PermissionFlow.PostNotificationsState(flow)
+        flow.start()
+
+        // Simulate the system dialog being dismissed (grant or deny — always advance).
+        flow.onPostNotificationsResult()
+        assertTrue(flow.isFinished())
     }
 
     /**
