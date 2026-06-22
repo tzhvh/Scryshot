@@ -19,6 +19,7 @@ import android.os.Looper
 import android.text.TextUtils
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkManager
@@ -160,7 +161,20 @@ class ScryerService : Service(), CaptureButtonController.ClickListener, ScreenCa
         if (startedExplicitly) {
             toast.show(getString(R.string.snackbar_enable), Toast.LENGTH_SHORT)
         }
-        startForeground(getForegroundNotificationId(), getForegroundNotification())
+        // Issue 22: pass the foreground service type explicitly so startForeground is legal
+        // on Android 14+ (API 34+). ServiceCompat handles the version check internally and is
+        // a no-op type on older APIs. The manifest declares foregroundServiceType="mediaProjection"
+        // to match. Note: the MediaProjection session itself is obtained lazily on the first
+        // user capture tap (ScreenCaptureManager.startProjection), well after this call, so the
+        // Android-14 "projection must start after foreground" ordering rule is already satisfied.
+        val notification = getForegroundNotification()
+                ?: throw IllegalStateException("Unable to build foreground notification")
+        ServiceCompat.startForeground(
+                this@ScryerService,
+                getForegroundNotificationId(),
+                notification,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        )
         initFileMonitors()
         initFloatingButton()
     }
