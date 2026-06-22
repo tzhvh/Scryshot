@@ -8,6 +8,19 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
+    <!-- Issue 23: notification permission (Android 13+) for ScryerService's capture-result
+         notifications. The foreground-service notification itself is exempt by type, but the
+         screenshot-detected notification (ScryerService.ID_SCREENSHOT_DETECTED) needs this. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Read access for screenshots the app did not capture itself (foreign captures in
+         Pictures/ScreenshotGo/). READ_MEDIA_IMAGES on API 33+, READ_EXTERNAL_STORAGE below.
+         Owned here per harmonization; consumed by issue 21's read path. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
     <application
         android:name="org.mozilla.scryer.ScryerApplication"
         android:allowBackup="true"
