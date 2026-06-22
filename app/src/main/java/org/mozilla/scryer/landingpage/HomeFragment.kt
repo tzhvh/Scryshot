@@ -17,6 +17,7 @@ import android.view.*
 import android.widget.TextView
 import android.widget.Toast
 import androidx.annotation.RequiresApi
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.ActionBar
 import androidx.appcompat.app.AppCompatDialog
 import androidx.appcompat.widget.AppCompatCheckBox
@@ -25,7 +26,6 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.Observer
-import androidx.lifecycle.ViewModelProvider
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.navigation.Navigation
 import androidx.preference.PreferenceManager
@@ -44,7 +44,6 @@ import org.mozilla.scryer.extension.navigateSafely
 import org.mozilla.scryer.filemonitor.ScreenshotFetcher
 import org.mozilla.scryer.permission.PermissionFlow
 import org.mozilla.scryer.permission.PermissionHelper
-import org.mozilla.scryer.permission.PermissionViewModel
 import org.mozilla.scryer.persistence.CollectionModel
 import org.mozilla.scryer.persistence.ScreenshotModel
 import org.mozilla.scryer.persistence.SuggestCollectionHelper
@@ -100,6 +99,30 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         context?.let {
             PreferenceWrapper(it)
         }
+    }
+
+    /** Launcher for the system overlay-permission settings screen. */
+    private val overlayPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        // Re-evaluate the permission flow — the result code from Settings is unreliable.
+        permissionFlow.start()
+    }
+
+    /** Launcher for the POST_NOTIFICATIONS runtime permission dialog (Android 13+). */
+    private val postNotificationsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        // Whether granted or denied, advance to CaptureState.
+        permissionFlow.onPostNotificationsResult()
+    }
+
+    /** Launcher for the READ_MEDIA_IMAGES / READ_EXTERNAL_STORAGE permission dialog. */
+    private val readMediaLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        // Whether granted or denied, advance to PostNotificationsState.
+        permissionFlow.onReadMediaResult()
     }
 
     override fun onCreateView(
@@ -309,21 +332,44 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
 
     override fun onPermissionFlowFinish() {
         log(LOG_TAG, "onPermissionFlowFinish")
+
+        // Sync external screenshots whenever the flow finishes. This covers two cases the
+        // old welcome-dismiss-only trigger missed:
+        //  1. The fetch races the READ_MEDIA_IMAGES grant: checkNewScreenshots() used to run
+        //     from onWelcomeDone, which fires *before* ReadMediaState has prompted for — let
+        //     alone granted — READ_MEDIA_IMAGES, so the foreign-row query came back empty.
+        //     By the time the flow reaches FinishState the permission has been asked.
+        //  2. Returning users: start() re-runs on every onResume, and a fully-onboarded user
+        //     lands in FinishState each resume, so this also backfills screenshots taken since
+        //     the app was last foregrounded.
+        //
+        // Use the fragment's own scope (Dispatchers.Main + fragmentJob), not launchIO: the
+        // fetch reads `context`/`viewModel` which must be touched on the main thread, and the
+        // job should be cancelled when the fragment is destroyed. checkNewScreenshots()
+        // switches to IO internally via withContext.
+        launch {
+            checkNewScreenshots()
+        }
+
         if (shouldShowSearchOnboarding()) {
             showSearchOnboarding()
         }
     }
 
     override fun requestOverlayPermission() {
-        PermissionHelper.requestOverlayPermission(activity, MainActivity.REQUEST_CODE_OVERLAY_PERMISSION)
+        PermissionHelper.getOverlayPermissionIntent(requireContext())?.let { intent ->
+            overlayPermissionLauncher.launch(intent)
+        }
     }
 
     override fun requestPostNotificationsPermission() {
-        // Issue 23: fire the system POST_NOTIFICATIONS request (Android 13+). The result is
-        // delivered to MainActivity.onRequestPermissionsResult and routed to the flow via
-        // PermissionViewModel. No explanatory bottom dialog — per the harmonization decision.
-        PermissionHelper.requestPostNotificationsPermission(
-                activity, PermissionFlow.REQUEST_CODE_POST_NOTIFICATIONS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            postNotificationsLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    override fun requestReadMediaPermission() {
+        readMediaLauncher.launch(PermissionHelper.getReadMediaPermissionString())
     }
 
     override fun launchSystemSettingPage() {
@@ -382,15 +428,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
     private fun initPermissionFlow() {
         permissionFlow = PermissionFlow(PermissionFlow.createDefaultPermissionProvider(activity),
                 PermissionFlow.createDefaultPageStateProvider(activity), this)
-
-        // Issue 23: forward runtime-permission results (POST_NOTIFICATIONS) to the flow so it
-        // advances past PostNotificationsState as soon as the system dialog closes, without
-        // waiting for the next onResume(). Overlay uses a separate startActivityForResult path.
-        ViewModelProvider(requireActivity()).get(PermissionViewModel::class.java)
-                .permissionRequest.observe(this.viewLifecycleOwner, EventObserver { results ->
-                    permissionFlow.onPermissionResult(
-                            PermissionFlow.REQUEST_CODE_POST_NOTIFICATIONS, results)
-                })
     }
 
     private fun createOptionsMenuSearchView(activity: Activity) {

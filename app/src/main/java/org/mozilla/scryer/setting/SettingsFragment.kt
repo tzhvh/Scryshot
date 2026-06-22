@@ -3,6 +3,7 @@ package org.mozilla.scryer.setting
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.ActionBar
 import androidx.appcompat.app.AlertDialog
 import androidx.preference.Preference
@@ -28,6 +29,13 @@ class SettingsFragment : PreferenceFragmentCompat(), Preference.OnPreferenceChan
 
     private var overlayPermissionRequested = false
     private var debugClicks = 0
+
+    /** Launcher for the system overlay-permission settings screen. */
+    private val overlayPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        checkOverlayPermission()
+    }
 
     private val pref: PreferenceWrapper? by lazy {
         context?.let {
@@ -210,7 +218,9 @@ class SettingsFragment : PreferenceFragmentCompat(), Preference.OnPreferenceChan
                 enableCaptureButton()
             } else {
                 overlayPermissionRequested = true
-                PermissionHelper.requestOverlayPermission(activity, MainActivity.REQUEST_CODE_OVERLAY_PERMISSION)
+                PermissionHelper.getOverlayPermissionIntent(activity)?.let { intent ->
+                    overlayPermissionLauncher.launch(intent)
+                }
             }
         } else {
             val intent = Intent(activity, ScryerService::class.java)
