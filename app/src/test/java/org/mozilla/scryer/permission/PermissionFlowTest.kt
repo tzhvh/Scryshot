@@ -33,6 +33,10 @@ class PermissionFlowTest {
             override fun isOverlayGranted(): Boolean {
                 return permissions[1]
             }
+
+            override fun isPostNotificationsGranted(): Boolean {
+                return permissions[0]
+            }
         }
 
         pageState = object : PermissionFlow.PageStateProvider {
@@ -131,6 +135,36 @@ class PermissionFlowTest {
 
         // Test
         verifyMethod().onPermissionFlowFinish()
+    }
+
+    /**
+     * Issue 23: PostNotificationsState sits between OverlayState.Granted and CaptureState.
+     * On the JVM (no Android SDK_INT), postNotificationsStepEnabled is false, so the state
+     * is a pass-through to CaptureState. This test pins that routing: overlay granted +
+     * post-notifications granted → flow reaches CaptureState (which shows the capture view).
+     * The API-33+ request-firing path is exercised by the manual smoke test.
+     */
+    @Test
+    fun overlayGranted_routesThroughPostNotificationsToCapture() {
+        permissions[0] = true   // post-notifications granted
+        permissions[1] = true   // overlay granted
+        pageState.setWelcomePageShown()
+
+        // Test: OverlayState.Granted → PostNotificationsState (pass-through) → CaptureState,
+        // which shows the capture view (same observable behavior as captureState_showCapturePage).
+        flow.start()
+        verifyMethod().showCapturePermissionView(any(), any())
+    }
+
+    /**
+     * Issue 23: PostNotificationsState direct entry also chains to CaptureState.
+     */
+    @Test
+    fun postNotificationsState_passesThroughToCapture() {
+        permissions[0] = true   // post-notifications granted → pass-through
+        flow.initialState = PermissionFlow.PostNotificationsState(flow)
+        flow.start()
+        verifyMethod().showCapturePermissionView(any(), any())
     }
 
     /**

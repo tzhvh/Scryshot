@@ -44,6 +44,7 @@ import org.mozilla.scryer.extension.navigateSafely
 import org.mozilla.scryer.filemonitor.ScreenshotFetcher
 import org.mozilla.scryer.permission.PermissionFlow
 import org.mozilla.scryer.permission.PermissionHelper
+import org.mozilla.scryer.permission.PermissionViewModel
 import org.mozilla.scryer.persistence.CollectionModel
 import org.mozilla.scryer.persistence.ScreenshotModel
 import org.mozilla.scryer.persistence.SuggestCollectionHelper
@@ -317,6 +318,14 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         PermissionHelper.requestOverlayPermission(activity, MainActivity.REQUEST_CODE_OVERLAY_PERMISSION)
     }
 
+    override fun requestPostNotificationsPermission() {
+        // Issue 23: fire the system POST_NOTIFICATIONS request (Android 13+). The result is
+        // delivered to MainActivity.onRequestPermissionsResult and routed to the flow via
+        // PermissionViewModel. No explanatory bottom dialog — per the harmonization decision.
+        PermissionHelper.requestPostNotificationsPermission(
+                activity, PermissionFlow.REQUEST_CODE_POST_NOTIFICATIONS)
+    }
+
     override fun launchSystemSettingPage() {
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
         intent.data = Uri.fromParts("package", activity?.packageName, null)
@@ -373,6 +382,15 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
     private fun initPermissionFlow() {
         permissionFlow = PermissionFlow(PermissionFlow.createDefaultPermissionProvider(activity),
                 PermissionFlow.createDefaultPageStateProvider(activity), this)
+
+        // Issue 23: forward runtime-permission results (POST_NOTIFICATIONS) to the flow so it
+        // advances past PostNotificationsState as soon as the system dialog closes, without
+        // waiting for the next onResume(). Overlay uses a separate startActivityForResult path.
+        ViewModelProvider(requireActivity()).get(PermissionViewModel::class.java)
+                .permissionRequest.observe(this.viewLifecycleOwner, EventObserver { results ->
+                    permissionFlow.onPermissionResult(
+                            PermissionFlow.REQUEST_CODE_POST_NOTIFICATIONS, results)
+                })
     }
 
     private fun createOptionsMenuSearchView(activity: Activity) {

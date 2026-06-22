@@ -6,6 +6,7 @@
 package org.mozilla.scryer.permission
 
 import android.content.Context
+import android.os.Build
 import android.preference.PreferenceManager
 import androidx.fragment.app.FragmentActivity
 import org.mozilla.scryer.MainActivity
@@ -19,6 +20,13 @@ class PermissionFlow(private var permissionState: PermissionStateProvider,
         private const val KEY_OVERLAY_PAGE_SHOWN = "overlay_page_shown"
         private const val KEY_CAPTURE_PAGE_SHOWN = "capture_page_shown"
 
+        /** Request code for the POST_NOTIFICATIONS runtime permission (issue 23, API 33+). */
+        const val REQUEST_CODE_POST_NOTIFICATIONS = 1001
+
+        /** Whether the POST_NOTIFICATIONS step is active at all — only on Android 13+. */
+        val postNotificationsStepEnabled: Boolean
+            get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+
         fun createDefaultPermissionProvider(activity: FragmentActivity?): PermissionStateProvider {
             val weakActivity = WeakReference<FragmentActivity>(activity)
             return object : PermissionFlow.PermissionStateProvider {
@@ -27,6 +35,17 @@ class PermissionFlow(private var permissionState: PermissionStateProvider,
                     return weakActivity.get()?.let {
                         PermissionHelper.hasOverlayPermission(it)
                     }?: false
+                }
+
+                override fun isPostNotificationsGranted(): Boolean {
+                    // Below Android 13 the permission doesn't exist → treat as granted so the
+                    // flow skips the state entirely (the guard in OverlayState also short-circuits).
+                    if (!postNotificationsStepEnabled) {
+                        return true
+                    }
+                    return weakActivity.get()?.let {
+                        PermissionHelper.hasPostNotificationsPermission(it)
+                    } ?: false
                 }
             }
         }
@@ -82,8 +101,14 @@ class PermissionFlow(private var permissionState: PermissionStateProvider,
         if (results.isEmpty()) {
             return
         }
-        // Storage-permission result handling was removed in issue 19b (minSdk 29 → storage
-        // is no longer a runtime permission). Issue 23 will add a POST_NOTIFICATIONS branch here.
+        // Issue 23: POST_NOTIFICATIONS result. The result is observed on the next
+        // PermissionFlow.start() (called from HomeFragment.onResume) via
+        // isPostNotificationsGranted(); no synchronous state push is needed here. Whether
+        // the user granted or denied, capture proceeds — only capture-result notifications
+        // are gated by this permission (the foreground-service notification is exempt by type).
+        if (requestCode == REQUEST_CODE_POST_NOTIFICATIONS) {
+            state = state.transfer(CaptureState(this))
+        }
     }
 
     interface ViewDelegate {
@@ -100,11 +125,17 @@ class PermissionFlow(private var permissionState: PermissionStateProvider,
 
         fun requestOverlayPermission()
 
+        /** Issue 23: fire the system POST_NOTIFICATIONS permission request (API 33+). */
+        fun requestPostNotificationsPermission()
+
         fun launchSystemSettingPage()
     }
 
     interface PermissionStateProvider {
         fun isOverlayGranted(): Boolean
+
+        /** Issue 23: whether POST_NOTIFICATIONS is granted (always true below Android 13). */
+        fun isPostNotificationsGranted(): Boolean
     }
 
     interface PageStateProvider {
@@ -161,7 +192,7 @@ class PermissionFlow(private var permissionState: PermissionStateProvider,
             })
         }
 
-        class Granted(private val flow: PermissionFlow) : OverlayState(flow) {
+        class Granted(private val flow: PermissionFlow) : State {
             override fun execute(): State {
                 flow.viewDelegate.onOverlayGranted()
 
@@ -169,7 +200,10 @@ class PermissionFlow(private var permissionState: PermissionStateProvider,
                     transfer(FinishState(flow))
                 } else {
                     flow.pageState.setOverlayPageShown()
-                    transfer(CaptureState(flow))
+                    // Issue 23: route through PostNotificationsState (Android 13+) before
+                    // CaptureState. PostNotificationsState short-circuits to CaptureState when
+                    // the step is disabled (< API 33) or already granted.
+                    transfer(PostNotificationsState(flow))
                 }
             }
         }
@@ -191,6 +225,28 @@ class PermissionFlow(private var permissionState: PermissionStateProvider,
             override fun execute(): State {
                 flow.viewDelegate.onOverlayDenied()
                 return transfer(FinishState(flow))
+            }
+        }
+    }
+
+    /**
+     * Issue 23: requests POST_NOTIFICATIONS (Android 13+) between the overlay step and
+     * capture onboarding. Per the harmonization decision, this requests the permission
+     * directly from the system — no explanatory bottom dialog. It always chains to
+     * [CaptureState] whether the user grants or denies: capture is unaffected; only the
+     * screenshot-detected result notification is gated (the foreground-service notification
+     * is exempt by type). The actual system request is fired by the ViewDelegate; the result
+     * comes back asynchronously via [onPermissionResult], which advances to CaptureState.
+     * If the step is disabled (< API 33) or the permission is already granted, this state
+     * is a pass-through.
+     */
+    open class PostNotificationsState(private val flow: PermissionFlow) : State {
+        override fun execute(): State {
+            return if (postNotificationsStepEnabled && !flow.permissionState.isPostNotificationsGranted()) {
+                flow.viewDelegate.requestPostNotificationsPermission()
+                this
+            } else {
+                transfer(CaptureState(flow))
             }
         }
     }
