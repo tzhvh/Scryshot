@@ -98,9 +98,7 @@ class SortingPanelDialog(
         GlobalScope.launch(Dispatchers.Main.immediate) {
             panelView.apply {
                 initPanelUI(this)
-                collectionSource = withContext(Dispatchers.Default) {
-                    ScreenshotViewModel.get(activity).getCollections()
-                }
+                collectionSource = ScreenshotViewModel.get(activity).getCollections()
                 callback = panelCallback
                 setActionCallback {
                     dismiss()

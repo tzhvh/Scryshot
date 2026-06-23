@@ -17,9 +17,13 @@ import android.widget.TextView
 import androidx.appcompat.widget.AppCompatImageView
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.LiveData
-import androidx.lifecycle.Observer
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.RecyclerView
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import com.bumptech.glide.Glide
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import org.mozilla.scryer.R
@@ -50,18 +54,7 @@ open class SortingPanel : FrameLayout, DefaultLifecycleObserver {
 
     private var actionCallback: (() -> Unit)? = null
 
-    private var collectionSourceObserver = Observer<List<CollectionModel>> { collections ->
-        collections?.filter {
-            it.id != CollectionModel.CATEGORY_NONE
-
-        }?.sortedBy {
-            it.createdDate
-
-        }?.let {
-            this.adapter.collections = it
-            this.adapter.notifyDataSetChanged()
-        }
-    }
+    private var collectionSourceJob: Job? = null
 
     var screenshot: ScreenshotModel? = null
         set(value) {
@@ -74,7 +67,7 @@ open class SortingPanel : FrameLayout, DefaultLifecycleObserver {
             }
         }
 
-    var collectionSource: LiveData<List<CollectionModel>>? = null
+    var collectionSource: Flow<List<CollectionModel>>? = null
 
     var callback: SortingPanelAdapter.Callback? = null
         set(value) {
@@ -101,11 +94,25 @@ open class SortingPanel : FrameLayout, DefaultLifecycleObserver {
     }
 
     override fun onStart(owner: LifecycleOwner) {
-        this.collectionSource?.observe(owner, this.collectionSourceObserver)
+        collectionSource?.let { flow ->
+            collectionSourceJob?.cancel()
+            collectionSourceJob = owner.lifecycleScope.launch {
+                flow.collect { collections ->
+                    collections.filter {
+                        it.id != CollectionModel.CATEGORY_NONE
+                    }.sortedBy {
+                        it.createdDate
+                    }.let {
+                        this@SortingPanel.adapter.collections = it
+                        this@SortingPanel.adapter.notifyDataSetChanged()
+                    }
+                }
+            }
+        }
     }
 
     override fun onStop(owner: LifecycleOwner) {
-        this.collectionSource?.removeObserver(this.collectionSourceObserver)
+        collectionSourceJob?.cancel()
     }
 
     private fun initView() {

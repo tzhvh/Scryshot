@@ -24,6 +24,8 @@ import androidx.core.graphics.drawable.DrawableCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.*
 import org.mozilla.scryer.Observer
 import org.mozilla.scryer.R
@@ -317,9 +319,13 @@ class SortingPanelActivity : AppCompatActivity(), CoroutineScope {
 
     private fun initSortingPanel() {
         val collectionData = screenshotViewModel.getCollections()
-        collectionData.observe(this, Observer { collection ->
-            unsortedCollection = collection.find { it.id == CollectionModel.CATEGORY_NONE }
-        })
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                collectionData.collect { collection ->
+                    unsortedCollection = collection.find { it.id == CollectionModel.CATEGORY_NONE }
+                }
+            }
+        }
 
         sortingPanel.collectionSource = collectionData
         sortingPanel.showCollectionPanel = shouldShowCollectionPanel

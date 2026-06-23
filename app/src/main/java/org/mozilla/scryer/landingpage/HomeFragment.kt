@@ -24,8 +24,11 @@ import androidx.appcompat.widget.AppCompatCheckBox
 import androidx.appcompat.widget.SearchView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.Observer
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.navigation.Navigation
 import androidx.preference.PreferenceManager
@@ -531,13 +534,15 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
             })
         }
 
-        viewModel.getScreenshots().observe(this.viewLifecycleOwner, Observer { screenshots ->
-            screenshots?.let { newList ->
-                val finalList = newList.sortedByDescending { it.lastModified }
-                        .subList(0, Math.min(newList.size, QUICK_ACCESS_ITEM_COUNT + 1))
-                updateQuickAccessListView(finalList)
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.getScreenshots().collect { screenshots ->
+                    val finalList = screenshots.sortedByDescending { it.lastModified }
+                            .subList(0, Math.min(screenshots.size, QUICK_ACCESS_ITEM_COUNT + 1))
+                    updateQuickAccessListView(finalList)
+                }
             }
-        })
+        }
     }
 
     private fun initCollectionList(context: Context) {
@@ -557,30 +562,38 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
                 spaceOuter,
                 0))
 
-        viewModel.getCollections().observe(this.viewLifecycleOwner, Observer { collections ->
-            collections?.asSequence()?.filter {
-                !SuggestCollectionHelper.isSuggestCollection(it)
-
-            }?.sortedBy {
-                it.createdDate
-
-            }?.toList()?.let {
-                updateCollectionListView(it)
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.getCollections().collect { collections ->
+                    collections.asSequence().filter {
+                        !SuggestCollectionHelper.isSuggestCollection(it)
+                    }.sortedBy {
+                        it.createdDate
+                    }.toList().let {
+                        updateCollectionListView(it)
+                    }
+                }
             }
-        })
+        }
 
-        viewModel.getCollectionCovers().observe(this.viewLifecycleOwner, Observer { coverMap ->
-            coverMap?.let { newData ->
-                mainAdapter?.coverList = newData
-                mainAdapter?.notifyDataSetChanged()
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.getCollectionCovers().collect { coverMap ->
+                    mainAdapter?.coverList = coverMap
+                    mainAdapter?.notifyDataSetChanged()
+                }
             }
-        })
+        }
 
-        viewModel.getScreenshots().observe(this.viewLifecycleOwner, Observer { screenshots ->
-            mainAdapter?.updateUnsortedCount(screenshots.filter {
-                it.collectionId == CollectionModel.UNCATEGORIZED
-            }.size)
-        })
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.getScreenshots().collect { screenshots ->
+                    mainAdapter?.updateUnsortedCount(screenshots.filter {
+                        it.collectionId == CollectionModel.UNCATEGORIZED
+                    }.size)
+                }
+            }
+        }
     }
 
     private fun updateQuickAccessListView(screenshots: List<ScreenshotModel>) {
@@ -609,7 +622,7 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         }
     }
 
-    private fun syncExternalScreenshots(
+    private suspend fun syncExternalScreenshots(
             localScreenshots: List<ScreenshotModel>
     ): List<ScreenshotModel> {
         val context = context ?: return emptyList()
@@ -705,7 +718,7 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
     /**
      * @return screenshots from external that hasn't been recorded in db
      */
-    private fun mergeExternalScreenshots(
+    private suspend fun mergeExternalScreenshots(
             externalList: List<ScreenshotModel>,
             dbList: List<ScreenshotModel>
     ): List<ScreenshotModel> {

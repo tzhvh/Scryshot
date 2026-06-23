@@ -25,6 +25,9 @@ import androidx.core.view.ViewCompat
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -386,7 +389,7 @@ class CollectionFragment : Fragment() {
         })
 
         val viewModel = ScreenshotViewModel.get(this)
-        val liveData = collectionId?.let {
+        val screenshotsFlow = collectionId?.let {
             val idList = if (it == CollectionModel.CATEGORY_NONE) {
                 listOf(CollectionModel.UNCATEGORIZED, CollectionModel.CATEGORY_NONE)
             } else {
@@ -396,33 +399,41 @@ class CollectionFragment : Fragment() {
 
         } ?: viewModel.getScreenshots()
 
-        liveData.observe(this, Observer { screenshots ->
-            if (screenshots.isNotEmpty()) {
-                subtitleView.visibility = View.VISIBLE
-                subtitleView.text = getString(R.string.collection_separator_shots, screenshots.size)
-                _binding?.emptyView?.visibility = View.GONE
-            } else {
-                subtitleView.visibility = View.INVISIBLE
-                _binding?.emptyView?.visibility = View.VISIBLE
-            }
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                screenshotsFlow.collect { screenshots ->
+                    if (screenshots.isNotEmpty()) {
+                        subtitleView.visibility = View.VISIBLE
+                        subtitleView.text = getString(R.string.collection_separator_shots, screenshots.size)
+                        _binding?.emptyView?.visibility = View.GONE
+                    } else {
+                        subtitleView.visibility = View.INVISIBLE
+                        _binding?.emptyView?.visibility = View.VISIBLE
+                    }
 
-            screenshots.sortedByDescending { it.lastModified }.let { sorted ->
-                screenshotAdapter.screenshotList = sorted
-                screenshotAdapter.notifyDataSetChanged()
-            }
+                    screenshots.sortedByDescending { it.lastModified }.let { sorted ->
+                        screenshotAdapter.screenshotList = sorted
+                        screenshotAdapter.notifyDataSetChanged()
+                    }
 
-            updateSortMenuItem(sortMenuItem)
-            updateSortMenuItem(selectMenuItem)
-        })
-
-        viewModel.getCollections().observe(this, Observer { collections ->
-            collections.find { it.id == collectionId }?.let {
-                getSupportActionBar(activity).apply {
-                    setDisplayHomeAsUpEnabled(true)
-                    this.title = it.name
+                    updateSortMenuItem(sortMenuItem)
+                    updateSortMenuItem(selectMenuItem)
                 }
             }
-        })
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.getCollections().collect { collections ->
+                    collections.find { it.id == collectionId }?.let {
+                        getSupportActionBar(activity).apply {
+                            setDisplayHomeAsUpEnabled(true)
+                            this.title = it.name
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

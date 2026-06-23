@@ -12,11 +12,15 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.view.ActionMode
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.DrawableCompat
-import androidx.lifecycle.LiveData
-import androidx.lifecycle.Observer
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import org.mozilla.scryer.R
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import org.mozilla.scryer.databinding.FragmentFullTextSearchBinding
 import org.mozilla.scryer.ScryerApplication
 import org.mozilla.scryer.collectionview.*
@@ -44,8 +48,8 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
     private val binding get() = _binding!!
 
     private lateinit var screenshotAdapter: SearchAdapter
-    private lateinit var liveData: LiveData<List<ScreenshotModel>>
-    private lateinit var collectionList: List<CollectionModel>
+    private var searchJob: Job? = null
+    private var collectionList = emptyList<CollectionModel>()
     private lateinit var viewModel: ScreenshotViewModel
 
     private var actionModeMenu: Menu? = null
@@ -182,44 +186,43 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         binding.searchEditText.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
-                liveData.removeObservers(this@FullTextSearchFragment)
-            }
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
 
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 screenshotAdapter.showLoadingView(LoadingViewModel(getText(R.string.search_transition_searching)))
-                liveData = viewModel.searchScreenshots(s.toString())
-            }
+                searchJob?.cancel()
+                searchJob = viewLifecycleOwner.lifecycleScope.launch {
+                    repeatOnLifecycle(Lifecycle.State.STARTED) {
+                        viewModel.searchScreenshots(s.toString()).collect { screenshots ->
+                            binding.subtitleLayout.visibility = if (screenshots.isEmpty()) {
+                                View.GONE
+                            } else {
+                                View.VISIBLE
+                            }
+                            binding.emptyView.visibility = if (screenshots.isEmpty() && s?.isNotEmpty() == true && !isIndexing && !isIndexError) {
+                                View.VISIBLE
+                            } else {
+                                View.GONE
+                            }
+                            binding.errorView.visibility = if (isIndexError && screenshots.isEmpty()) {
+                                View.VISIBLE
+                            } else {
+                                View.GONE
+                            }
 
-            override fun afterTextChanged(s: Editable?) {
-                liveData.observe(this@FullTextSearchFragment, Observer { screenshots ->
-                    binding.subtitleLayout.visibility = if (screenshots.isEmpty()) {
-                        View.GONE
-                    } else {
-                        View.VISIBLE
-                    }
-                    binding.emptyView.visibility = if (screenshots.isEmpty() && s?.isNotEmpty() == true && !isIndexing && !isIndexError) {
-                        View.VISIBLE
-                    } else {
-                        View.GONE
-                    }
-                    binding.errorView.visibility = if (isIndexError && screenshots.isEmpty()) {
-                        View.VISIBLE
-                    } else {
-                        View.GONE
-                    }
+                            if (s?.isEmpty() == true || !isIndexing) {
+                                screenshotAdapter.showLoadingView(null)
+                            }
 
-                    if (s?.isEmpty() == true || !isIndexing) {
-                        screenshotAdapter.showLoadingView(null)
-                    }
+                            binding.subtitleTextView.text = getString(R.string.search_separator_results, screenshots.size)
 
-                    binding.subtitleTextView.text = getString(R.string.search_separator_results, screenshots.size)
-
-                    screenshots.sortedByDescending { it.lastModified }.let { sorted ->
-                        screenshotAdapter.screenshotList = sorted
-                        screenshotAdapter.notifyDataSetChanged()
+                            screenshots.sortedByDescending { it.lastModified }.let { sorted ->
+                                screenshotAdapter.screenshotList = sorted
+                                screenshotAdapter.notifyDataSetChanged()
+                            }
+                        }
                     }
-                })
+                }
 
                 binding.clear.visibility = if (binding.searchEditText.text?.isNotEmpty() == true) {
                     View.VISIBLE
@@ -227,6 +230,8 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
                     View.INVISIBLE
                 }
             }
+
+            override fun afterTextChanged(s: Editable?) {}
         })
         binding.searchEditText.onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
             // Avoid showing keyboard again when returning to the previous page by back key.
@@ -372,14 +377,26 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
         })
 
         viewModel = ScreenshotViewModel.get(this)
-        liveData = viewModel.searchScreenshots("")
 
-        viewModel.getCollections().observe(this.viewLifecycleOwner, Observer { collections ->
-            collections?.asSequence()?.filter {
-                !SuggestCollectionHelper.isSuggestCollection(it)
-            }?.toList()?.let {
-                collectionList = it
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.getCollections().collect { collections ->
+                    collectionList = collections.asSequence().filter {
+                        !SuggestCollectionHelper.isSuggestCollection(it)
+                    }.toList()
+                }
             }
-        })
+        }
+
+        searchJob = viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.searchScreenshots("").collect { screenshots ->
+                    screenshots.sortedByDescending { it.lastModified }.let { sorted ->
+                        screenshotAdapter.screenshotList = sorted
+                        screenshotAdapter.notifyDataSetChanged()
+                    }
+                }
+            }
+        }
     }
 }
