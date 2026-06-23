@@ -12,6 +12,7 @@ import org.mozilla.scryer.scan.ContentScanner
 import org.mozilla.scryer.scan.ForegroundAndBackgroundCharging
 import org.mozilla.scryer.setting.PreferenceSettingsRepository
 import org.mozilla.scryer.setting.SettingsRepository
+import org.mozilla.scryer.util.launchIO
 
 class ScryerApplication : Application() {
     companion object {
@@ -52,7 +53,9 @@ class ScryerApplication : Application() {
 
 
         screenshotRepository = ScreenshotRepository.createRepository(this) {
-            screenshotRepository.setupDefaultContent(this)
+            launchIO {
+                screenshotRepository.setupDefaultContent(this@ScryerApplication)
+            }
         }
         settingsRepository = PreferenceSettingsRepository.getInstance(this)
 

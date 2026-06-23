@@ -6,12 +6,12 @@ package org.mozilla.scryer.scan
 
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.Observer
 import com.google.mlkit.common.MlKitException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import org.mozilla.scryer.ScryerApplication
 import org.mozilla.scryer.persistence.ScreenshotModel
@@ -19,11 +19,8 @@ import kotlin.coroutines.CoroutineContext
 
 class ForegroundScanner : CoroutineScope {
 
-    private val screenshotLiveData =
+    private val screenshotFlow =
             ScryerApplication.getScreenshotRepository().getScreenshots()
-    private val screenshotObserver = Observer<List<ScreenshotModel>> {
-        scheduleForegroundScan()
-    }
 
     private val progressState = MutableLiveData<ContentScanner.ProgressState>().apply {
         value = ContentScanner.ProgressState.Progress(0, 0)
@@ -31,6 +28,7 @@ class ForegroundScanner : CoroutineScope {
 
     private val parentJob = Job()
     private var scanJob: Job? = null
+    private var screenshotCollectionJob: Job? = null
     private var isScanning = false
     // Conflated channel preserves the "drop intermediate triggers, run at most
     // one outstanding scan" semantics of the old `actor` builder (removed in
@@ -44,11 +42,13 @@ class ForegroundScanner : CoroutineScope {
 
     fun onStart() {
         prepareScan()
-        screenshotLiveData.observeForever(screenshotObserver)
+        screenshotCollectionJob = launch {
+            screenshotFlow.collect { scheduleForegroundScan() }
+        }
     }
 
     fun onStop() {
-        screenshotLiveData.removeObserver(screenshotObserver)
+        screenshotCollectionJob?.cancel()
         cancelScan()
     }
 
