@@ -5,8 +5,8 @@
 
 package org.mozilla.scryer.repository
 
-import androidx.lifecycle.LiveData
 import android.content.Context
+import kotlinx.coroutines.flow.Flow
 import org.mozilla.scryer.persistence.CollectionModel
 import org.mozilla.scryer.persistence.ScreenshotContentModel
 import org.mozilla.scryer.persistence.ScreenshotModel
@@ -18,32 +18,30 @@ interface ScreenshotRepository {
         }
     }
 
-    fun addCollection(collection: CollectionModel)
-    fun getCollections(): LiveData<List<CollectionModel>>
-    fun getCollectionList(): List<CollectionModel>
-    fun getCollection(id: String): CollectionModel?
+    suspend fun addCollection(collection: CollectionModel)
+    fun getCollections(): Flow<List<CollectionModel>>
+    suspend fun getCollectionList(): List<CollectionModel>
+    suspend fun getCollection(id: String): CollectionModel?
     /** collection_id to model */
-    fun getCollectionCovers(): LiveData<Map<String, ScreenshotModel>>
-    fun updateCollection(collection: CollectionModel)
-    fun updateCollectionId(collection: CollectionModel, id: String)
-    fun deleteCollection(collection: CollectionModel)
+    fun getCollectionCovers(): Flow<Map<String, ScreenshotModel>>
+    suspend fun updateCollection(collection: CollectionModel)
+    suspend fun updateCollectionId(collection: CollectionModel, id: String)
+    suspend fun deleteCollection(collection: CollectionModel)
 
-    fun addScreenshot(screenshots: List<ScreenshotModel>)
-    fun updateScreenshots(screenshots: List<ScreenshotModel>)
-    fun getScreenshot(screenshotId: String): ScreenshotModel?
-    fun getScreenshots(): LiveData<List<ScreenshotModel>>
-    fun getScreenshotList(): List<ScreenshotModel>
-    fun getScreenshots(collectionIds: List<String>): LiveData<List<ScreenshotModel>>
-    fun getScreenshotList(collectionIds: List<String>): List<ScreenshotModel>
-    fun deleteScreenshot(screenshot: ScreenshotModel)
-    fun searchScreenshots(queryText: String): LiveData<List<ScreenshotModel>>
-    fun searchScreenshotList(queryText: String): List<ScreenshotModel>
+    suspend fun addScreenshot(screenshots: List<ScreenshotModel>)
+    suspend fun updateScreenshots(screenshots: List<ScreenshotModel>)
+    suspend fun getScreenshot(screenshotId: String): ScreenshotModel?
+    fun getScreenshots(): Flow<List<ScreenshotModel>>
+    suspend fun getScreenshotList(): List<ScreenshotModel>
+    fun getScreenshots(collectionIds: List<String>): Flow<List<ScreenshotModel>>
+    suspend fun getScreenshotList(collectionIds: List<String>): List<ScreenshotModel>
+    suspend fun deleteScreenshot(screenshot: ScreenshotModel)
+    fun searchScreenshots(queryText: String): Flow<List<ScreenshotModel>>
+    suspend fun searchScreenshotList(queryText: String): List<ScreenshotModel>
 
-    fun getScreenshotContent(): LiveData<List<ScreenshotContentModel>>
-    fun updateScreenshotContent(screenshotContent: ScreenshotContentModel)
-    fun getContentText(screenshot: ScreenshotModel): String?
+    fun getScreenshotContent(): Flow<List<ScreenshotContentModel>>
+    suspend fun updateScreenshotContent(screenshotContent: ScreenshotContentModel)
+    suspend fun getContentText(screenshot: ScreenshotModel): String?
 
-    fun setupDefaultContent(context: Context) {
-        TODO("not implemented")
-    }
+    suspend fun setupDefaultContent(context: Context)
 }

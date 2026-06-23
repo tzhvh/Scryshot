@@ -6,19 +6,18 @@
 package org.mozilla.scryer.repository
 
 import android.content.Context
-import androidx.lifecycle.LiveData
-import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.switchMap
+import androidx.lifecycle.asFlow
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
-import androidx.sqlite.db.SimpleSQLiteQuery
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import org.mozilla.scryer.R
 import org.mozilla.scryer.persistence.*
-import org.mozilla.scryer.util.launchIO
 
 class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : ScreenshotRepository {
 
@@ -80,127 +79,151 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
         }
     }
 
-    private var collectionListData = database.collectionDao().getCollections()
+    private val collectionListData = database.collectionDao().getCollections()
     private val screenshotListData = database.screenshotDao().getScreenshots()
 
-    override fun addScreenshot(screenshots: List<ScreenshotModel>) {
-        database.screenshotDao().addScreenshot(screenshots)
-    }
-
-    override fun updateScreenshots(screenshots: List<ScreenshotModel>) {
-        database.screenshotDao().updateScreenshot(screenshots)
-    }
-
-    override fun getScreenshot(screenshotId: String): ScreenshotModel? {
-        return database.screenshotDao().getScreenshot(screenshotId)
-    }
-
-    override fun getScreenshots(collectionIds: List<String>): LiveData<List<ScreenshotModel>> {
-        return database.screenshotDao().getScreenshots(collectionIds)
-    }
-
-    override fun getScreenshots(): LiveData<List<ScreenshotModel>> {
-        return screenshotListData
-    }
-
-    override fun deleteScreenshot(screenshot: ScreenshotModel) {
-        database.screenshotDao().deleteScreenshot(screenshot)
-    }
-
-    override fun getCollections(): LiveData<List<CollectionModel>> {
-        return collectionListData
-    }
-
-    override fun getCollectionList(): List<CollectionModel> {
-        return database.collectionDao().getCollectionList()
-    }
-
-    override fun addCollection(collection: CollectionModel) {
-        database.collectionDao().addCollection(collection)
-    }
-
-    override fun getCollection(id: String): CollectionModel? {
-        return database.collectionDao().getCollection(id)
-    }
-
-    override fun getCollectionCovers(): LiveData<Map<String, ScreenshotModel>> {
-        return database.screenshotDao().getCollectionCovers().switchMap { models ->
-            MutableLiveData<Map<String, ScreenshotModel>>().apply {
-                value = models.map { it.collectionId to it }.toMap()
-            }
+    override suspend fun addScreenshot(screenshots: List<ScreenshotModel>) {
+        withContext(Dispatchers.IO) {
+            database.screenshotDao().addScreenshot(screenshots)
         }
     }
 
-    override fun updateCollection(collection: CollectionModel) {
-        database.collectionDao().updateCollection(collection)
-    }
-
-    override fun setupDefaultContent(context: Context) {
-        launchIO {
-            val none = CollectionModel(CollectionModel.CATEGORY_NONE,
-                    context.getString(R.string.home_action_unsorted), 0, 0)
-            addCollection(none)
-
-            val nameList = listOf(R.string.sorting_suggestion_1st,
-                    R.string.sorting_suggestion_2nd,
-                    R.string.sorting_suggestion_3rd,
-                    R.string.sorting_suggestion_4th,
-                    R.string.sorting_suggestion_5th)
-
-            if (nameList.size < SuggestCollectionHelper.suggestCollections.size) {
-                throw RuntimeException("Not enough name for all suggestion collection")
-            }
-
-            SuggestCollectionHelper.suggestCollections.forEachIndexed { index, collection ->
-                collection.name = context.getString(nameList[index])
-                addCollection(collection)
-            }
+    override suspend fun updateScreenshots(screenshots: List<ScreenshotModel>) {
+        withContext(Dispatchers.IO) {
+            database.screenshotDao().updateScreenshot(screenshots)
         }
     }
 
-    override fun getScreenshotList(): List<ScreenshotModel> {
-        return database.screenshotDao().getScreenshotList()
+    override suspend fun getScreenshot(screenshotId: String): ScreenshotModel? {
+        return withContext(Dispatchers.IO) {
+            database.screenshotDao().getScreenshot(screenshotId)
+        }
     }
 
-    override fun getScreenshotList(collectionIds: List<String>): List<ScreenshotModel> {
-        return database.screenshotDao().getScreenshotList(collectionIds)
+    override fun getScreenshots(collectionIds: List<String>): Flow<List<ScreenshotModel>> {
+        return database.screenshotDao().getScreenshots(collectionIds).asFlow()
     }
 
-    override fun deleteCollection(collection: CollectionModel) {
-        database.collectionDao().deleteCollection(collection)
+    override fun getScreenshots(): Flow<List<ScreenshotModel>> {
+        return screenshotListData.asFlow()
     }
 
-    override fun updateCollectionId(collection: CollectionModel, id: String) {
-        database.collectionDao().updateCollectionId(collection, id)
+    override suspend fun deleteScreenshot(screenshot: ScreenshotModel) {
+        withContext(Dispatchers.IO) {
+            database.screenshotDao().deleteScreenshot(screenshot)
+        }
     }
 
-    override fun searchScreenshots(queryText: String): LiveData<List<ScreenshotModel>> {
+    override fun getCollections(): Flow<List<CollectionModel>> {
+        return collectionListData.asFlow()
+    }
+
+    override suspend fun getCollectionList(): List<CollectionModel> {
+        return withContext(Dispatchers.IO) {
+            database.collectionDao().getCollectionList()
+        }
+    }
+
+    override suspend fun addCollection(collection: CollectionModel) {
+        withContext(Dispatchers.IO) {
+            database.collectionDao().addCollection(collection)
+        }
+    }
+
+    override suspend fun getCollection(id: String): CollectionModel? {
+        return withContext(Dispatchers.IO) {
+            database.collectionDao().getCollection(id)
+        }
+    }
+
+    override fun getCollectionCovers(): Flow<Map<String, ScreenshotModel>> {
+        return database.screenshotDao().getCollectionCovers().asFlow().map { models ->
+            models.map { it.collectionId to it }.toMap()
+        }
+    }
+
+    override suspend fun updateCollection(collection: CollectionModel) {
+        withContext(Dispatchers.IO) {
+            database.collectionDao().updateCollection(collection)
+        }
+    }
+
+    override suspend fun setupDefaultContent(context: Context) {
+        val none = CollectionModel(CollectionModel.CATEGORY_NONE,
+                context.getString(R.string.home_action_unsorted), 0, 0)
+        addCollection(none)
+
+        val nameList = listOf(R.string.sorting_suggestion_1st,
+                R.string.sorting_suggestion_2nd,
+                R.string.sorting_suggestion_3rd,
+                R.string.sorting_suggestion_4th,
+                R.string.sorting_suggestion_5th)
+
+        if (nameList.size < SuggestCollectionHelper.suggestCollections.size) {
+            throw RuntimeException("Not enough name for all suggestion collection")
+        }
+
+        SuggestCollectionHelper.suggestCollections.forEachIndexed { index, collection ->
+            collection.name = context.getString(nameList[index])
+            addCollection(collection)
+        }
+    }
+
+    override suspend fun getScreenshotList(): List<ScreenshotModel> {
+        return withContext(Dispatchers.IO) {
+            database.screenshotDao().getScreenshotList()
+        }
+    }
+
+    override suspend fun getScreenshotList(collectionIds: List<String>): List<ScreenshotModel> {
+        return withContext(Dispatchers.IO) {
+            database.screenshotDao().getScreenshotList(collectionIds)
+        }
+    }
+
+    override suspend fun deleteCollection(collection: CollectionModel) {
+        withContext(Dispatchers.IO) {
+            database.collectionDao().deleteCollection(collection)
+        }
+    }
+
+    override suspend fun updateCollectionId(collection: CollectionModel, id: String) {
+        withContext(Dispatchers.IO) {
+            database.collectionDao().updateCollectionId(collection, id)
+        }
+    }
+
+    override fun searchScreenshots(queryText: String): Flow<List<ScreenshotModel>> {
         return MatchStrategy().search(queryText, database)
     }
 
-    override fun searchScreenshotList(queryText: String): List<ScreenshotModel> {
+    override suspend fun searchScreenshotList(queryText: String): List<ScreenshotModel> {
         return MatchStrategy().searchList(queryText, database)
     }
 
-    override fun getScreenshotContent(): LiveData<List<ScreenshotContentModel>> {
-        return database.screenshotDao().getScreenshotContent()
+    override fun getScreenshotContent(): Flow<List<ScreenshotContentModel>> {
+        return database.screenshotDao().getScreenshotContent().asFlow()
     }
 
-    override fun updateScreenshotContent(screenshotContent: ScreenshotContentModel) {
-        return database.screenshotDao().updateContentText(screenshotContent)
+    override suspend fun updateScreenshotContent(screenshotContent: ScreenshotContentModel) {
+        withContext(Dispatchers.IO) {
+            database.screenshotDao().updateContentText(screenshotContent)
+        }
     }
 
-    override fun getContentText(screenshot: ScreenshotModel): String? {
-        return database.screenshotDao().getContentText(screenshot.id)?.contentText
+    override suspend fun getContentText(screenshot: ScreenshotModel): String? {
+        return withContext(Dispatchers.IO) {
+            database.screenshotDao().getContentText(screenshot.id)?.contentText
+        }
     }
 
     private interface SearchStrategy {
         fun search(
                 queryText: String,
                 database: ScreenshotDatabase
-        ): LiveData<List<ScreenshotModel>>
+        ): Flow<List<ScreenshotModel>>
 
-        fun searchList(
+        suspend fun searchList(
                 queryText: String,
                 database: ScreenshotDatabase
         ): List<ScreenshotModel>
@@ -210,71 +233,23 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
         override fun search(
                 queryText: String,
                 database: ScreenshotDatabase
-        ): LiveData<List<ScreenshotModel>> {
-            return database.screenshotDao().searchScreenshots(processQuery(queryText))
+        ): Flow<List<ScreenshotModel>> {
+            return database.screenshotDao().searchScreenshots(processQuery(queryText)).asFlow()
         }
 
-        override fun searchList(
+        override suspend fun searchList(
                 queryText: String,
                 database: ScreenshotDatabase
         ): List<ScreenshotModel> {
-            return database.screenshotDao().searchScreenshotList(processQuery(queryText))
+            return withContext(Dispatchers.IO) {
+                database.screenshotDao().searchScreenshotList(processQuery(queryText))
+            }
         }
 
         private fun processQuery(queryText: String): String {
             return queryText
                     .split("[ \"\\-*]".toRegex())
                     .joinToString(" ", "", "*")
-        }
-    }
-
-    private class TwoWayStrategy : SearchStrategy {
-        override fun search(
-                queryText: String,
-                database: ScreenshotDatabase
-        ): LiveData<List<ScreenshotModel>> {
-            val useFts = queryText.all { Character.isLetterOrDigit(it) }
-            if (useFts) {
-                return database.screenshotDao().searchScreenshots(
-                        queryText
-                                .split(" ")
-                                .joinToString(" ", "*", "*")
-                )
-
-            } else {
-                val liveData = MutableLiveData<List<ScreenshotModel>>()
-                return database.screenshotDao().getScreenshotContent().switchMap {
-                    launchIO {
-                        val args = queryText.split(" ").map { term -> "%$term%" }
-                        val whereClauseBuilder = StringBuilder()
-                        for (index in 0 until args.size) {
-                            whereClauseBuilder.append("${if (index > 0) {
-                                " AND "
-                            } else {
-                                ""
-                            }}content_text like ?")
-                        }
-
-                        val contentSql = "SELECT content.* " +
-                                "FROM screenshot_content content " +
-                                "WHERE $whereClauseBuilder"
-                        val sql = "SELECT s.* " +
-                                "FROM screenshot s " +
-                                "INNER JOIN ($contentSql) result " +
-                                "ON s.id = result.id"
-                        val query = SimpleSQLiteQuery(sql, args.toTypedArray())
-                        val result = database.screenshotDao().searchScreenshotsRaw(query)
-                        withContext (Dispatchers.Main) {
-                            liveData.value = result
-                        }
-                    }
-                    liveData
-                }
-            }
-        }
-
-        override fun searchList(queryText: String, database: ScreenshotDatabase): List<ScreenshotModel> {
-            TODO("not implemented")
         }
     }
 }

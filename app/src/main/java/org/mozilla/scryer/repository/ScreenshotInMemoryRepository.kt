@@ -5,8 +5,9 @@
 
 package org.mozilla.scryer.repository
 
-import androidx.lifecycle.LiveData
-import androidx.lifecycle.MutableLiveData
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.mozilla.scryer.persistence.CollectionModel
 import org.mozilla.scryer.persistence.ScreenshotContentModel
 import org.mozilla.scryer.persistence.ScreenshotModel
@@ -14,96 +15,93 @@ import org.mozilla.scryer.persistence.ScreenshotModel
 @Suppress("unused")
 class ScreenshotInMemoryRepository : ScreenshotRepository {
 
-    private val collectionData = MutableLiveData<List<CollectionModel>>()
+    private val collectionData = MutableStateFlow<List<CollectionModel>>(emptyList())
     private val collectionList = mutableListOf<CollectionModel>()
-    private val screenshotData = MutableLiveData<List<ScreenshotModel>>()
+    private val screenshotData = MutableStateFlow<List<ScreenshotModel>>(emptyList())
     private val screenshotList = mutableListOf<ScreenshotModel>()
-    private val screenshotContentData = MutableLiveData<List<ScreenshotContentModel>>()
+    private val screenshotContentData = MutableStateFlow<List<ScreenshotContentModel>>(emptyList())
 
-    init {
-        collectionData.value = collectionList
-        screenshotData.value = screenshotList
-    }
-
-    override fun addCollection(collection: CollectionModel) {
+    override suspend fun addCollection(collection: CollectionModel) {
         collectionList.add(collection)
-        collectionData.value = collectionList
+        collectionData.value = collectionList.toList()
     }
 
-    override fun getCollections(): LiveData<List<CollectionModel>> {
-        return collectionData
+    override fun getCollections(): Flow<List<CollectionModel>> {
+        return collectionData.asStateFlow()
     }
 
-    override fun getCollectionList(): List<CollectionModel> {
+    override suspend fun getCollectionList(): List<CollectionModel> {
         return collectionList
     }
 
-    override fun getCollectionCovers(): LiveData<Map<String, ScreenshotModel>> {
-        return MutableLiveData<Map<String, ScreenshotModel>>()
+    override fun getCollectionCovers(): Flow<Map<String, ScreenshotModel>> {
+        return MutableStateFlow(emptyMap())
     }
 
-    override fun addScreenshot(screenshots: List<ScreenshotModel>) {
+    override suspend fun addScreenshot(screenshots: List<ScreenshotModel>) {
         screenshotList.addAll(screenshots)
-        screenshotData.value = screenshotList
+        screenshotData.value = screenshotList.toList()
     }
 
-    override fun updateScreenshots(screenshots: List<ScreenshotModel>) {
-        screenshotData.value = screenshotList
+    override suspend fun updateScreenshots(screenshots: List<ScreenshotModel>) {
+        screenshotData.value = screenshotList.toList()
     }
 
-    override fun getScreenshot(screenshotId: String): ScreenshotModel? {
+    override suspend fun getScreenshot(screenshotId: String): ScreenshotModel? {
         return screenshotList.find { it.id == screenshotId }
     }
 
-    override fun getScreenshots(): LiveData<List<ScreenshotModel>> {
-        return screenshotData
+    override fun getScreenshots(): Flow<List<ScreenshotModel>> {
+        return screenshotData.asStateFlow()
     }
 
-    override fun getScreenshots(collectionIds: List<String>): LiveData<List<ScreenshotModel>> {
-        return screenshotData
+    override fun getScreenshots(collectionIds: List<String>): Flow<List<ScreenshotModel>> {
+        return screenshotData.asStateFlow()
     }
 
-    override fun deleteScreenshot(screenshot: ScreenshotModel) {
+    override suspend fun deleteScreenshot(screenshot: ScreenshotModel) {
         screenshotList.remove(screenshot)
-        screenshotData.value = screenshotList
+        screenshotData.value = screenshotList.toList()
     }
 
-    override fun getScreenshotList(): List<ScreenshotModel> {
+    override suspend fun getScreenshotList(): List<ScreenshotModel> {
         return screenshotList
     }
 
-    override fun getScreenshotList(collectionIds: List<String>): List<ScreenshotModel> {
+    override suspend fun getScreenshotList(collectionIds: List<String>): List<ScreenshotModel> {
         return screenshotList
     }
 
-    override fun updateCollection(collection: CollectionModel) {
+    override suspend fun updateCollection(collection: CollectionModel) {
     }
 
-    override fun deleteCollection(collection: CollectionModel) {
+    override suspend fun deleteCollection(collection: CollectionModel) {
     }
 
-    override fun updateCollectionId(collection: CollectionModel, id: String) {
+    override suspend fun updateCollectionId(collection: CollectionModel, id: String) {
     }
 
-    override fun getCollection(id: String): CollectionModel? {
+    override suspend fun getCollection(id: String): CollectionModel? {
         return null
     }
 
-    override fun searchScreenshots(queryText: String): LiveData<List<ScreenshotModel>> {
-        return screenshotData
+    override fun searchScreenshots(queryText: String): Flow<List<ScreenshotModel>> {
+        return screenshotData.asStateFlow()
     }
 
-    override fun searchScreenshotList(queryText: String): List<ScreenshotModel> {
+    override suspend fun searchScreenshotList(queryText: String): List<ScreenshotModel> {
         return screenshotList
     }
 
-    override fun updateScreenshotContent(screenshotContent: ScreenshotContentModel) {}
+    override suspend fun updateScreenshotContent(screenshotContent: ScreenshotContentModel) {}
 
-    override fun getContentText(screenshot: ScreenshotModel): String? {
+    override suspend fun getContentText(screenshot: ScreenshotModel): String? {
         return ""
     }
 
-    override fun getScreenshotContent(): LiveData<List<ScreenshotContentModel>> {
-        return screenshotContentData
+    override fun getScreenshotContent(): Flow<List<ScreenshotContentModel>> {
+        return screenshotContentData.asStateFlow()
     }
+
+    override suspend fun setupDefaultContent(context: android.content.Context) {}
 }
