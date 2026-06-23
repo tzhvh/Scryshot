@@ -21,7 +21,7 @@
     <string name="notification_action_collect">Tap to sort your screenshots</string>
 
     <!-- Sorting panel: strings displayed on the sorting panel to help users categorize screenshots, 
-    Refer to UX spec 1.1: https://mozilla.invisionapp.com/share/24N3MMQB986#/310133909_1-1_Key_Flow_Add_To_Collection -->
+    Refer to UX spec 1.1: legacy UX spec 1.1 -->
     <!-- String displayed to skip the current screenshot and move on to the next one -->
     <string name="multisorting_action_next">Next</string>
     <!-- String displayed on the title of sorting panel and the screenshot will be categorized to a collection -->
@@ -40,7 +40,7 @@
     <string name="dialogue_action_add">Add</string>
 
     <!-- Home view: strings displayed on the home view,
-    Refer to UX spec 2.1: https://mozilla.invisionapp.com/share/24N3MMQB986#/310133914_2-1_Navigation-->
+    Refer to UX spec 2.1: legacy UX spec 2.1-->
     <string name="home_action_search">Search</string>
     <string name="menu_home_action_settings">Settings</string>
     <string name="home_separator_access">Quick access</string>
@@ -93,7 +93,7 @@
     <string name="dialogue_rename_error_duplicate">There is already a collection with this name</string>
     <string name="dialogue_rename_error_maximum">20 characters maximum</string>
     <!-- Dialogue: Strings displayed when users skip multi-sorting panel,
-    Refer to UX spec 2.4_E: https://mozilla.invisionapp.com/share/24N3MMQB986#/310133917_2-4_Detect_New_Screenshots-->
+    Refer to UX spec 2.4_E: legacy UX spec 2.4_E-->
     <string name="dialogue_skipsorting_title_skip">Skip the rest?</string>
     <string name="dialogue_skipsorting_content_moveto">Skip remaining screenshots and move to “Unsorted?”</string>
     <!-- Parameter %1$d is the quantity of screenshot files, i.e. 100 remaining -->
@@ -113,12 +113,12 @@
     <string name="menu_shot_action_move">Move to&#8230;</string>
     <string name="menu_action_rename">Rename</string>
     <!-- Strings displayed to perform actions when selecting text on the screenshot,
-    Refer to UX spec 4.2_G&I: https://mozilla.invisionapp.com/share/24N3MMQB986#/310133922_4-2_Image_-_Text_Mode-->
+    Refer to UX spec 4.2_G&I: legacy UX spec 4.2_G&I-->
     <string name="menu_ocr_action_web">Web search</string>
     <string name="menu_ocr_action_copy">Copy</string>
     <string name="menu_action_selectall">Select all</string>
 
-    <!-- Bottom sheet: strings displayed on the reminder panel, and the placeholder %1$s is the app name, ScreenshotGo -->
+    <!-- Bottom sheet: strings displayed on the reminder panel, and the placeholder %1$s is the app name -->
     <string name="sheet_enable_title_enable">Enable %1$s to take screenshots?</string>
     <string name="sheet_enable_content_enable">You won’t be able to take screenshots with one tap unless this is enabled.</string>
     <!-- String displayed to allow users to enable the screenshot service -->
@@ -142,7 +142,7 @@
     <string name="snackbar_copied">Copied</string>
 
     <!-- Settings: strings displayed in the settings page,
-    Refer to UX spec 6.1: https://mozilla.invisionapp.com/share/24N3MMQB986#/310133927_6-1_Settings -->
+    Refer to UX spec 6.1: legacy UX spec 6.1 -->
     <!-- the string displayed to inform users this switch needs to be enabled to take screenshots. If enabled, the system reveals two more options for users to customize -->
     <string name="settings_list_capture">Enable screenshot feature</string>
     <!-- The string changes to serve as description of settings_list_fab -->
@@ -159,7 +159,7 @@
     <string name="feedback_action_rate">Yes, rate 5 stars!</string>
     <string name="feedback_action_feedback">No, send feedback.</string>
     <string name="settings_list_share">Share with friends</string>
-    <!-- The strings displys when users share the app with friends. %1$s is the app name i.e. Firefox ScreenshotGo, and %2$s is the Google Play url -->
+    <!-- The strings displays when users share the app with friends. %1$s is the app name i.e. Scryshot, and %2$s is the Google Play url -->
     <string name="share_intro">Hey, check out this new app that helps you organize and find your screenshots easily. It’s called %1$s. %2$s</string>
     <string name="settings_list_about">About</string>
     <string name="about_title_name" translatable="false">@string/app_full_name</string>
@@ -182,7 +182,7 @@
     <string name="onboarding_autogrant_overlay_title">Use the %1$s button to take and organize screenshots anytime, anywhere.</string>
     <string name="onboarding_autogrant_overlay_gotit">Got it</string>
     <!-- Onboarding: strings to inform users that the search feature is WIP,
-    Refer to UX spec 7.3: https://mozilla.invisionapp.com/share/24N3MMQB986#/310133930_7-3_Other_Oborading -->
+    Refer to UX spec 7.3 (legacy): Other Onboarding -->
     <string name="onboarding_search_title_soon">Search is coming soon!</string>
     <!-- The string displayed to describe the survey -->
     <string name="onboarding_search_content_survey">We’re working on a magic feature to help you search screenshots with text. Interested?</string>
@@ -194,16 +194,16 @@
     <string name="onboarding_ocr_title_more">Take Action on Text</string>
     <!-- String displayed to give examples of what the new feature can do -->
     <string name="onboarding_ocr_content_examples">Copy the text in your screenshot for web search, share or more.</string>
-    <!-- Onboarding: strings displayed with an illustration to introduce users the new search feature, Refer to UX spec 5-1 https://mozilla.invisionapp.com/share/24N3MMQB986#/310133925_5-1_Search -->
+    <!-- Onboarding: strings displayed with an illustration to introduce users the new search feature -->
     <string name="onboarding_search_title_search">Finding screenshots is now easier</string>
     <!-- String displayed to instruct users to type words to search -->
     <string name="onboarding_search_content_typeword">Just type to search words within screenshots</string>
     <!-- String displayed to inform users recognition costs more battery -->
     <string name="onboarding_search_caption_battery">To make this happen, we’ll recognize your screenshot first. It may consume more battery, but it won’t take long!</string>
     
-    <!-- Parameter %1$s is the app name, i.e. Firefox ScreenshotGo -->
+    <!-- Parameter %1$s is the app name, i.e. Scryshot -->
     <string name="dialogue_feedback_title">Love %1$s?</string>
-    <!-- Parameter %1$s is the app name, i.e. Firefox ScreenshotGo -->
+    <!-- Parameter %1$s is the app name, i.e. Scryshot -->
     <string name="dialogue_share_title">Share %1$s with Friends!</string>
     <string name="dialogue_take_share_description">Enjoy taking screenshots? Share it now!</string>
     <string name="dialogue_sort_share_description">Enjoy organizing screenshots? Share it now!</string>

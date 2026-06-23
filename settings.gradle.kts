@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ScreenshotGo"
+rootProject.name = "Scryshot"
 include(":app")

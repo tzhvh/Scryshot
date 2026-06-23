@@ -9,7 +9,7 @@
     android:layout_height="match_parent"
     tools:context=".sortingpanel.SortingPanelActivity">
 
-    <org.mozilla.scryer.sortingpanel.SortingPanel
+    <io.github.tzhvh.scryernext.sortingpanel.SortingPanel
         android:id="@+id/sorting_panel"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />

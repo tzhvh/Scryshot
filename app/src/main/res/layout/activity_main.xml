@@ -17,7 +17,7 @@
         android:id="@+id/main_nav_host_fragment"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:name="org.mozilla.scryer.NavHostInsetAwareFragment"
+        android:name="io.github.tzhvh.scryernext.NavHostInsetAwareFragment"
         app:navGraph="@navigation/nav_graph"
         app:defaultNavHost="true" />
 

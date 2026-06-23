@@ -8,7 +8,7 @@
     app:startDestination="@id/MainFragment">
     <fragment
         android:id="@+id/MainFragment"
-        android:name="org.mozilla.scryer.landingpage.HomeFragment"
+        android:name="io.github.tzhvh.scryernext.landingpage.HomeFragment"
         android:label="Main">
         <action
             android:id="@+id/action_navigate_to_collection"
@@ -34,7 +34,7 @@
     </fragment>
     <fragment
         android:id="@+id/CollectionFragment"
-        android:name="org.mozilla.scryer.collectionview.CollectionFragment"
+        android:name="io.github.tzhvh.scryernext.collectionview.CollectionFragment"
         android:label="Collection">
         <argument android:name="collection_id" />
         <argument android:name="collection_name" />
@@ -48,11 +48,11 @@
     </fragment>
     <fragment
         android:id="@+id/SearchFragment"
-        android:name="org.mozilla.scryer.search.SearchFragment"
+        android:name="io.github.tzhvh.scryernext.search.SearchFragment"
         android:label="Search">
     </fragment>
     <fragment
         android:id="@+id/FullTextSearchFragment"
-        android:name="org.mozilla.scryer.search.FullTextSearchFragment"
+        android:name="io.github.tzhvh.scryernext.search.FullTextSearchFragment"
         android:label="FullTextSearch" />
 </navigation>

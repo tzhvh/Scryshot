@@ -1,0 +1,18 @@
+package io.github.tzhvh.scryernext.extension
+
+import android.os.Bundle
+import androidx.fragment.app.Fragment
+import androidx.navigation.NavController
+import androidx.navigation.Navigation
+
+fun NavController.navigateSafely(srcId: Int, actionId: Int, bundle: Bundle) {
+    if (currentDestination?.id == srcId) {
+        navigate(actionId, bundle)
+    }
+}
+
+fun Fragment.getNavController(): NavController? {
+    return view?.let {
+        Navigation.findNavController(it)
+    }
+}

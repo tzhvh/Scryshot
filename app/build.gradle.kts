@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "org.mozilla.scryer"
+    namespace = "io.github.tzhvh.scryernext"
     compileSdk = 35
 
     // Suppress deprecation warnings surfaced by the SDK 35 / AGP 8 bump that are
@@ -18,19 +18,12 @@ android {
     }
 
     defaultConfig {
-        applicationId = "org.mozilla.screenshot.go"
+        applicationId = "io.github.tzhvh.scryernext"
         minSdk = 29
         targetSdk = 35
         versionCode = 1
-        versionName = "0.8"
+        versionName = "1.0.0-next"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-        val buildNumber = System.getenv("BITRISE_BUILD_NUMBER")
-        if (!buildNumber.isNullOrBlank()) {
-            val n = buildNumber.toInt()
-            versionCode = n
-            versionNameSuffix = "($n)"
-        }
     }
 
     compileOptions {
@@ -65,7 +58,7 @@ android {
         }
         create("preview") {
             dimension = "product"
-            applicationId = "gro.allizom.scryer"
+            applicationId = "io.github.tzhvh.scryernext.preview"
             applicationIdSuffix = ""
             versionNameSuffix = ".nightly"
             resConfigs("en", "in")

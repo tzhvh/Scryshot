@@ -59,7 +59,7 @@
         android:elevation="2dp"
         android:visibility="gone">
 
-        <org.mozilla.scryer.detailpage.GraphicOverlay
+        <io.github.tzhvh.scryernext.detailpage.GraphicOverlay
             android:id="@+id/onboarding_overlay"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />

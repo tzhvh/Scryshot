@@ -29,7 +29,7 @@
 
 #   These fragment are referenced from navigation graph xml, so it's not retained during minify.
 #   This rule is a little too broad, because we might not need all the fragment in difference flavor
--keep class org.mozilla.scryer.** extends android.support.v4.app.Fragment{}
+-keep class io.github.tzhvh.scryernext.** extends androidx.fragment.app.Fragment{}
 
 #   Adjust
 -keep public class com.adjust.sdk.** { *; }
