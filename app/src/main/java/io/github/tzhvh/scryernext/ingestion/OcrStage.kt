@@ -7,13 +7,17 @@ package io.github.tzhvh.scryernext.ingestion
 
 /**
  * Result of attempting OCR on one [Candidate]. ADR 0004 §7.2's three-class
- * failure taxonomy is encoded here so issue `07` can refine the engine's
- * per-branch handling without a breaking change to [OcrStage]'s signature.
+ * failure taxonomy is encoded here, and [IngestionEngine] branches on it to
+ * decide the per-candidate write (issue `07`).
  *
- * Issue `06` uses only the [Success] branch to drive writes; [PermanentContentFailure]
- * and [TransientFailure] are counted and the run continues (a non-crashing
- * placeholder). Issue `07` populates the real taxonomy (write-empty-on-permanent,
- * throw/re-attempt-on-transient).
+ * | [OcrOutcome]              | Engine write            | Counter |
+ * |---------------------------|-------------------------|---------|
+ * | [Success]                 | text, `processed=true`  | indexed |
+ * | [PermanentContentFailure] | empty/null, `processed=true` | indexed (processed-but-empty) |
+ * | [TransientFailure]        | **nothing**             | failed  |
+ *
+ * A thrown write sink (Insert/store failure) is distinct from any [OcrOutcome] —
+ * the engine surfaces it as [Progress.Error] and stops.
  *
  * See: [ADR 0004 §7.2](../../../../../docs/adr/0004-ingestion-engine-and-trigger-architecture-v2.md)
  */
@@ -23,16 +27,17 @@ sealed interface OcrOutcome {
 
     /**
      * Permanent-content failure (corrupt bitmap, truly illegible image,
-     * unsupported format). Counted as *processed-but-empty* — the engine
-     * increments `failed` and continues; issue `07` writes a row with empty
-     * text + `processed = true` here.
+     * unsupported format). The engine writes a row with **empty/null text +
+     * `processed = true`** — "processed-but-empty," counted as *indexed* (toward
+     * completion) so it leaves the unindexed set and does not re-poison the
+     * backlog via Phase 2.5's discovery worker (ADR 0004 §7.2).
      */
     data object PermanentContentFailure : OcrOutcome
 
     /**
      * Transient failure (ML Kit model still downloading, binder timeout,
-     * transient I/O). Re-attemptable; the engine writes nothing. Issue `07`
-     * decides throw-vs-continue semantics.
+     * transient I/O). Re-attemptable: the engine **writes nothing** and counts
+     * it `failed`; the next run re-derives it from the unindexed set.
      */
     class TransientFailure(val cause: Throwable) : OcrOutcome
 }
@@ -45,12 +50,26 @@ sealed interface OcrOutcome {
  *
  * The real backend (a port of `OcrTextHelper.extractText(Bitmap)` +
  * `decodeFromUri`) is issue `08`; tests pass a fake that returns canned
- * [OcrOutcome]s. [attempt] reads [Candidate.byteHandle], decodes, and OCRs;
- * it never calls the repository (dedup is the engine's concern, not the stage's).
+ * [OcrOutcome]s.
  *
- * See: [ADR 0004 §2](../../../../../docs/adr/0004-ingestion-engine-and-trigger-architecture-v2.md)
+ * **Read ownership / stage boundary (issue `07`):** the **engine** owns the
+ * read — it calls [Candidate.byteHandle] exactly once (honouring Candidate's
+ * "at most once" contract) and hands the resulting bytes to [attempt]. [attempt]
+ * owns **decode + OCR** over those bytes; it never opens the byte-handle itself.
+ * This keeps the per-stage `Stopwatch` honest (`readMs` = engine, `ocrMs` =
+ * stage) and avoids double-I/O. Should issue `08`'s adapter want to expose
+ * `decodeMs` separately, it can fold its own internal timing into the returned
+ * outcome's context — but the seam here stays "bytes in, outcome out."
+ *
+ * [attempt] never calls the repository (dedup is the engine's concern, not the
+ * stage's).
+ *
+ * See: [ADR 0004 §2, §7.3](../../../../../docs/adr/0004-ingestion-engine-and-trigger-architecture-v2.md)
  */
 fun interface OcrStage {
-    /** Read [Candidate.byteHandle], decode, OCR. Never calls the repository. */
-    suspend fun attempt(candidate: Candidate): OcrOutcome
+    /**
+     * Decode + OCR the already-read [bytes]. Never calls the repository, never
+     * re-opens [Candidate.byteHandle] (the engine owns the read — see class KDoc).
+     */
+    suspend fun attempt(candidate: Candidate, bytes: ByteArray): OcrOutcome
 }

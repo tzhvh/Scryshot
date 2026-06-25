@@ -21,17 +21,23 @@ sealed interface Progress {
     /**
      * In-flight state. [current] is the count *processed this run*
      * (`(indexed + failed) so far`), **not** just indexed — a single failure
-     * must advance the bar (ADR 0004 §7.2). [stageTimings] is null until
-     * Phase 1 instruments the per-stage Stopwatch (task 1.4).
+     * must advance the bar (ADR 0004 §7.2). [stageTimings] carries the current
+     * rolling-average per-stage latency (issue `07`, ADR 0004 §7.3); it is the
+     * all-zero snapshot before any candidate is OCR'd.
      */
     data class Indexing(
         val current: Int,                          // (indexed + failed) so far in this run
         val total: Int,
         val failedCount: Int,
-        val stageTimings: StageTimings? = null     // null until Phase 1 instruments stages
+        val stageTimings: StageTimings? = null
     ) : Progress
 
-    /** Terminal success. Failures are included in completion. */
+    /**
+     * Terminal success. Failures are included in completion. [indexed] counts
+     * both genuinely-indexed candidates and **processed-but-empty** ones
+     * (permanent-content failures written `processed=true`, per ADR 0004 §7.2);
+     * [failed] counts transient failures only.
+     */
     data class Completed(
         val indexed: Int,
         val failed: Int,

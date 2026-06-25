@@ -6,12 +6,18 @@
 package io.github.tzhvh.scryernext.ingestion
 
 /**
- * Placeholder for the per-stage rolling-average latency (ADR 0004 §7.3).
+ * Rolling-average per-stage latency for one ingestion run (ADR 0004 §7.3).
  *
- * Phase 0 lands this only so [Progress.stageTimings] has a concrete type and
- * Phase 1 (task 1.4) can extend it without a breaking change to [Progress].
- * Resist filling in the rolling-average logic here — Phase 1 owns that; the
- * fields default to zero and the engine does not emit them yet.
+ * Populated by [IngestionEngine] (issue `07`) from [StageLatencyRollingAverage]
+ * snapshots — read/decode/OCR/write are timed with `System.nanoTime()` deltas
+ * and an EMA is maintained per stage, so each [Progress] emission carries a
+ * current estimate.
+ *
+ * **Stage boundary:** `readMs` = the [Candidate.byteHandle] invocation (owned by
+ * the engine); `ocrMs` = decode+OCR inside the injected [OcrStage] over the
+ * already-read bytes (issue `08`'s ML Kit adapter may later expose decodeMs
+ * separately); `writeMs` = the write sink. `decodeMs` is currently folded into
+ * `ocrMs` and stays `0.0` until the stage splits it out.
  *
  * See: [ADR 0004 §7.3](../../../../../docs/adr/0004-ingestion-engine-and-trigger-architecture-v2.md)
  */
