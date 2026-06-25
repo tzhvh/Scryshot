@@ -79,3 +79,7 @@ scratch/
 scratch_*
 tmp_scratch/
 #*.scratch
+
+# Skill inventory lockfile
+skills-lock.json
+CONTEXT.md
