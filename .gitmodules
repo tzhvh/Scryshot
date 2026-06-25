@@ -1,0 +1,3 @@
+[submodule "zvec-android/third_party/zvec"]
+	path = zvec-android/third_party/zvec
+	url = https://github.com/alibaba/zvec.git

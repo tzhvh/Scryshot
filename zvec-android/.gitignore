@@ -1,0 +1,6 @@
+# AGP externalNativeBuild cache (per-variant, per-ABI CMake state)
+.cxx/
+
+# Prebuilt engine library — a build artifact produced by scripts/build_libzvec.sh,
+# NOT source. Regenerated per ZVEC_VERSION bump; see README §"Submodule Bump Procedure".
+src/main/jniLibs/
