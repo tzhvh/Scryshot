@@ -32,7 +32,7 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
             return ScreenshotDatabaseRepository(
                     Room.databaseBuilder(context.applicationContext, ScreenshotDatabase::class.java,
                             "screenshot-db")
-                            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                             .addCallback(callback)
                             .build()
             )
@@ -59,7 +59,7 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
          * scoped storage, so the table is wiped and recreated rather than transformed. This is a
          * personal fork with no users to migrate; zvec treats path/URI as an opaque locator.
          */
-        private val MIGRATION_2_3 = object : Migration(2, 3) {
+         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 // Drop old screenshot artifacts (table, indices, FTS content) and let Room
                 // recreate the v3 schema from the @Entity definitions on first access.
@@ -76,6 +76,15 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
                 )
                 database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_screenshot_uri` ON `screenshot` (`uri`)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS `index_screenshot_collection_id` ON `screenshot` (`collection_id`)")
+            }
+        }
+
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE `screenshot` ADD COLUMN `processed` INTEGER NOT NULL DEFAULT 0")
+                database.execSQL(
+                        "UPDATE `screenshot` SET `processed` = 1 WHERE `id` IN (SELECT `id` FROM `screenshot_content` WHERE `content_text` IS NOT NULL)"
+                )
             }
         }
     }

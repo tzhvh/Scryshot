@@ -56,10 +56,9 @@ interface ScreenshotRepository {
      * `suspend` because the zvec-era content-hash computation streams bytes and can throw / be cancelled; a plain
      * `fun: Boolean` would foreclose that. This signature is the contract that survives the Room→zvec transition.
      *
-     * TODO(Phase 1): "known" must mean `processed = true`, not merely "a row exists" — otherwise permanent-content
-     * failures (corrupt/illegible, written with empty text + processed=true per ADR 0004 §7.2) re-poison the
-     * backlog via the discovery worker. Until the `processed` flag lands, this returns true iff an indexed record
-     * exists for the candidate's identity/locator — the same semantics as today's `getContentText == null` check.
+     * "known" means `processed = true` (an indexed record), and the implementation
+     * (`ScreenshotDatabaseRepository.isKnown` + `dbKeysByLocator`) honours the `processed`-aware
+     * query.
      */
     suspend fun isKnown(candidate: Candidate): Boolean
 
