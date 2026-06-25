@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import io.github.tzhvh.scryernext.R
 import io.github.tzhvh.scryernext.persistence.*
+import io.github.tzhvh.scryernext.ingestion.Candidate
 
 class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : ScreenshotRepository {
 
@@ -215,6 +216,24 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
         return withContext(Dispatchers.IO) {
             database.screenshotDao().getContentText(screenshot.id)?.contentText
         }
+    }
+
+    override suspend fun isKnown(candidate: Candidate): Boolean {
+        return withContext(Dispatchers.IO) {
+            when {
+                // A producer handed us a pre-computed identity. Under Room the locator *is* the identity (uri is
+                // the unique index), so treat a non-null identity as the locator to look up.
+                candidate.identity != null -> candidate.identity in dbKeysByLocator()
+                // No pre-computed identity: fall back to the locator (URI) lookup.
+                candidate.locator != null -> candidate.locator in dbKeysByLocator()
+                // Neither identity nor locator: conservatively unknown (the engine will attempt it).
+                else -> false
+            }
+        }
+    }
+
+    private fun dbKeysByLocator(): Set<String> {
+        return database.screenshotDao().getIndexedUris().toSet()
     }
 
     private interface SearchStrategy {
