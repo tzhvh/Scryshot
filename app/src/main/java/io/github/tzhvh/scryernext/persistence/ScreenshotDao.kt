@@ -81,6 +81,6 @@ interface ScreenshotDao {
     @Query("SELECT * FROM screenshot_content WHERE id = :screenshotId")
     fun getContentText(screenshotId: String): ScreenshotContentModel?
 
-    @Query("SELECT s.uri FROM screenshot s INNER JOIN screenshot_content c ON s.id = c.id")
+    @Query("SELECT uri FROM screenshot WHERE processed = 1")
     fun getIndexedUris(): List<String>
 }

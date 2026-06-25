@@ -99,6 +99,9 @@ class ScreenshotInMemoryRepository : ScreenshotRepository {
         screenshotContentList.removeAll { it.id == screenshotContent.id }
         screenshotContentList.add(screenshotContent)
         screenshotContentData.value = screenshotContentList.toList()
+        screenshotList.find { it.id == screenshotContent.id }?.let {
+            it.processed = true
+        }
     }
 
     override suspend fun getContentText(screenshot: ScreenshotModel): String? {
@@ -108,7 +111,7 @@ class ScreenshotInMemoryRepository : ScreenshotRepository {
     override suspend fun isKnown(candidate: Candidate): Boolean {
         val key = candidate.identity ?: candidate.locator ?: return false
         val screenshot = screenshotList.find { it.uri == key } ?: return false
-        return screenshotContentList.any { it.id == screenshot.id }
+        return screenshot.processed
     }
 
     override fun getScreenshotContent(): Flow<List<ScreenshotContentModel>> {
