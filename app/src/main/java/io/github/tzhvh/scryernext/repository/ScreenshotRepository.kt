@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.Flow
 import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotContentModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
+import io.github.tzhvh.scryernext.ingestion.Candidate
 
 interface ScreenshotRepository {
     companion object Factory {
@@ -42,6 +43,25 @@ interface ScreenshotRepository {
     fun getScreenshotContent(): Flow<List<ScreenshotContentModel>>
     suspend fun updateScreenshotContent(screenshotContent: ScreenshotContentModel)
     suspend fun getContentText(screenshot: ScreenshotModel): String?
+
+    /**
+     * Has this candidate's content already been ingested? (ADR 0004 §3.)
+     *
+     * Identity resolution lives here, on the repository — the engine never resolves identity itself.
+     * - If [Candidate.identity] is non-null (a producer pre-computed it, e.g. the SAF I/O-pool pre-hashed),
+     *   reuse it directly — no re-derivation, no double-I/O.
+     * - If [Candidate.identity] is null, the repository falls back to its own identity model: locator/URI lookup
+     *   under Room; content_hash (computed from [Candidate.byteHandle] if needed) under zvec.
+     *
+     * `suspend` because the zvec-era content-hash computation streams bytes and can throw / be cancelled; a plain
+     * `fun: Boolean` would foreclose that. This signature is the contract that survives the Room→zvec transition.
+     *
+     * TODO(Phase 1): "known" must mean `processed = true`, not merely "a row exists" — otherwise permanent-content
+     * failures (corrupt/illegible, written with empty text + processed=true per ADR 0004 §7.2) re-poison the
+     * backlog via the discovery worker. Until the `processed` flag lands, this returns true iff an indexed record
+     * exists for the candidate's identity/locator — the same semantics as today's `getContentText == null` check.
+     */
+    suspend fun isKnown(candidate: Candidate): Boolean
 
     suspend fun setupDefaultContent(context: Context)
 }
