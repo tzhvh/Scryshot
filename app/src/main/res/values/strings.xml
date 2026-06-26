@@ -28,6 +28,14 @@
     <!-- %1$d = current (indexed + failed so far), %2$d = total this run -->
     <string name="ingestion_notification_progress">Analyzing %1$d of %2$d</string>
 
+    <!-- Discovery worker (issue 13): the periodic count-and-notify notification (no OCR —
+         it counts the unindexed backlog and, if above the threshold, offers to start the bulk
+         job). %1$d = the unindexed count. "Snooze" is dismissal, not scheduling (ADR 0004 §4:
+         WM's periodic interval handles cadence). -->
+    <string name="discovery_notification_text">%1$d screenshots unindexed — search may be incomplete.</string>
+    <string name="notification_action_index">Index now</string>
+    <string name="notification_action_snooze">Snooze</string>
+
     <!-- Sorting panel: strings displayed on the sorting panel to help users categorize screenshots, 
     Refer to UX spec 1.1: legacy UX spec 1.1 -->
     <!-- String displayed to skip the current screenshot and move on to the next one -->

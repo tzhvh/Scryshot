@@ -5,6 +5,7 @@
 
 package io.github.tzhvh.scryernext.ingestion.triggers
 
+import io.github.tzhvh.scryernext.ingestion.IngestionConfig
 import io.github.tzhvh.scryernext.ingestion.IngestionEngine
 import io.github.tzhvh.scryernext.ingestion.IngestionLogger
 import io.github.tzhvh.scryernext.ingestion.IngestionProgressStore
@@ -121,6 +122,8 @@ class OnOpenTrigger(
     }
 
     companion object {
-        private const val THRESHOLD = 12 // ADR 0004 Consequences: v1 fixed 12.
+        // The on-open / bulk / discovery shared threshold (issue 11/12/13). Defined once in
+        // IngestionConfig so the triggers can't drift apart; strict `>` at the gate.
+        private val THRESHOLD get() = IngestionConfig.BACKLOG_THRESHOLD
     }
 }

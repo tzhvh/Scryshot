@@ -23,6 +23,7 @@ import io.github.tzhvh.scryernext.ingestion.IngestionEngine
 import io.github.tzhvh.scryernext.ingestion.MediaStoreProducer
 import io.github.tzhvh.scryernext.ingestion.MlKitOcrStage
 import io.github.tzhvh.scryernext.ingestion.RoomWriteSink
+import io.github.tzhvh.scryernext.ingestion.triggers.DiscoveryWorker
 import io.github.tzhvh.scryernext.ingestion.triggers.OnOpenTrigger
 
 class ScryerApplication : Application() {
@@ -117,6 +118,12 @@ class ScryerApplication : Application() {
                 onOpenTrigger.cancel()
             }
         })
+
+        // Issue 13: register the daily periodic discovery worker (count-and-notify). KEEP makes
+        // this idempotent across process restarts — re-registering on every onCreate is a no-op
+        // if the periodic is already scheduled. Counts the unindexed backlog, publishes it to the
+        // shared progress store, and notifies (with "Index now" / "Snooze") only past the threshold.
+        DiscoveryWorker.enqueuePeriodic(this)
 
         contentScanner.onCreate(ForegroundAndBackgroundCharging())
     }

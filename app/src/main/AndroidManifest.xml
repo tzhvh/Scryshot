@@ -84,6 +84,18 @@
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
 
+        <!-- Issue 13: entry point for DiscoveryWorker's notification actions ("Index now"
+             enqueues the bulk IngestionWorker; "Snooze" dismisses). Fire-and-forget, no UI.
+             Not exported — reachable only via the app's own notification PendingIntents. -->
+        <receiver
+            android:name="io.github.tzhvh.scryernext.ingestion.triggers.DiscoveryActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="io.github.tzhvh.scryernext.ingestion.action.INDEX_NOW" />
+                <action android:name="io.github.tzhvh.scryernext.ingestion.action.SNOOZE" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.provider.fileprovider"
