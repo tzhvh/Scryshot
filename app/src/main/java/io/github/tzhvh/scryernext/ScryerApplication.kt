@@ -73,8 +73,15 @@ class ScryerApplication : Application() {
         logger = IngestionLogger { msg -> Log.d("IngestionProgressStore", msg) }
     )
 
+    /**
+     * Application scope for ingestion triggers. [kotlinx.coroutines.Dispatchers.Default]
+     * (NOT Main): the engine's pipeline reads image bytes (`ContentResolver.openInputStream` +
+     * `readBytes`) and decodes (`BitmapFactory.decodeByteArray`) on the collector's dispatcher —
+     * running that on Main would jank/ANR the UI. `Default` is CPU-flavoured (decode), and the
+     * repo queries self-relocate to IO. `SupervisorJob` so one run's failure doesn't cancel siblings.
+     */
     private val applicationScope = kotlinx.coroutines.CoroutineScope(
-        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default
     )
 
     override fun onCreate() {

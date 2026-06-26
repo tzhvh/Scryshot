@@ -33,6 +33,10 @@ class OnOpenTriggerTest {
             return unprocessedCount
         }
 
+        override suspend fun getScreenshotByUri(uri: String): ScreenshotModel? {
+            return unprocessedList.firstOrNull { it.uri == uri }
+        }
+
         override suspend fun getUnprocessedScreenshotList(): List<ScreenshotModel> {
             return unprocessedList
         }
@@ -195,10 +199,9 @@ class OnOpenTriggerTest {
         // Cancel the trigger
         trigger.cancel()
 
-        // After cancellation, the job should be cancelled and the store lock released (progress switches to Error with CancellationException)
+        // After cancellation, the job should be cancelled and the store guard released via
+        // abort() — progress is Aborted (intentional stop), NOT Error (cancel ≠ fail).
         assertFalse(store.isActive)
-        assertTrue(store.progress.value is Progress.Error)
-        val errorState = store.progress.value as Progress.Error
-        assertTrue(errorState.throwable is kotlinx.coroutines.CancellationException)
+        assertTrue("cancel must reach Aborted, not Error", store.progress.value is Progress.Aborted)
     }
 }

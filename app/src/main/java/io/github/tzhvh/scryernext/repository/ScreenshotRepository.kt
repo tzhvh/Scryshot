@@ -66,5 +66,8 @@ interface ScreenshotRepository {
 
     suspend fun getUnprocessedCount(): Int
 
+    /** Issue 11/#4: lookup a screenshot by its `uri` locator (cheap indexed query). */
+    suspend fun getScreenshotByUri(uri: String): ScreenshotModel?
+
     suspend fun setupDefaultContent(context: Context)
 }

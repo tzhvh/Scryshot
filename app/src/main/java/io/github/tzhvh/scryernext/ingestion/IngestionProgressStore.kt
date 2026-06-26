@@ -184,6 +184,25 @@ class IngestionProgressStore(
         logger.log("fail(${error.throwable.javaClass.simpleName}: ${error.throwable.message}) [was $was]")
     }
 
+    /**
+     * Terminal cancellation (issue `14a` abort; on-open cancel-on-backgrounding).
+     *
+     * Releases the guard and transitions to [Progress.Aborted] — **not**
+     * [Progress.Error]: cancellation is an intentional stop, so the UI must not
+     * read "indexing failed." Mirrors [fail]'s guard release + onTerminal hook,
+     * but emits a distinct terminal state so consumers can distinguish "stopped"
+     * from "failed." Used by [OnOpenTrigger]'s `CancellationException` handler.
+     */
+    fun abort() {
+        val was = activeRun.getAndSet(null)
+        if (was == null) return   // nothing to abort; no run active
+        val hook = onTerminal
+        onTerminal = null
+        _progress.value = Progress.Aborted
+        hook?.invoke()
+        logger.log("abort [was $was]")
+    }
+
     /** Convenience: is a run currently active in *this* process? (Cross-process is WorkInfo.) */
     val isActive: Boolean get() = activeRun.get() != null
 }

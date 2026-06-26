@@ -89,4 +89,8 @@ interface ScreenshotDao {
 
     @Query("SELECT COUNT(*) FROM screenshot WHERE processed = 0")
     fun getUnprocessedCount(): Int
+
+    /** Issue 11/#4: lookup by `uri` (the indexed unique column) without materializing every row. */
+    @Query("SELECT * FROM screenshot WHERE uri = :uri LIMIT 1")
+    fun getScreenshotByUri(uri: String): ScreenshotModel?
 }

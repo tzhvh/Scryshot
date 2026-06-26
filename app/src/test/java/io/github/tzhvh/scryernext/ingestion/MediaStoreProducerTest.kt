@@ -51,6 +51,7 @@ class MediaStoreProducerTest {
         override fun getScreenshotContent(): Flow<List<io.github.tzhvh.scryernext.persistence.ScreenshotContentModel>> = TODO()
         override suspend fun updateScreenshotContent(screenshotContent: io.github.tzhvh.scryernext.persistence.ScreenshotContentModel) = TODO()
         override suspend fun getUnprocessedCount(): Int = TODO()
+        override suspend fun getScreenshotByUri(uri: String): ScreenshotModel? = TODO()
         override suspend fun getContentText(screenshot: ScreenshotModel): String? = TODO()
         override suspend fun setupDefaultContent(context: android.content.Context) = TODO()
     }

@@ -253,6 +253,12 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
         }
     }
 
+    override suspend fun getScreenshotByUri(uri: String): ScreenshotModel? {
+        return withContext(Dispatchers.IO) {
+            database.screenshotDao().getScreenshotByUri(uri)
+        }
+    }
+
     private fun dbKeysByLocator(): Set<String> {
         return database.screenshotDao().getIndexedUris().toSet()
     }

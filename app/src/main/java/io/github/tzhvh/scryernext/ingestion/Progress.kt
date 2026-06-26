@@ -61,6 +61,18 @@ sealed interface Progress {
     data class Error(val throwable: Throwable) : Progress
 
     /**
+     * Terminal cancellation — the user (issue `14a` abort) or the system (the
+     * on-open trigger cancelled on backgrounding) stopped a run mid-flight.
+     *
+     * Distinct from [Error]: cancellation is an *intentional* stop, not a
+     * failure, so the banner/notification must not read "indexing failed." This
+     * is the terminal state [IngestionProgressStore.abort] transitions to. It
+     * carries no payload because cancellation is externally observable (the run
+     * is gone, the progress bar holds its last [Indexing] position or resets).
+     */
+    object Aborted : Progress
+
+    /**
      * Presentation state for pause/resume continuity — cosmetic, with no
      * correctness impact (ADR 0004 §5): persist `(sessionStartTotal, doneCount)`
      * so the bar shows continuity across pause/resume; if lost, the worst case

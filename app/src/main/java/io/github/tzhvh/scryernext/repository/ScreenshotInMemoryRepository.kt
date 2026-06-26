@@ -122,6 +122,10 @@ class ScreenshotInMemoryRepository : ScreenshotRepository {
         return screenshotList.count { !it.processed }
     }
 
+    override suspend fun getScreenshotByUri(uri: String): ScreenshotModel? {
+        return screenshotList.firstOrNull { it.uri == uri }
+    }
+
     override fun getScreenshotContent(): Flow<List<ScreenshotContentModel>> {
         return screenshotContentData.asStateFlow()
     }

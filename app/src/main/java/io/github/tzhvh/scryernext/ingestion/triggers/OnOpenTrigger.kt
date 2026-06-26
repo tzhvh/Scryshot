@@ -20,12 +20,24 @@ import kotlinx.coroutines.launch
  * The "on-open / opportunistic" trigger (ADR 0004 §4).
  *
  * When the app comes to the foreground, if the unindexed backlog is at or below [THRESHOLD] (12),
- * silently runs the engine over the producer's flow in an app-scope coroutine.
+ * silently runs the engine over the producer's flow in an app-scope coroutine — no notifications,
+ * no foreground services. Large backlogs are the bulk worker's job (issue 12).
  *
- * No notifications and no foreground services are started.
+ * Coordinates run entry via [IngestionProgressStore.tryEnter] (the §7.5 guard) and routes every
+ * terminal path — completion, failure, **and cancellation** — out of the guard symmetrically in a
+ * single [launch]. Cancellation surfaces as [Progress.Aborted] (via [IngestionProgressStore.abort]),
+ * **not** [Progress.Error]: a user/system stop is an intentional stop, not a failed run.
  *
- * It uses the [IngestionProgressStore] re-entrancy guard to coordinate runs and publishes
- * progress emissions to it.
+ * ## Cancellability — the load-bearing precondition (honest status)
+ *
+ * The engine is a cold, cooperative-cancellable `flow`: cancelling the collecting `Job` propagates
+ * through `isKnown` / `read` / `attempt` suspend points and the run stops promptly. **However** the
+ * in-flight ML Kit recognition inside [io.github.tzhvh.scryernext.ingestion.MlKitOcrStage] cannot
+ * itself be cancelled mid-flight: `TextRecognizer.process(InputImage)` has no `CancellationToken`
+ * overload and `com.google.android.gms.tasks.Task` exposes no public `cancel()`. So on abort the
+ * coroutine yields immediately (the run stops, the guard releases) but at most one in-flight native
+ * recognition finishes in the background (a bounded battery/CPU cost). This is an ML Kit limitation,
+ * not a defect of this trigger — see [MlKitOcrStage] and the issue 11 Comments.
  *
  * See: [.scratch/ingestion/issues/11-on-open-silent-trigger.md](file:///.scratch/ingestion/issues/11-on-open-silent-trigger.md)
  * See: [ADR 0004 §2, §4, §5, §7.5](file:///docs/adr/0004-ingestion-engine-and-trigger-architecture-v2.md)
@@ -38,68 +50,72 @@ class OnOpenTrigger(
     private val scope: CoroutineScope,
     private val logger: IngestionLogger = IngestionLogger.Noop
 ) {
+    @Volatile
     private var job: Job? = null
 
     /**
-     * Cancel the active on-open trigger execution if it is running.
+     * Cancel the active on-open run if one is in flight. Used by the app's `onStop`
+     * lifecycle hook (issue 11 wiring) and by issue 14a's abort. Safe to call when
+     * no run is active. The guard release happens inside [onForeground]'s collector.
      */
     fun cancel() {
         job?.cancel()
-        job = null
     }
 
+    /**
+     * Entry point: called on `ProcessLifecycle` foreground.
+     *
+     * Single [launch]: the count + threshold gate + `tryEnter` + collect all share one coroutine,
+     * so enter and release are symmetric and there is no "entered but never collected" guard leak.
+     */
     fun onForeground() {
-        scope.launch {
+        job = scope.launch {
             try {
-                // 1. Cheap unindexed count (SQL COUNT).
+                // 1. Cheap unindexed count (SQL COUNT) — don't materialize the backlog to gate.
                 val count = repository.getUnprocessedCount()
                 logger.log("onForeground: unprocessed count = $count")
 
-                // 2. if (count > THRESHOLD) return — large backlog is the bulk worker's job (issue 12).
-                if (count > THRESHOLD) {
-                    logger.log("onForeground: count ($count) exceeds threshold ($THRESHOLD), skipping silent trigger.")
-                    return@launch
-                }
-
-                if (count == 0) {
-                    logger.log("onForeground: no unprocessed screenshots, skipping silent trigger.")
-                    return@launch
-                }
-
-                // 3. if (!store.tryEnter(IngestionProgressStore.TriggerKind.ON_OPEN)) return — §7.5 guard (issue 10.5).
-                if (!store.tryEnter(IngestionProgressStore.TriggerKind.ON_OPEN)) {
-                    logger.log("onForeground: could not enter store guard (another trigger is active).")
-                    return@launch
-                }
-
-                logger.log("onForeground: starting silent on-open ingestion trigger.")
-
-                // Cancel any pre-existing job just in case
-                job?.cancel()
-
-                // 4. Collect engine.process(producer.candidates()) into the store.
-                job = scope.launch {
-                    try {
-                        engine.process(producer.candidates()).collect { progress ->
-                            when (progress) {
-                                is Progress.Indexing -> store.publish(progress)
-                                is Progress.Completed -> store.complete(progress)
-                                is Progress.Error -> store.fail(progress)
-                                else -> { /* Idle states not published directly */ }
-                            }
-                        }
-                    } catch (ce: CancellationException) {
-                        // Release store lock on cancellation
-                        logger.log("Silent on-open trigger cancelled; releasing store lock.")
-                        store.fail(Progress.Error(ce))
-                        throw ce
-                    } catch (e: Exception) {
-                        logger.log("Error in silent on-open trigger collection loop: ${e.message}")
-                        store.fail(Progress.Error(e))
+                // 2. Threshold gate (ADR 0004 §4). count == 0 or count > THRESHOLD → not our job.
+                if (count == 0 || count > THRESHOLD) {
+                    if (count > THRESHOLD) {
+                        logger.log("onForeground: count ($count) exceeds threshold ($THRESHOLD); bulk worker's job.")
                     }
+                    return@launch
                 }
-            } catch (e: Exception) {
-                logger.log("Error during silent on-open trigger startup: ${e.message}")
+
+                // 3. §7.5 guard. tryEnter is an atomic CAS; refusal means a peer (bulk/on-open) is active.
+                if (!store.tryEnter(IngestionProgressStore.TriggerKind.ON_OPEN)) {
+                    logger.log("onForeground: guard refused (another trigger active); skipping.")
+                    return@launch
+                }
+
+                logger.log("onForeground: starting silent on-open ingestion.")
+                try {
+                    // 4. Collect the engine's cold Flow into the store. Terminal Progress states are
+                    //    routed through the store's terminal methods (complete/fail), which release
+                    //    the guard and fire the onTerminal hook. publish() is Indexing-only.
+                    engine.process(producer.candidates()).collect { progress ->
+                        when (progress) {
+                            is Progress.Indexing -> store.publish(progress)
+                            is Progress.Completed -> store.complete(progress)
+                            is Progress.Error -> store.fail(progress)
+                            Progress.Idle, Progress.Aborted, is Progress.Paused -> Unit
+                        }
+                    }
+                } catch (ce: CancellationException) {
+                    // Cancel ≠ fail: a user/system stop is intentional. Release the guard via
+                    // abort() (Aborted, not Error) before letting cancellation finish the coroutine.
+                    logger.log("onForeground: cancelled; aborting run (guard released).")
+                    store.abort()
+                    throw ce
+                } catch (e: Throwable) {
+                    // A genuine collection-loop failure (not cancellation). Surface as Error.
+                    logger.log("onForeground: error during collection — ${e.javaClass.simpleName}: ${e.message}")
+                    store.fail(Progress.Error(e))
+                }
+            } catch (e: Throwable) {
+                // Startup-phase failure (count query threw, etc.) — log only; no guard was taken.
+                logger.log("onForeground: startup error — ${e.javaClass.simpleName}: ${e.message}")
             }
         }
     }

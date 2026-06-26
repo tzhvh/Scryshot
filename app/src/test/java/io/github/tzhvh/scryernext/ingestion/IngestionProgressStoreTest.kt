@@ -304,4 +304,40 @@ class IngestionProgressStoreTest {
         store.fail(Progress.Error(IllegalStateException("x")))
         assertEquals(2, cleared)
     }
+
+    // ==========================================================================
+    // abort — terminal cancellation (distinct from fail)
+    // ==========================================================================
+
+    @Test
+    fun abort_transitions_to_aborted_releases_guard_and_runs_hook() {
+        val store = newStore()
+        var cleared = false
+        store.onTerminalClear { cleared = true }
+        assertTrue(store.tryEnter(IngestionProgressStore.TriggerKind.ON_OPEN))
+        store.publish(Progress.Indexing(current = 2, total = 5, failedCount = 0))
+
+        store.abort()
+
+        assertTrue("abort must reach Aborted, not Error", store.progress.value is Progress.Aborted)
+        assertFalse("abort must release the guard", store.isActive)
+        assertTrue("abort must run the onTerminal hook", cleared)
+    }
+
+    @Test
+    fun abort_when_no_run_is_active_is_a_noop() {
+        // Defensive: a late cancel callback after the run already completed must
+        // not clobber a terminal state with Aborted, and must not fire a stale hook.
+        val store = newStore()
+        var fired = 0
+        store.onTerminalClear { fired++ }
+        store.tryEnter(IngestionProgressStore.TriggerKind.BULK)
+        store.complete(Progress.Completed(3, 0, 3))   // normal completion first
+        val before = store.progress.value
+
+        store.abort()   // nothing active
+
+        assertSame("late abort must not clobber the prior terminal", before, store.progress.value)
+        assertEquals(1, fired)
+    }
 }
