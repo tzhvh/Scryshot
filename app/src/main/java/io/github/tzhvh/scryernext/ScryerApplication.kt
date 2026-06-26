@@ -6,7 +6,10 @@
 package io.github.tzhvh.scryernext
 
 import android.app.Application
+import android.util.Log
 
+import io.github.tzhvh.scryernext.ingestion.IngestionLogger
+import io.github.tzhvh.scryernext.ingestion.IngestionProgressStore
 import io.github.tzhvh.scryernext.repository.ScreenshotRepository
 import io.github.tzhvh.scryernext.scan.ContentScanner
 import io.github.tzhvh.scryernext.scan.ForegroundAndBackgroundCharging
@@ -32,6 +35,11 @@ class ScryerApplication : Application() {
             return instance.contentScanner
         }
 
+        /** Issue 10.5: app-scope ingestion state + §7.5 re-entrancy guard. */
+        fun getIngestionProgressStore(): IngestionProgressStore {
+            return instance.ingestionProgressStore
+        }
+
         /** Issue 21: app-wide ContentResolver for decode/size queries against content URIs. */
         fun getContentResolver(): android.content.ContentResolver {
             return instance.contentResolver
@@ -46,6 +54,16 @@ class ScryerApplication : Application() {
     lateinit var settingsRepository: SettingsRepository
 
     private val contentScanner = ContentScanner()
+
+    /**
+     * Issue 10.5: app-scope ingestion progress surface + atomic §7.5 guard.
+     * Wired with a tagged-logcat [IngestionLogger] (ADR 0004 §7.6); the store
+     * itself is pure Kotlin (no `android.util.Log` dependency) so it remains
+     * JVM-testable. Mirrors [contentScanner]'s ownership/access pattern.
+     */
+    private val ingestionProgressStore = IngestionProgressStore(
+        logger = IngestionLogger { msg -> Log.d("IngestionProgressStore", msg) }
+    )
 
     override fun onCreate() {
         super.onCreate()

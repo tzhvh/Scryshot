@@ -19,6 +19,18 @@ package io.github.tzhvh.scryernext.ingestion
  */
 sealed interface Progress {
     /**
+     * The store's quiescent state (issue `10.5`). No ingestion run is active.
+     *
+     * **Note:** [IngestionEngine] never emits `Idle` — it only emits [Indexing] /
+     * [Completed] / [Error]. `Idle` is an additive state owned by
+     * [IngestionProgressStore] to represent "between runs" (the store's initial
+     * value, and the state it returns to after a terminal transition). Adding it
+     * here (rather than a separate store-level type) keeps a single sealed
+     * `Progress` as the source of truth every consumer observes.
+     */
+    object Idle : Progress
+
+    /**
      * In-flight state. [current] is the count *processed this run*
      * (`(indexed + failed) so far`), **not** just indexed — a single failure
      * must advance the bar (ADR 0004 §7.2). [stageTimings] carries the current
