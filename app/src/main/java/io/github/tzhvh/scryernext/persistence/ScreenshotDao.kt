@@ -86,4 +86,7 @@ interface ScreenshotDao {
 
     @Query("SELECT * FROM screenshot WHERE processed = 0")
     fun getUnprocessed(): List<ScreenshotModel>
+
+    @Query("SELECT COUNT(*) FROM screenshot WHERE processed = 0")
+    fun getUnprocessedCount(): Int
 }

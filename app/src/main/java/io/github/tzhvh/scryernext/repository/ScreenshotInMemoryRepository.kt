@@ -118,6 +118,10 @@ class ScreenshotInMemoryRepository : ScreenshotRepository {
         return screenshotList.filter { !it.processed }
     }
 
+    override suspend fun getUnprocessedCount(): Int {
+        return screenshotList.count { !it.processed }
+    }
+
     override fun getScreenshotContent(): Flow<List<ScreenshotContentModel>> {
         return screenshotContentData.asStateFlow()
     }

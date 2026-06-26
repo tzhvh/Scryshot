@@ -78,6 +78,7 @@ class IngestionEngineTest {
         override suspend fun updateScreenshotContent(screenshotContent: ScreenshotContentModel) = TODO()
         override suspend fun getContentText(screenshot: ScreenshotModel): String? = TODO()
         override suspend fun getUnprocessedScreenshotList(): List<ScreenshotModel> = TODO()
+        override suspend fun getUnprocessedCount(): Int = TODO()
         override suspend fun setupDefaultContent(context: Context) = TODO()
     }
 

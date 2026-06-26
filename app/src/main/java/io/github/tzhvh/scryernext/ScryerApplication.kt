@@ -16,6 +16,14 @@ import io.github.tzhvh.scryernext.scan.ForegroundAndBackgroundCharging
 import io.github.tzhvh.scryernext.setting.PreferenceSettingsRepository
 import io.github.tzhvh.scryernext.setting.SettingsRepository
 import io.github.tzhvh.scryernext.util.launchIO
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
+import io.github.tzhvh.scryernext.ingestion.IngestionEngine
+import io.github.tzhvh.scryernext.ingestion.MediaStoreProducer
+import io.github.tzhvh.scryernext.ingestion.MlKitOcrStage
+import io.github.tzhvh.scryernext.ingestion.RoomWriteSink
+import io.github.tzhvh.scryernext.ingestion.triggers.OnOpenTrigger
 
 class ScryerApplication : Application() {
     companion object {
@@ -65,6 +73,10 @@ class ScryerApplication : Application() {
         logger = IngestionLogger { msg -> Log.d("IngestionProgressStore", msg) }
     )
 
+    private val applicationScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main
+    )
+
     override fun onCreate() {
         super.onCreate()
         ApplicationHolder.instance = this
@@ -76,6 +88,28 @@ class ScryerApplication : Application() {
             }
         }
         settingsRepository = PreferenceSettingsRepository.getInstance(this)
+
+        val onOpenTrigger = OnOpenTrigger(
+            repository = screenshotRepository,
+            producer = MediaStoreProducer(screenshotRepository, contentResolver),
+            engine = IngestionEngine(
+                screenshotRepository,
+                MlKitOcrStage(),
+                RoomWriteSink(screenshotRepository)
+            ),
+            store = ingestionProgressStore,
+            scope = applicationScope,
+            logger = IngestionLogger { msg -> android.util.Log.d("OnOpenTrigger", msg) }
+        )
+
+        ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) {
+                onOpenTrigger.onForeground()
+            }
+            override fun onStop(owner: LifecycleOwner) {
+                onOpenTrigger.cancel()
+            }
+        })
 
         contentScanner.onCreate(ForegroundAndBackgroundCharging())
     }

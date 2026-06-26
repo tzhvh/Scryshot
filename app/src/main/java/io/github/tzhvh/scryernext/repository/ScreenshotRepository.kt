@@ -64,5 +64,7 @@ interface ScreenshotRepository {
 
     suspend fun getUnprocessedScreenshotList(): List<ScreenshotModel>
 
+    suspend fun getUnprocessedCount(): Int
+
     suspend fun setupDefaultContent(context: Context)
 }
