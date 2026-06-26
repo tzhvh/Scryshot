@@ -20,6 +20,14 @@
     <string name="notification_action_collect_title">New screenshots captured</string>
     <string name="notification_action_collect">Tap to sort your screenshots</string>
 
+    <!-- Ingestion bulk worker (issue 12): the dataSync foreground notification shown while
+         the engine OCRs a backlog. Channel name, content title, and the per-tick content text.
+         "Analyzing N of M" is ADR 0003 Context's verbatim phrasing (carried by ADR 0004 §4). -->
+    <string name="ingestion_notification_channel">Screenshot indexing</string>
+    <string name="ingestion_notification_title">Indexing screenshots</string>
+    <!-- %1$d = current (indexed + failed so far), %2$d = total this run -->
+    <string name="ingestion_notification_progress">Analyzing %1$d of %2$d</string>
+
     <!-- Sorting panel: strings displayed on the sorting panel to help users categorize screenshots, 
     Refer to UX spec 1.1: legacy UX spec 1.1 -->
     <!-- String displayed to skip the current screenshot and move on to the next one -->
