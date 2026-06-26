@@ -22,7 +22,6 @@ import androidx.viewpager.widget.ViewPager
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.snackbar.Snackbar
-import com.google.mlkit.common.MlKitException
 import com.google.mlkit.vision.text.Text
 import kotlinx.coroutines.*
 import me.saket.bettermovementmethod.BetterLinkMovementMethod
@@ -32,11 +31,12 @@ import io.github.tzhvh.scryernext.collectionview.showDeleteScreenshotDialog
 import io.github.tzhvh.scryernext.collectionview.showScreenshotInfoDialog
 import io.github.tzhvh.scryernext.collectionview.showShareScreenshotDialog
 import io.github.tzhvh.scryernext.databinding.ActivityDetailPageBinding
+import io.github.tzhvh.scryernext.ingestion.MlKitOcrStage
 import io.github.tzhvh.scryernext.persistence.CollectionModel
+import io.github.tzhvh.scryernext.persistence.ScreenshotContentModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.preference.PreferenceWrapper
 import io.github.tzhvh.scryernext.promote.Promoter
-import io.github.tzhvh.scryernext.scan.OcrTextHelper
 import io.github.tzhvh.scryernext.sortingpanel.SortingPanelActivity
 import io.github.tzhvh.scryernext.ui.ScryerToast
 import io.github.tzhvh.scryernext.viewmodel.ScreenshotViewModel
@@ -117,6 +117,16 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
 
     /* whether the user has run ocr on the current image before swiping to the next one */
     private var hasRunOcr = false
+
+    /**
+     * Issue 15 (option b): the ML Kit decode+OCR mechanism, shared with the ingestion
+     * engine. DetailPage keeps its own orchestration ([Result] taxonomy, dimension check,
+     * `isRecognizing` write gate, [Promoter] call); only the ML Kit call site moves off
+     * the legacy [io.github.tzhvh.scryernext.scan.OcrTextHelper]. Lazy like the other
+     * Activity-owned dependencies; the default `TextRecognizer` is itself lazy inside the
+     * stage's companion.
+     */
+    private val ocrStage by lazy { MlKitOcrStage() }
 
     private val screenSize: RectF by lazy {
         val size = Point().apply {
@@ -364,7 +374,10 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
                             Toast.LENGTH_SHORT).show()
                 }
 
-                OcrTextHelper.writeContentTextToDb(screenshot, result.value.text)
+                // §7.2 (issue 15): a success (incl. WeiredImageSize success-with-warning)
+                // writes the recognized text + processed=true. Write runs on Default so the
+                // isRecognizing gate below still sees the right state regardless of write timing.
+                writeOcrResultToDb(screenshot, result.value.text)
 
                 if (isRecognizing) {
                     isTextMode = true
@@ -380,6 +393,12 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
                 showConnectPromptSnackbar()
 
             } else if (result is Result.Failed) {
+                // §7.2 (issue 15): a permanent-content failure (corrupt/illegible) now writes
+                // processed=true-but-empty instead of writing nothing. The legacy path left such
+                // files processed=false, so issue 13's DiscoveryWorker re-counted them forever
+                // (the backlog notification that never clears — ADR 0004 §7.2). Unavailable is a
+                // transient failure (re-attemptable) and still writes nothing, by contrast.
+                writeOcrResultToDb(screenshot, "")
                 ScryerToast.makeText(this@DetailPageActivity,
                         getString(R.string.detail_ocr_error_failed),
                         Toast.LENGTH_SHORT).show()
@@ -388,6 +407,19 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
             isRecognizing = false
             updateUI()
         }
+    }
+
+    /**
+     * DetailPage's single-file write (issue 15). Mirrors the engine's [RoomWriteSink] two-step
+     * — content row + `processed=true` on the screenshot row — against the repository exposed by
+     * [viewModel] (which delegates [ScreenshotRepository]). Uses [ScreenshotContentModel] for the
+     * text row and copies the in-hand [ScreenshotModel] with `processed=true`, exactly as
+     * `RoomWriteSink.commit` does for the bulk path. Transient (Unavailable) outcomes do NOT call
+     * this — they leave the row unprocessed so the next run re-attempts.
+     */
+    private suspend fun writeOcrResultToDb(screenshot: ScreenshotModel, contentText: String) {
+        viewModel.updateScreenshotContent(ScreenshotContentModel(screenshot.id, contentText))
+        viewModel.updateScreenshots(listOf(screenshot.copy(processed = true)))
     }
 
     private fun showConnectPromptSnackbar() {
@@ -400,52 +432,79 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
     }
 
     private suspend fun runTextRecognition(screenshot: ScreenshotModel): Result {
-        val decoded = try {
+        // Issue 15 (option b): DetailPage owns the READ — opens the ContentResolver stream and
+        // hands the stage `bytes`, mirroring how IngestionEngine consumes Candidate.byteHandle.
+        // The stage (MlKitOcrStage.recognize) owns DECODE+OCR over those bytes — the same stage
+        // boundary the engine honours. The legacy OcrTextHelper.extractText/decodeFromUri path
+        // is no longer referenced from DetailPage (Phase 4.5 deletes the class outright).
+        val bytes = try {
             val resolver = contentResolver
             resolver.openInputStream(android.net.Uri.parse(screenshot.uri))?.use { input ->
-                BitmapFactory.decodeStream(input)
+                input.readBytes()
             } ?: return Result.Failed("decode failed: unable to open screenshot uri")
         } catch (e: Error) {
             return Result.Failed("decode failed: " + e.message)
         }
 
-        return try {
-            val result = OcrTextHelper.extractText(decoded)
-            if (isValidSize(decoded)) {
-                Result.Success(result)
-            } else {
-                Result.WeiredImageSize(
-                        result,
-                        "weird image size: ${decoded.width}x${decoded.height}"
-                )
-            }
+        // Probe the bitmap bounds cheaply (no allocation) for the dimension check, without
+        // decoding the full bitmap — the stage decodes internally. Mirrors the standard
+        // inJustDecodeBounds pattern; keeps recognize(bytes) returning only Text + outcome.
+        val size = try {
+            probeBitmapSize(bytes) ?: return Result.Failed("decode failed: unreadable bitmap header")
+        } catch (e: Throwable) {
+            return Result.Failed("decode failed: " + e.message)
+        }
 
-        } catch (e: Exception) {
-            if ((e as? MlKitException)?.errorCode == MlKitException.UNAVAILABLE) {
-                Result.Unavailable("recognize failed: " + e.message)
-            } else {
-                Result.Failed("recognize failed: " + e.message)
+        return when (val outcome = ocrStage.recognize(bytes)) {
+            is OcrTextResult.Success -> {
+                if (isValidSize(size.width, size.height)) {
+                    Result.Success(outcome.text)
+                } else {
+                    Result.WeiredImageSize(
+                            outcome.text,
+                            "weird image size: ${size.width}x${size.height}"
+                    )
+                }
             }
+            is OcrTextResult.TransientFailure ->
+                Result.Unavailable("recognize failed: " + outcome.cause.message)
+            OcrTextResult.PermanentContentFailure ->
+                Result.Failed("recognize failed: permanent content failure")
         }
     }
 
-    private fun isValidSize(bitmap: Bitmap): Boolean {
-        return if (bitmap.width >= bitmap.height) {
-            isValidLandscapeSize(bitmap)
+    /**
+     * Cheap dimension probe via `inJustDecodeBounds = true` — decodes only the bitmap
+     * header (no pixel allocation), so [isValidSize] can run without holding the full
+     * decoded [Bitmap] (which now lives inside the OCR stage).
+     */
+    private fun probeBitmapSize(bytes: ByteArray): BitmapSize? {
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        return if (opts.outWidth > 0 && opts.outHeight > 0) {
+            BitmapSize(opts.outWidth, opts.outHeight)
+        } else null
+    }
+
+    private data class BitmapSize(val width: Int, val height: Int)
+
+    private fun isValidSize(width: Int, height: Int): Boolean {
+        return if (width >= height) {
+            isValidLandscapeSize(width, height)
         } else {
-            isValidPortraitSize(bitmap)
+            isValidPortraitSize(width, height)
         }
     }
 
-    private fun isValidPortraitSize(bitmap: Bitmap): Boolean {
-        val isWidthValid = bitmap.width <= 1.5f * screenSize.width()
-        val isHeightValid = bitmap.height <= 2 * screenSize.height()
+    private fun isValidPortraitSize(width: Int, height: Int): Boolean {
+        val isWidthValid = width <= 1.5f * screenSize.width()
+        val isHeightValid = height <= 2 * screenSize.height()
         return isWidthValid && isHeightValid
     }
 
-    private fun isValidLandscapeSize(bitmap: Bitmap): Boolean {
-        val isWidthValid = bitmap.width <= screenSize.height()
-        val isHeightValid = bitmap.height <= 2 * screenSize.width()
+    private fun isValidLandscapeSize(width: Int, height: Int): Boolean {
+        val isWidthValid = width <= screenSize.height()
+        val isHeightValid = height <= 2 * screenSize.width()
         return isWidthValid && isHeightValid
     }
 
