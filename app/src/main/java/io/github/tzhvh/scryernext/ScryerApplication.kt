@@ -24,6 +24,7 @@ import io.github.tzhvh.scryernext.ingestion.MediaStoreProducer
 import io.github.tzhvh.scryernext.ingestion.MlKitOcrStage
 import io.github.tzhvh.scryernext.ingestion.RoomWriteSink
 import io.github.tzhvh.scryernext.ingestion.triggers.DiscoveryWorker
+import io.github.tzhvh.scryernext.ingestion.triggers.IngestionSession
 import io.github.tzhvh.scryernext.ingestion.triggers.OnOpenTrigger
 
 class ScryerApplication : Application() {
@@ -47,6 +48,11 @@ class ScryerApplication : Application() {
         /** Issue 10.5: app-scope ingestion state + §7.5 re-entrancy guard. */
         fun getIngestionProgressStore(): IngestionProgressStore {
             return instance.ingestionProgressStore
+        }
+
+        /** Issue 14: app-scope control + cross-process liveness surface (WorkInfo-derived). */
+        fun getIngestionSession(): IngestionSession {
+            return instance.ingestionSession
         }
 
         /** Issue 21: app-wide ContentResolver for decode/size queries against content URIs. */
@@ -75,6 +81,19 @@ class ScryerApplication : Application() {
     )
 
     /**
+     * Issue 14: the user-facing control + cross-process liveness surface. Owns everything
+     * Context-bound (WorkManager, SharedPreferences) so [ingestionProgressStore] stays pure.
+     * Constructed after the store so it can observe it; `this` is the application [Context].
+     *
+     * Initialized in [onCreate], NOT as a field initializer: `IngestionSession` calls
+     * `context.applicationContext` in its constructor, and field initializers run during the
+     * `Application`'s implicit constructor — *before* `attachBaseContext()` attaches this
+     * `ContextWrapper`'s base context, so `this.applicationContext` would NPE. The Context-bound
+     * deps ([screenshotRepository], `onOpenTrigger`) follow the same pattern for the same reason.
+     */
+    private lateinit var ingestionSession: IngestionSession
+
+    /**
      * Application scope for ingestion triggers. [kotlinx.coroutines.Dispatchers.Default]
      * (NOT Main): the engine's pipeline reads image bytes (`ContentResolver.openInputStream` +
      * `readBytes`) and decodes (`BitmapFactory.decodeByteArray`) on the collector's dispatcher —
@@ -97,6 +116,9 @@ class ScryerApplication : Application() {
         }
         settingsRepository = PreferenceSettingsRepository.getInstance(this)
 
+        // Issue 14: constructed here (not as a field initializer) so the base Context is attached.
+        ingestionSession = IngestionSession(this, ingestionProgressStore)
+
         val onOpenTrigger = OnOpenTrigger(
             repository = screenshotRepository,
             producer = MediaStoreProducer(screenshotRepository, contentResolver),
@@ -107,7 +129,9 @@ class ScryerApplication : Application() {
             ),
             store = ingestionProgressStore,
             scope = applicationScope,
-            logger = IngestionLogger { msg -> android.util.Log.d("OnOpenTrigger", msg) }
+            logger = IngestionLogger { msg -> android.util.Log.d("OnOpenTrigger", msg) },
+            persistCosmetic = { start, done -> ingestionSession.saveCosmetic(start, done) },
+            clearCosmetic = { ingestionSession.clearCosmetic() }
         )
 
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {

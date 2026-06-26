@@ -94,6 +94,7 @@ class IngestionWorker(
         // Deps from the app scope, mirroring ScryerApplication.onCreate's construction.
         val repository = ScryerApplication.getScreenshotRepository()
         val store = ScryerApplication.getIngestionProgressStore()
+        val session = ScryerApplication.getIngestionSession()
         val producer = MediaStoreProducer(repository, ScryerApplication.getContentResolver())
         val engine = IngestionEngine(repository, MlKitOcrStage(), RoomWriteSink(repository))
 
@@ -110,6 +111,15 @@ class IngestionWorker(
             logger.log("doWork: guard not acquired after bounded wait; retry-to-begin.")
             return Result.retry()
         }
+
+        // Issue 14a — cosmetic continuity. The guard is now held (a genuine session start):
+        // (1) register the clear-on-terminal hook so a finished/aborted session's numerics
+        //     don't bleed into the next. The store fires this hook on complete()/fail()/abort(),
+        //     which all release the guard (issue 10.5) — so the clear is automatic, not manual.
+        // (2) persist (sessionStartTotal=0, doneCount=0) for bar continuity. Cosmetic ONLY —
+        //     never the guard's Indexing state (poison-pill trap; see IngestionSession KDoc).
+        store.onTerminalClear { session.clearCosmetic() }
+        session.saveCosmetic(sessionStartTotal = 0, doneCount = 0)
 
         // 3. Single long collection of the engine's cold Flow (§5 — no mid-run checkpoint).
         var terminal: Progress = Progress.Idle

@@ -81,6 +81,11 @@ room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 # WorkManager (issue 15: moved to androidx group with -ktx variant)
 work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
 
+# WorkManager on-device testing (issue 12/13/14 device smoke): TestDriver +
+# WorkManagerTestInitHelper let the instrumented tests force-run periodic work and assert
+# WorkInfo state against a deterministic scheduler. Same version as work-runtime-ktx.
+work-testing = { module = "androidx.work:work-testing", version.ref = "work" }
+
 # Kotlin
 kotlin-stdlib-jdk8 = { module = "org.jetbrains.kotlin:kotlin-stdlib-jdk8", version.ref = "kotlin" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinCoroutines" }

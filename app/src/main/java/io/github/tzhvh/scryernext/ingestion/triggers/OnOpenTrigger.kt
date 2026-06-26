@@ -49,7 +49,22 @@ class OnOpenTrigger(
     private val engine: IngestionEngine,
     private val store: IngestionProgressStore,
     private val scope: CoroutineScope,
-    private val logger: IngestionLogger = IngestionLogger.Noop
+    private val logger: IngestionLogger = IngestionLogger.Noop,
+    /**
+     * Issue 14a: persist the cosmetic session numerics on session start (after the guard is
+     * acquired). A no-op by default so the trigger stays pure/JVM-testable; production wiring
+     * (ScryerApplication) supplies `session.saveCosmetic(...)`.
+     */
+    private val persistCosmetic: (sessionStartTotal: Int, doneCount: Int) -> Unit = { _, _ -> },
+    /**
+     * Issue 14a: clear the cosmetic session numerics. Registered with
+     * [IngestionProgressStore.onTerminalClear] at session start so it fires on every terminal
+     * transition (`complete`/`fail`/`abort`), and a finished session's numerics don't bleed
+     * into the next. No-op by default (pure/JVM-testable); production supplies
+     * `session.clearCosmetic()`. Neither this nor [persistCosmetic] ever touches the guard's
+     * Indexing state — cosmetic only (poison-pill trap; see [IngestionSession] KDoc).
+     */
+    private val clearCosmetic: () -> Unit = {}
 ) {
     @Volatile
     private var job: Job? = null
@@ -89,6 +104,12 @@ class OnOpenTrigger(
                     logger.log("onForeground: guard refused (another trigger active); skipping.")
                     return@launch
                 }
+
+                // Issue 14a — cosmetic continuity (symmetric with IngestionWorker). The guard is
+                // held: register the clear-on-terminal hook + persist the session numerics for bar
+                // continuity. Cosmetic ONLY — never the guard's Indexing state (poison-pill trap).
+                store.onTerminalClear(clearCosmetic)
+                persistCosmetic(0, 0)
 
                 logger.log("onForeground: starting silent on-open ingestion.")
                 try {
