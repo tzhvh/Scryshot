@@ -83,4 +83,7 @@ interface ScreenshotDao {
 
     @Query("SELECT uri FROM screenshot WHERE processed = 1")
     fun getIndexedUris(): List<String>
+
+    @Query("SELECT * FROM screenshot WHERE processed = 0")
+    fun getUnprocessed(): List<ScreenshotModel>
 }

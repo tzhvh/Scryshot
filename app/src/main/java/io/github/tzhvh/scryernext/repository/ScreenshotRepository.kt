@@ -62,5 +62,7 @@ interface ScreenshotRepository {
      */
     suspend fun isKnown(candidate: Candidate): Boolean
 
+    suspend fun getUnprocessedScreenshotList(): List<ScreenshotModel>
+
     suspend fun setupDefaultContent(context: Context)
 }

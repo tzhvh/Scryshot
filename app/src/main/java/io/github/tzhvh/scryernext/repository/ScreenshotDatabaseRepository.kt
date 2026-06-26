@@ -241,6 +241,12 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
         }
     }
 
+    override suspend fun getUnprocessedScreenshotList(): List<ScreenshotModel> {
+        return withContext(Dispatchers.IO) {
+            database.screenshotDao().getUnprocessed()
+        }
+    }
+
     private fun dbKeysByLocator(): Set<String> {
         return database.screenshotDao().getIndexedUris().toSet()
     }
