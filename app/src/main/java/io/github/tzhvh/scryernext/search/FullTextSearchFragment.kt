@@ -31,7 +31,7 @@ import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.LoadingViewModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.persistence.SuggestCollectionHelper
-import io.github.tzhvh.scryernext.scan.ContentScanner
+import io.github.tzhvh.scryernext.ingestion.Progress
 import io.github.tzhvh.scryernext.setSupportActionBar
 import io.github.tzhvh.scryernext.ui.InnerSpaceDecoration
 import io.github.tzhvh.scryernext.util.hideKeyboard
@@ -54,7 +54,6 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
 
     private var actionModeMenu: Menu? = null
     private var isIndexing: Boolean = false
-    private var isIndexError: Boolean = false
     private var enterTimeMillis: Long = 0
 
     private val selectActionModeCallback: ActionMode.Callback = object : ActionMode.Callback {
@@ -199,12 +198,7 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
                             } else {
                                 View.VISIBLE
                             }
-                            binding.emptyView.visibility = if (screenshots.isEmpty() && s?.isNotEmpty() == true && !isIndexing && !isIndexError) {
-                                View.VISIBLE
-                            } else {
-                                View.GONE
-                            }
-                            binding.errorView.visibility = if (isIndexError && screenshots.isEmpty()) {
+                            binding.emptyView.visibility = if (screenshots.isEmpty() && s?.isNotEmpty() == true && !isIndexing) {
                                 View.VISIBLE
                             } else {
                                 View.GONE
@@ -281,19 +275,22 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
         }
         enterTimeMillis = System.currentTimeMillis()
 
-        ScryerApplication.getContentScanner().getProgressState().observe(
-                this@FullTextSearchFragment,
-                io.github.tzhvh.scryernext.Observer {
-                    if (it is ContentScanner.ProgressState.Unavailable) {
-                        onIndexError()
-                    } else if (it is ContentScanner.ProgressState.Progress) {
-                        if (it.current != it.total) {
-                            onIndexProgress(it.current, it.total)
-                        } else {
-                            onIndexEnd()
-                        }
+        // Issue 17: source-swapped from ContentScanner.getProgressState() LiveData onto the
+        // app-scope StateFlow<Progress>. The "results shifting" passive status is preserved
+        // (onIndexProgress/onIndexEnd); the Unavailable arm is gone (ML Kit weights are bundled,
+        // so the condition cannot arise — taxonomy classifies it Transient by design).
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                ScryerApplication.getIngestionProgressStore().progress.collect { progress ->
+                    val indexing = progress as? Progress.Indexing
+                    if (indexing != null && indexing.current != indexing.total) {
+                        onIndexProgress(indexing.current, indexing.total)
+                    } else {
+                        onIndexEnd()
                     }
-                })
+                }
+            }
+        }
 
         setHasOptionsMenu(true)
         setupActionBar()
@@ -310,9 +307,7 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
                 binding.emptyView.visibility = View.GONE
             }
         }
-        binding.errorView.visibility = View.GONE
         isIndexing = true
-        isIndexError = false
     }
 
     private fun onIndexEnd() {
@@ -321,16 +316,7 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
                 && binding.searchEditText.text?.isNotEmpty() == true) {
             binding.emptyView.visibility = View.VISIBLE
         }
-        binding.errorView.visibility = View.GONE
         isIndexing = false
-        isIndexError = false
-    }
-
-    private fun onIndexError() {
-        screenshotAdapter.showLoadingView(null)
-        binding.errorView.visibility = View.VISIBLE
-        isIndexing = false
-        isIndexError = true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {

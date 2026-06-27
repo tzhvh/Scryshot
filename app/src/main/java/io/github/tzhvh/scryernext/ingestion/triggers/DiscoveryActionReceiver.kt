@@ -10,6 +10,7 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import io.github.tzhvh.scryernext.ScryerApplication
 
 /**
  * The entry point for [DiscoveryWorker]'s notification actions (issue `13`) — the lightest
@@ -45,7 +46,9 @@ class DiscoveryActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             ACTION_INDEX_NOW -> {
-                IngestionWorker.enqueue(context)
+                // Issue 18: single enqueue funnel — the banner's "Index now" calls the same
+                // session.startBulk(), so both UI surfaces share one WM entry point.
+                ScryerApplication.getIngestionSession().startBulk()
                 cancelDiscoveryNotification(context)
             }
             ACTION_SNOOZE -> {

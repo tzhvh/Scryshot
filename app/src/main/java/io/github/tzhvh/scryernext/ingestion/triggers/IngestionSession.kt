@@ -92,6 +92,17 @@ class IngestionSession(
     // ---------------------------------------------------------------------- 14a: abort
 
     /**
+     * User-facing start of the bulk job (issue `18`) — the symmetric pair of [abort].
+     * The banner's "Index now" button calls this. Mirrors [abort]'s shape: the session owns the
+     * WM enqueue surface so the UI (and [DiscoveryActionReceiver]) don't re-implement it and
+     * never touch [WorkManager] directly. Delegates to [IngestionWorker.enqueue], whose
+     * `ExistingWorkPolicy.KEEP` makes a double-tap a no-op (no second bulk job).
+     */
+    fun startBulk() {
+        IngestionWorker.enqueue(appContext)
+    }
+
+    /**
      * User-facing abort (issue `14a`) — the *only* override (issue 10.5: no `forceEnter`/preempt).
      * The banner's Stop button calls this.
      *
