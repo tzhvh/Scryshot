@@ -24,9 +24,9 @@ import java.util.concurrent.TimeUnit
 
 /**
  * The third ADR 0004 §4 trigger — **periodic discovery**: a daily
- * [PeriodicWorkRequest] that **counts** the unindexed backlog and, if it exceeds
- * [IngestionConfig.BACKLOG_THRESHOLD], posts a count-and-notify notification.
- * **It does no OCR** — it is count-and-notify only (issue `13`).
+ * [PeriodicWorkRequest] that **counts** the unindexed backlog and publishes it to the shared
+ * [IngestionProgressStore.backlog] surface. **It does no OCR and posts no notification** — it
+ * is a silent count update only (issue `13`; notification retired post-Phase-3, see below).
  *
  * ### What it does, in order
  *
@@ -35,17 +35,24 @@ import java.util.concurrent.TimeUnit
  * 2. `store.publishBacklog(count)` — publishes to [IngestionProgressStore.backlog]
  *    so the in-app banner (Phase 3) reads a single shared count rather than each
  *    consumer re-counting.
- * 3. `if (count > THRESHOLD) postNotification(count)` — "Index now" (→ enqueues
- *    [IngestionWorker] via [DiscoveryActionReceiver], issue `12`) and "Snooze"
- *    (dismissal only — WM's periodic interval handles cadence).
- * 4. `return Result.success()` — always. This worker never runs OCR and never retries.
+ * 3. `return Result.success()` — always. This worker never runs OCR, never notifies, never retries.
  *
- * ### No foreground service, no engine
+ * ### No foreground service, no engine, no notification
  *
  * This worker does **not** promote to a foreground service — it is a sub-second
  * count. If it did `setForeground`, stop. Bulk OCR is [IngestionWorker]'s job,
- * triggered by the notification's "Index now" action. (ADR 0004 §4: the periodic
- * trigger is "Tally + Index/Snooze — **no OCR**".)
+ * started by the banner's "Index now" tap. (ADR 0004 §4: the periodic trigger is
+ * "Tally — **no OCR**".)
+ *
+ * ### Why the notification was retired
+ *
+ * ADR 0004 §4 originally specified "count-and-notify." Phase 3 replaced the notification with the
+ * in-app banner (fed immediately by [OnOpenTrigger]'s `publishBacklog` on foreground), which is
+ * the right surface when the user is in the app. A daily system notification fired regardless of
+ * a prior in-app snooze, repeating a static number as spam with near-zero conversion value, and
+ * violated the snooze signal. The worker now keeps the backlog StateFlow current for the next
+ * app-open; the banner owns all user-facing prompts. (Background OCR, if ever wanted, would be a
+ * separate opt-in periodic with its own foreground-service notification — not this worker.)
  *
  * ### Structural vs. SAF
  *
@@ -106,85 +113,25 @@ class DiscoveryWorker(
         //    key-enumeration primitive — so counting unindexed naïvely means hashing the
         //    whole corpus. At the zvec transition, re-ground this on a metadata cache keyed
         //    on cheap filesystem identity (`locator + mtime + size → content_hash → indexed`)
-        //    so counting stays a metadata lookup. The worker's *structure* (count → publish
-        //    → notify) survives; its *cost model* does not. THIS SITE IS THE RE-GROUNDING POINT.
+        //    so counting stays a metadata lookup. The worker's *structure* (count → publish)
+        //    survives; its *cost model* does not. THIS SITE IS THE RE-GROUNDING POINT.
         val count = repository.getUnprocessedCount()
         logger.log("doWork: unprocessed count = $count")
 
         // 2. Publish to the shared backlog surface so Phase 3's banner reads one count.
         store.publishBacklog(count)
 
-        // 3. Notify only when the backlog exceeds the threshold (not a fixed daily nag;
-        //    ADR 0003 §4 carried by ADR 0004 §4). The notify decision is extracted as a
-        //    pure, unit-tested helper.
-        if (shouldNotify(count, IngestionConfig.BACKLOG_THRESHOLD)) {
-            logger.log("doWork: count ($count) exceeds threshold (${IngestionConfig.BACKLOG_THRESHOLD}); notifying.")
-            postNotification(count)
-        }
+        // 3. Silent count update — NO notification. The banner (Phase 3, fed by OnOpenTrigger's
+        //    immediate publishBacklog on foreground) is the primary nudge; a daily system
+        //    notification that fires regardless of a prior in-app snooze overrides the user's
+        //    "not now" signal with a louder channel, and repeats a static number as spam. The
+        //    worker's only job now is keeping the backlog StateFlow current for the next app-open.
+        //    (ADR 0004 §4 originally specified count-and-notify; this is the documented deviation
+        //    — see the issue/PRD notes. The background-nudge role is retired; the banner owns it.)
 
         // 4. Always success. This worker never runs OCR and never retries — it counts and
-        //    notifies, full stop.
+        //    publishes, full stop.
         return Result.success()
-    }
-
-    // ------------------------------------------------------------------ notification
-
-    private fun ensureChannel() {
-        // Reuses the ingestion channel (id "ingestion") created idempotently by
-        // IngestionWorker.ensureChannel(). Created here too so a discovery-only run (no
-        // bulk job ever started) still has a channel to post to. minSdk = 29 ≥ O, so the
-        // channel is always required; createNotificationChannel is idempotent by platform.
-        // Mirrors IngestionWorker.ensureChannel() exactly.
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            applicationContext.getString(R.string.ingestion_notification_channel),
-            NotificationManager.IMPORTANCE_LOW
-        )
-        (applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-            .createNotificationChannel(channel)
-    }
-
-    private fun postNotification(count: Int) {
-        ensureChannel()
-        val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE)
-            as NotificationManager
-
-        // "Index now" → fire-and-forget enqueue of the bulk worker (issue 12). WM hands us a
-        // cancel PendingIntent (createCancelPendingIntent) but not an enqueue one, so the
-        // enqueue direction goes through DiscoveryActionReceiver — the lightest entry point
-        // for "notification tap → start a Worker" (no UI, no service coupling).
-        val indexNowPendingIntent = DiscoveryActionReceiver.indexNowPendingIntent(applicationContext)
-        // "Snooze" → dismissal only. WM's periodic interval handles cadence; snooze just
-        // dismisses the notification (ADR 0004 §4). Don't build a snooze-duration system.
-        val snoozePendingIntent = DiscoveryActionReceiver.snoozePendingIntent(applicationContext)
-
-        val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_notify)
-            .setContentTitle(applicationContext.getString(R.string.ingestion_notification_title))
-            .setContentText(
-                applicationContext.getString(R.string.discovery_notification_text, count)
-            )
-            .setStyle(
-                NotificationCompat.BigTextStyle().bigText(
-                    applicationContext.getString(R.string.discovery_notification_text, count)
-                )
-            )
-            .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(
-                0,
-                applicationContext.getString(R.string.notification_action_index),
-                indexNowPendingIntent
-            )
-            .addAction(
-                0,
-                applicationContext.getString(R.string.notification_action_snooze),
-                snoozePendingIntent
-            )
-            .build()
-
-        notificationManager.notify(NOTIF_ID, notification)
     }
 
     companion object {
@@ -192,9 +139,6 @@ class DiscoveryWorker(
 
         /** Unique-periodic-work name — KEEP so re-registration (process restart) is a no-op. */
         const val UNIQUE_NAME = "discovery"
-
-        private const val NOTIF_ID = 4243          // distinct from IngestionWorker.NOTIF_ID (4242)
-        private const val CHANNEL_ID = "ingestion" // shared with IngestionWorker
 
         /**
          * Enqueue the daily periodic discovery worker (ADR 0004 §4).

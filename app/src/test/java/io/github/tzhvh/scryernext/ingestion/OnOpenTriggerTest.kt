@@ -107,7 +107,7 @@ class OnOpenTriggerTest {
     }
 
     @Test
-    fun testOnForeground_whenBacklogExceedsThreshold_doesNothing() = runBlocking {
+    fun testOnForeground_whenBacklogExceedsThreshold_doesNothingButPublishesBacklog() = runBlocking {
         val repo = FakeScreenshotRepository(
             unprocessedCount = 13,
             unprocessedList = (1..13).map {
@@ -123,9 +123,32 @@ class OnOpenTriggerTest {
         val trigger = OnOpenTrigger(repo, producer, engine, store, testScope)
         trigger.onForeground()
 
-        // Should remain Idle, and never entered
+        // Past-threshold: still no OCR, still never entered the guard.
         assertTrue(store.progress.value is Progress.Idle)
         assertFalse(store.isActive)
+
+        // Regression (diagnosed on hardware 2026-06-27): the count is published to the shared
+        // backlog surface even when we bail at the threshold gate, so the in-app banner's nudge
+        // appears immediately rather than waiting up to 24h for DiscoveryWorker's first tick.
+        assertEquals(13, store.backlog.value)
+    }
+
+    @Test
+    fun testOnForeground_whenBacklogExceedsThresholdByFar_publishesFullBacklog() = runBlocking {
+        // The live symptom: 284 unindexed. Confirms the count flows through unchanged at scale
+        // (not clamped, not gated by the threshold on the publish path).
+        val repo = FakeScreenshotRepository(unprocessedCount = 284)
+        val contentResolver = mock(android.content.ContentResolver::class.java)
+        val producer = MediaStoreProducer(repo, contentResolver)
+        val ocr = OcrStage { _, _ -> OcrOutcome.Success("text") }
+        val write = WriteSink { _, _, _ -> }
+        val engine = IngestionEngine(repo, ocr, write)
+
+        val trigger = OnOpenTrigger(repo, producer, engine, store, testScope)
+        trigger.onForeground()
+
+        assertEquals(284, store.backlog.value)
+        assertTrue(store.progress.value is Progress.Idle)
     }
 
     @Test

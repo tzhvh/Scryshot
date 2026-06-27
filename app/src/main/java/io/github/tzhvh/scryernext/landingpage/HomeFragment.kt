@@ -75,6 +75,11 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
 
         private const val PREF_SHOW_NEW_SCREENSHOT_DIALOG = "show_new_screenshot_dialog"
         private const val PREF_SHOW_ENABLE_SERVICE_DIALOG = "show_enable_service_dialog"
+
+        /** Banner SUCCESS dwell: how long the "Indexing complete ✓" state shows before the banner
+         *  re-evaluates against the live backlog. Tuned long enough to read, short enough that the
+         *  "done" claim (only true at the instant of completion) isn't held as a potential lie. */
+        private const val SUCCESS_DWELL_MS = 4000L
     }
 
     private val fragmentJob = Job()
@@ -102,6 +107,17 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
      * one sitting. See [`PHASE3_DESIGN_DECISIONS.md`](file:///.scratch/ingestion/PHASE3_DESIGN_DECISIONS.md) §5.
      */
     private var bannerSnoozedForSession: Boolean = false
+
+    /**
+     * Transient "just completed" flag for the banner SUCCESS state. Set when [renderBanner] observes
+     * [Progress.Completed], cleared after a ~4s dwell by a lifecycle-scoped coroutine. The "done"
+     * claim is only true at the instant the job finished — every second after, new files could land
+     * — so SUCCESS is deliberately short; after the dwell the banner re-evaluates against the live
+     * `backlog` (HIDDEN if empty, IDLE_BACKLOG with the new count if not). If the fragment pauses or
+     * destroys mid-dwell, the coroutine is cancelled and this resets — next STARTED recomputes.
+     */
+    private var bannerJustCompleted: Boolean = false
+    private var successDismissJob: kotlinx.coroutines.Job? = null
 
     private var permissionDialog: BottomSheetDialog? = null
 
@@ -226,6 +242,20 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
                     store.progress
                 ) { pending, backlog, progress -> Triple(pending, backlog, progress) }
                     .collect { (pending, backlog, progress) ->
+                        // Arm the SUCCESS dwell when we observe a terminal Completed transition.
+                        // The "done" claim is only true at the instant of completion, so SUCCESS is
+                        // a transient overlay — the 4s coroutine clears bannerJustCompleted and the
+                        // banner re-evaluates against the live backlog. Guarded so a re-emit of an
+                        // already-Completed value (e.g. config change) doesn't re-arm a stale dwell.
+                        if (progress is Progress.Completed && !bannerJustCompleted && successDismissJob == null) {
+                            bannerJustCompleted = true
+                            successDismissJob = viewLifecycleOwner.lifecycleScope.launch {
+                                kotlinx.coroutines.delay(SUCCESS_DWELL_MS)
+                                bannerJustCompleted = false
+                                successDismissJob = null
+                                renderBanner(store.progress.value)
+                            }
+                        }
                         renderBanner(pending, backlog, progress)
                     }
             }
@@ -235,14 +265,16 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
     /**
      * Render the banner for the latest observed state. Overloads resolve to the same logic; the
      * `(pending, backlog, progress)` form is the combined-collect path, and the `(progress)` form
-     * is the snooze-tap path (which re-renders from the current values without re-collecting).
+     * is the snooze-tap / success-dwell path (re-renders from the current values without
+     * re-collecting).
      */
     private fun renderBanner(pending: Boolean, backlog: Int, progress: Progress) {
         val mode = bannerMode(
             pending = pending,
             backlog = backlog,
             threshold = IngestionConfig.BACKLOG_THRESHOLD,
-            snoozed = bannerSnoozedForSession
+            snoozed = bannerSnoozedForSession,
+            justCompleted = bannerJustCompleted
         )
         when (mode) {
             BannerMode.HIDDEN -> {
@@ -283,6 +315,18 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
                 binding.ingestionBannerActionIndex.visibility = View.GONE
                 binding.ingestionBannerActionSnooze.visibility = View.GONE
                 binding.ingestionBannerActionStop.visibility = View.VISIBLE
+            }
+            BannerMode.SUCCESS -> {
+                // Transient terminal state: no actions (nothing to index/stop), progress line
+                // hidden. Auto-dismissed by the successDismissJob coroutine; if a new backlog
+                // appeared during the dwell, the dwell finishes first then re-evaluates to
+                // IDLE_BACKLOG with the fresh count (deliberate: confirmation then re-prompt).
+                binding.ingestionBanner.visibility = View.VISIBLE
+                binding.ingestionBannerTitle.text = getString(R.string.ingestion_banner_success)
+                binding.ingestionBannerProgress.visibility = View.GONE
+                binding.ingestionBannerActionIndex.visibility = View.GONE
+                binding.ingestionBannerActionSnooze.visibility = View.GONE
+                binding.ingestionBannerActionStop.visibility = View.GONE
             }
         }
     }

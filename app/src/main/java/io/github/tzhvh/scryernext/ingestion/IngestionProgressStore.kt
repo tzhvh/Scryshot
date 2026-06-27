@@ -158,9 +158,18 @@ class IngestionProgressStore(
     }
 
     /**
-     * Terminal success. Transitions [progress] to [Progress.Completed], releases
-     * the guard (`active → null`), and runs the [onTerminalClear] hook (which
+     * Terminal success. Transitions [progress] to [Progress.Completed], releases the
+     * guard (`active → null`), and runs the [onTerminalClear] hook (which
      * is then cleared — once-consumed; see [onTerminalClear]).
+     *
+     * Also republishes [backlog] to reflect the files this run removed from the unindexed set,
+     * fixing the banner-revert-on-completion bug: without this, `backlog` kept its pre-run value
+     * (e.g. 284) after a run that indexed all 284, so `bannerMode` flipped ACTIVE→IDLE_BACKLOG
+     * and re-showed a stale nudge for files just processed. The republish is arithmetic
+     * (`backlog − indexed`), not a re-count — accurate for the banner's purpose and free vs. a
+     * fresh SQL query; the next OnOpenTrigger/DiscoveryWorker tick re-grounds the exact count.
+     * Clamped at 0 so a run that indexed more than the published backlog (e.g. files added
+     * mid-run) can't drive it negative.
      */
     fun complete(result: Progress.Completed) {
         _progress.value = result
@@ -168,7 +177,14 @@ class IngestionProgressStore(
         val hook = onTerminal
         onTerminal = null
         hook?.invoke()
-        logger.log("complete(${result.indexed}/${result.total}, failed=${result.failed}) [was $was]")
+        // Arithmetic republish: the indexed files left the unindexed set. `failed` here is
+        // transient-only (ADR 0004 §7.2); permanent-content failures are counted in `indexed`
+        // (written processed=true) and so also leave the unindexed set. Both reduce the backlog.
+        val removed = result.indexed
+        if (removed > 0) {
+            _backlog.value = (_backlog.value - removed).coerceAtLeast(0)
+        }
+        logger.log("complete(${result.indexed}/${result.total}, failed=${result.failed}) [was $was] backlog=${_backlog.value}")
     }
 
     /**

@@ -27,6 +27,8 @@
     <string name="ingestion_notification_title">Indexing screenshots</string>
     <!-- %1$d = current (indexed + failed so far), %2$d = total this run -->
     <string name="ingestion_notification_progress">Analyzing %1$d of %2$d</string>
+    <!-- Banner SUCCESS state: shown ~4s after a run completes, then auto-dismisses. -->
+    <string name="ingestion_banner_success">Indexing complete ✓</string>
 
     <!-- Discovery worker (issue 13): the periodic count-and-notify notification (no OCR —
          it counts the unindexed backlog and, if above the threshold, offers to start the bulk

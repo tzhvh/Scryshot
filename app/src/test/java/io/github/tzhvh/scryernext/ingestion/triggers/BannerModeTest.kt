@@ -105,4 +105,42 @@ class BannerModeTest {
         assertEquals(BannerMode.HIDDEN, bannerMode(pending = false, backlog = 99, threshold = 100))
         assertEquals(BannerMode.IDLE_BACKLOG, bannerMode(pending = false, backlog = 101, threshold = 100))
     }
+
+    // ==========================================================================
+    // SUCCESS state (banner-revert-on-completion bug): a just-completed run shows a transient
+    // "done" banner. The "done" claim is only true at the instant of completion, so SUCCESS is
+    // declared by a transient `justCompleted` flag the view clears after a dwell — NOT by backlog,
+    // which may still be >0 mid-run or tick up if new files arrive during the dwell.
+    //
+    // Precedence: SUCCESS > ACTIVE > IDLE_BACKLOG > HIDDEN. The bug was ACTIVE→IDLE_BACKLOG on
+    // completion (stale-nudge for files just processed); SUCCESS intercepts that transition.
+    // ==========================================================================
+
+    @Test
+    fun just_completed_shows_success_regardless_of_backlog() {
+        // The whole point: after a run that emptied the backlog, show SUCCESS — not the stale
+        // nudge, and not a silent HIDDEN. backlog here is the PRE-republish value; even if the
+        // store hasn't recomputed yet, SUCCESS must show.
+        assertEquals(BannerMode.SUCCESS, bannerMode(pending = false, backlog = 0, threshold = 12, justCompleted = true))
+        assertEquals(BannerMode.SUCCESS, bannerMode(pending = false, backlog = 284, threshold = 12, justCompleted = true))
+    }
+
+    @Test
+    fun success_precedence_over_idle_backlog_even_when_snoozed() {
+        // SUCCESS is a confirmation of work the user just initiated/saw — snooze (which suppresses
+        // the *nudge*) must not suppress it. Precedence is SUCCESS > everything.
+        assertEquals(
+            BannerMode.SUCCESS,
+            bannerMode(pending = false, backlog = 842, threshold = 12, snoozed = true, justCompleted = true)
+        )
+    }
+
+    @Test
+    fun just_completed_false_falls_through_to_normal_rule() {
+        // Outside the dwell window, justCompleted is false and the normal precedence applies.
+        // This is the post-dwell re-evaluation: backlog has been republished to ~0 → HIDDEN.
+        assertEquals(BannerMode.HIDDEN, bannerMode(pending = false, backlog = 0, threshold = 12, justCompleted = false))
+        // …but if new files arrived during the dwell, IDLE_BACKLOG with the fresh count:
+        assertEquals(BannerMode.IDLE_BACKLOG, bannerMode(pending = false, backlog = 50, threshold = 12, justCompleted = false))
+    }
 }

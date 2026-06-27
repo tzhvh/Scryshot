@@ -91,6 +91,13 @@ class OnOpenTrigger(
                 val count = repository.getUnprocessedCount()
                 logger.log("onForeground: unprocessed count = $count")
 
+                // Publish the count to the shared backlog surface so the in-app banner (Phase 3)
+                // reads it immediately, not 24h later when DiscoveryWorker's periodic first fires.
+                // Otherwise the banner's backlog StateFlow stays at its initial 0 and the nudge
+                // never appears even though we hold the exact number right here. Diagnosed live:
+                // 284 unindexed, OnOpenTrigger bailed at the threshold gate, banner stayed HIDDEN.
+                store.publishBacklog(count)
+
                 // 2. Threshold gate (ADR 0004 §4). count == 0 or count > THRESHOLD → not our job.
                 if (count == 0 || count > THRESHOLD) {
                     if (count > THRESHOLD) {
