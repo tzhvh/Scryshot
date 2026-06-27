@@ -11,8 +11,6 @@ import android.util.Log
 import io.github.tzhvh.scryernext.ingestion.IngestionLogger
 import io.github.tzhvh.scryernext.ingestion.IngestionProgressStore
 import io.github.tzhvh.scryernext.repository.ScreenshotRepository
-import io.github.tzhvh.scryernext.scan.ContentScanner
-import io.github.tzhvh.scryernext.scan.ForegroundAndBackgroundCharging
 import io.github.tzhvh.scryernext.setting.PreferenceSettingsRepository
 import io.github.tzhvh.scryernext.setting.SettingsRepository
 import io.github.tzhvh.scryernext.util.launchIO
@@ -41,10 +39,6 @@ class ScryerApplication : Application() {
             return instance.settingsRepository
         }
 
-        fun getContentScanner(): ContentScanner {
-            return instance.contentScanner
-        }
-
         /** Issue 10.5: app-scope ingestion state + §7.5 re-entrancy guard. */
         fun getIngestionProgressStore(): IngestionProgressStore {
             return instance.ingestionProgressStore
@@ -68,13 +62,11 @@ class ScryerApplication : Application() {
     lateinit var screenshotRepository: ScreenshotRepository
     lateinit var settingsRepository: SettingsRepository
 
-    private val contentScanner = ContentScanner()
-
     /**
      * Issue 10.5: app-scope ingestion progress surface + atomic §7.5 guard.
      * Wired with a tagged-logcat [IngestionLogger] (ADR 0004 §7.6); the store
      * itself is pure Kotlin (no `android.util.Log` dependency) so it remains
-     * JVM-testable. Mirrors [contentScanner]'s ownership/access pattern.
+     * JVM-testable. Exposed via the [Companion.getIngestionProgressStore] accessor.
      */
     private val ingestionProgressStore = IngestionProgressStore(
         logger = IngestionLogger { msg -> Log.d("IngestionProgressStore", msg) }
@@ -148,7 +140,5 @@ class ScryerApplication : Application() {
         // if the periodic is already scheduled. Counts the unindexed backlog, publishes it to the
         // shared progress store, and notifies (with "Index now" / "Snooze") only past the threshold.
         DiscoveryWorker.enqueuePeriodic(this)
-
-        contentScanner.onCreate(ForegroundAndBackgroundCharging())
     }
 }

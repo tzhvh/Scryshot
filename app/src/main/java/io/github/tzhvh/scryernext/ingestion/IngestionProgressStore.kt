@@ -17,8 +17,8 @@ import java.util.concurrent.atomic.AtomicReference
  * 1. **The shared progress/notification surface.** A single [StateFlow]<[Progress]>
  *    that every trigger publishes to and every consumer (the UI observers, the
  *    foreground notification, the in-app banner) reads. This is the structural
- *    replacement for `ContentScanner.getProgressState()` (`scan/ContentScanner.kt`),
- *    which Phase 3 migrates the consumers off of. The engine is a pure cold
+ *    replacement for `ContentScanner.getProgressState()`, which Phase 3 (issue `16`)
+ *    migrated the consumers off of and then deleted. The engine is a pure cold
  *    `Flow<Progress>` (ADR 0004 §2 — it knows nothing of scopes); the collecting
  *    trigger (Phase 2's on-open coroutine / bulk `CoroutineWorker`) feeds the
  *    engine's emissions into [publish].

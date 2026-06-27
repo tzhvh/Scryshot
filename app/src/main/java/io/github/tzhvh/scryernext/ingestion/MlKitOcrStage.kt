@@ -20,7 +20,7 @@ import kotlin.coroutines.resumeWithException
 
 /**
  * Production implementation of [OcrStage] that ports the decoding and ML Kit OCR
- * mechanism from OcrTextHelper.
+ * mechanism from the former `OcrTextHelper` (deleted in Phase 3 issue `16`).
  *
  * Two entry points share one decode+OCR core ([recognizeInternal]):
  *

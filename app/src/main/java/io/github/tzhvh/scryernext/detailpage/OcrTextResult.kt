@@ -39,7 +39,7 @@ sealed interface OcrTextResult {
      * Permanent-content failure (corrupt bitmap, truly illegible image, unsupported format).
      * DetailPage writes a `processed = true`-but-empty row so the file leaves the unindexed set
      * (ADR 0004 §7.2) — distinct from the legacy `OcrTextHelper.extractText(ScreenshotModel)`
-     * swallow-to-`""`, which wrote nothing and left the row re-poisoning the backlog.
+     * swallow-to-`""` (deleted in Phase 3 issue `16`), which wrote nothing and left the row
      */
     data object PermanentContentFailure : OcrTextResult
 

@@ -78,8 +78,8 @@ import java.util.concurrent.TimeUnit
  * [IngestionWorker]. The periodic request is registered once in
  * `ScryerApplication.onCreate` via [enqueuePeriodic] (`KEEP` makes it idempotent
  * across process restarts). No constraints: charging-required (the legacy
- * `ForegroundAndBackgroundCharging` worker's constraint) is too restrictive for a
- * daily count; the notify-threshold gates the noise.
+ * `ForegroundAndBackgroundCharging` worker's constraint, deleted in Phase 3 issue `16`)
+ * is too restrictive for a daily count; the notify-threshold gates the noise.
  *
  * See: [.scratch/ingestion/issues/13-discovery-worker.md](file:///.scratch/ingestion/issues/13-discovery-worker.md)
  * See: [ADR 0004 §4, §7.1](file:///docs/adr/0004-ingestion-engine-and-trigger-architecture-v2.md)

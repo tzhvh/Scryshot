@@ -48,8 +48,8 @@ sealed interface OcrOutcome {
  * (Phase 0 issues `03`/`04`). The engine is JVM-unit-testable because its
  * OCR backend is a parameter, not a hardcoded call.
  *
- * The real backend (a port of `OcrTextHelper.extractText(Bitmap)` +
- * `decodeFromUri`) is issue `08`; tests pass a fake that returns canned
+ * The real backend (a port of the former `OcrTextHelper.extractText(Bitmap)` +
+ * `decodeFromUri`, deleted in Phase 3 issue `16`) is issue `08`; tests pass a fake that returns canned
  * [OcrOutcome]s.
  *
  * **Read ownership / stage boundary (issue `07`):** the **engine** owns the

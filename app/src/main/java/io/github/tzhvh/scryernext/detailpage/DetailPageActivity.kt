@@ -121,8 +121,8 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
     /**
      * Issue 15 (option b): the ML Kit decode+OCR mechanism, shared with the ingestion
      * engine. DetailPage keeps its own orchestration ([Result] taxonomy, dimension check,
-     * `isRecognizing` write gate, [Promoter] call); only the ML Kit call site moves off
-     * the legacy [io.github.tzhvh.scryernext.scan.OcrTextHelper]. Lazy like the other
+     * `isRecognizing` write gate, [Promoter] call); only the ML Kit call site moved off
+     * the former `OcrTextHelper` (deleted in Phase 3 issue `16`). Lazy like the other
      * Activity-owned dependencies; the default `TextRecognizer` is itself lazy inside the
      * stage's companion.
      */
@@ -435,8 +435,8 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         // Issue 15 (option b): DetailPage owns the READ — opens the ContentResolver stream and
         // hands the stage `bytes`, mirroring how IngestionEngine consumes Candidate.byteHandle.
         // The stage (MlKitOcrStage.recognize) owns DECODE+OCR over those bytes — the same stage
-        // boundary the engine honours. The legacy OcrTextHelper.extractText/decodeFromUri path
-        // is no longer referenced from DetailPage (Phase 4.5 deletes the class outright).
+        // boundary the engine honours. The legacy OcrTextHelper path is no longer referenced
+        // from DetailPage (deleted outright in Phase 3 issue `16`).
         val bytes = try {
             val resolver = contentResolver
             resolver.openInputStream(android.net.Uri.parse(screenshot.uri))?.use { input ->
