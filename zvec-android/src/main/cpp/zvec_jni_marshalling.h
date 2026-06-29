@@ -161,3 +161,52 @@ struct OptionsGuard {
         }
     }
 };
+
+// Config init guards (issue 01). config_data_create / config_log_create_file
+// are paired with destroy; these run on any exit path, including a macro
+// throw-return from one of the config_data_set_* setters below.
+struct ConfigDataGuard {
+    zvec_config_data_t* c = nullptr;
+    ~ConfigDataGuard() {
+        if (c) {
+            zvec_config_data_destroy(c);
+        }
+    }
+};
+
+struct LogConfigGuard {
+    zvec_log_config_t* l = nullptr;
+    ~LogConfigGuard() {
+        if (l) {
+            zvec_config_log_destroy(l);
+        }
+    }
+};
+
+// Issue 02: schema-construction guards. Schema construction creates the deepest
+// ownership chain in the C API (field → borrowed index params, schema → borrowed
+// field). These guards free the per-field index-params handle and the FTS filter
+// string-array on any exit path — including a macro throw-return from
+// zvec_field_schema_set_index_params or schema_add_field. The Rust oracle marks
+// these `owned: true` and frees them in Drop; we free them in the guard dtor so a
+// single `return` from the build loop can't leak one.
+struct IndexParamsGuard {
+    zvec_index_params_t* p = nullptr;
+    ~IndexParamsGuard() {
+        if (p) {
+            zvec_index_params_destroy(p);
+        }
+    }
+};
+
+// zvec_string_array_t for the FTS filters. set_fts_params does NOT adopt the
+// array (it copies), so this guard always frees it — on success and on failure.
+struct FtsStringArrayGuard {
+    zvec_string_array_t* a = nullptr;
+    ~FtsStringArrayGuard() {
+        if (a) {
+            zvec_string_array_destroy(a);
+        }
+    }
+};
+

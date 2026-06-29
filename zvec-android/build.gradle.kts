@@ -39,6 +39,15 @@ dependencies {
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.core)
     androidTestImplementation(libs.androidx.test.ext.junit)
+    // runBlocking to drive the suspend SDK methods from instrumentation tests.
+    // main-scoped only — the SDK itself adds no dispatcher hop (ADR 0007), so it
+    // depends on kotlinx-coroutines-core, not the android artifact.
+    androidTestImplementation(libs.kotlinx.coroutines.android)
+
+    // JVM unit tests for the pure-Kotlin seams (SchemaDescriptor encoder). The .so
+    // can't run on the JVM, so anything that touches JNI is instrumentation-only;
+    // these tests cover the flat-array flattening logic that doesn't.
+    testImplementation(libs.junit)
 }
 
 val checkAarPackaging by tasks.registering {
