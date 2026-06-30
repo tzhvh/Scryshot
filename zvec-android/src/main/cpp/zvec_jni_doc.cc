@@ -96,6 +96,16 @@ zvec_error_code_t run_with_results(
   return per_doc_code;
 }
 
+struct DocsGuard {
+  zvec_doc_t** docs = nullptr;
+  size_t count = 0;
+  ~DocsGuard() {
+    if (docs) {
+      zvec_docs_free(docs, count);
+    }
+  }
+};
+
 } // namespace
 
 extern "C" {
@@ -395,8 +405,9 @@ Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeFetchTyped(
                             /*output_fields=*/nullptr, /*output_field_count=*/0,
                             /*include_vector=*/true, &docs, &found));
 
+  DocsGuard docs_guard{docs, found};
+
   if (found == 0 || !docs[0]) {
-    zvec_docs_free(docs, found);
     return nullptr;  // absent pk — caller treats null as "not found"
   }
   const zvec_doc_t* d = docs[0];
@@ -413,7 +424,7 @@ Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeFetchTyped(
 
   // Total slots: pk + score + one per field.
   jobjectArray result = env->NewObjectArray(2 + n, obj_class, nullptr);
-  if (!result || env->ExceptionCheck()) { zvec_docs_free(docs, found); return nullptr; }
+  if (!result || env->ExceptionCheck()) { return nullptr; }
 
   // [0] = pk.
   jstring jout_pk = env->NewStringUTF(zvec_doc_get_pk_pointer(d) ? zvec_doc_get_pk_pointer(d) : "");
@@ -511,14 +522,13 @@ Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeFetchTyped(
         // test only exercises the types above.
         break;
     }
-    if (env->ExceptionCheck()) { zvec_docs_free(docs, found); return nullptr; }
+    if (env->ExceptionCheck()) { return nullptr; }
     if (boxed) {
       env->SetObjectArrayElement(result, 2 + i, boxed);
       env->DeleteLocalRef(boxed);
     }
   }
 
-  zvec_docs_free(docs, found);
   return result;
 }
 
