@@ -11,6 +11,7 @@ add_library(zvec_jni SHARED
     zvec_jni_onload.cc
     zvec_jni_collection.cc
     zvec_jni_config.cc
+    zvec_jni_doc.cc
     zvec_jni_schema.cc
 )
 
