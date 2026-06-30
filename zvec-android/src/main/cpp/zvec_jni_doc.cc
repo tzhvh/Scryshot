@@ -1382,4 +1382,237 @@ Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeQuery(
   return collect_docs(env, col, docs, result_count);
 }
 
+// Issue 07: hybrid search — multi-query fusion of one or more legs (a vector
+// similarity leg + an FTS leg, typically) via a reranker. The JNI layer builds a
+// multi_query_t (MultiQueryGuard), then for EACH leg builds a sub_query_t
+// (SubQueryGuard), sets field_name + optional num_candidates, and attaches either
+// a query vector (vector mode) or an fts_t payload carrying the match string
+// (FTS mode). Each sub-query is ADDED to the multi-query.
+//
+// OWNERSHIP (load-bearing): zvec_multi_query_add_sub_query COPIES the sub-query
+// (c_api.h:2144 "copied, caller retains ownership"); it does NOT adopt it. So the
+// SubQueryGuard ALWAYS frees each sub-query — success OR failure — exactly like
+// the FtsGuard (issue 06). The fts_t payload is also copied by
+// zvec_sub_query_set_fts (c_api.h:2377 "copies the FTS clause"), so its FtsGuard
+// always frees it too. This is the corrected pattern; the issue's "adopt-on-
+// success" note was a misread of the C ownership (verified against the Rust +
+// Go oracles before this shipped).
+//
+// The reranker selects the fusion setter: RRF → set_rerank_rrf(rankConstant);
+// Weighted → set_rerank_weighted(positional double[] aligned to leg order — the
+// Kotlin layer resolves the field-keyed map to this positional array before
+// calling). Then set_topk (post-fusion count), optional set_filter,
+// set_output_fields, zvec_collection_multi_query (c_api.h:3313), and the shared
+// collect_docs (issue 05) walks the result array into the same flat Object[]
+// rows query/fetch use. All handles (MultiQueryGuard / per-leg SubQueryGuard +
+// FtsGuard / DocsGuard) are freed on ANY exit path, including a throw-return
+// mid-build — the caller never sees a handle (Q7).
+//
+// rerankerMode: 0 = RRF (rankConstant consulted), 1 = Weighted
+// (weightedWeights consulted). subHasVector[leg] selects vector vs FTS mode per
+// leg; subVectors[leg] / subFts[leg] are the per-leg payloads. Returns the same
+// `Array<Any?>` shape as nativeQuery (one Object[] row per result doc). Empty
+// result is a zero-length array. Kotlin rejects empty queries + each leg's
+// exactly-one-of(vector, fts) before calling.
+JNIEXPORT jobjectArray JNICALL
+Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeMultiQuery(
+    JNIEnv* env, jclass, jlong handle,
+    jobjectArray jsubFields, jbooleanArray jsubHasVector,
+    jobjectArray jsubVectors, jobjectArray jsubFts, jintArray jsubNumCands,
+    jint jrerankerMode, jint jrankConstant, jdoubleArray jweightedWeights,
+    jint jtopk, jstring jfilter, jobjectArray joutputFields) {
+
+  zvec_collection_t* col = reinterpret_cast<zvec_collection_t*>(handle);
+  if (!col) {
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Collection handle is null");
+    return nullptr;
+  }
+
+  const jsize leg_count = env->GetArrayLength(jsubFields);
+  if (env->ExceptionCheck()) return nullptr;
+  // Kotlin guarantees leg_count >= 1; defending in depth leaves an empty
+  // multi-query, which the engine would reject anyway.
+
+  // Build the multi-query handle; the guard frees it on any exit path.
+  zvec_multi_query_t* mq = zvec_multi_query_create();
+  ZVEC_CHECK_PTR(env, mq, "multi_query_create");
+  MultiQueryGuard mq_guard{mq};
+
+  // ---- Per-leg sub-queries -------------------------------------------------
+  // Copy the per-leg flag/count arrays into owning C++ buffers and release the
+  // JVM arrays BEFORE the build loop (Rule 1: copy, don't RAII-pin the JVM
+  // arrays across the zvec setters). This also makes the build loop macro-safe:
+  // a ZVEC_CHECK_JNI_JINT throw-return inside the loop can return without leaking
+  // a pinned JVM array (the guards free the C handles; there are no JVM array
+  // elements left to release). Field names + payloads are copied per-leg.
+  std::vector<uint8_t> has_vec(leg_count);
+  std::vector<int> num_cands(leg_count);
+  {
+    jboolean* hv = env->GetBooleanArrayElements(jsubHasVector, nullptr);
+    if (!hv) {
+      if (!env->ExceptionCheck()) {
+        zvec_throw(env, ZVEC_ERROR_INTERNAL_ERROR, "GetBooleanArrayElements(has_vec) returned null");
+      }
+      return nullptr;
+    }
+    for (jsize i = 0; i < leg_count; i++) has_vec[i] = (hv[i] == JNI_TRUE) ? 1 : 0;
+    env->ReleaseBooleanArrayElements(jsubHasVector, hv, JNI_ABORT);
+
+    jint* nc = env->GetIntArrayElements(jsubNumCands, nullptr);
+    if (!nc) {
+      if (!env->ExceptionCheck()) {
+        zvec_throw(env, ZVEC_ERROR_INTERNAL_ERROR, "GetIntArrayElements(num_cands) returned null");
+      }
+      return nullptr;
+    }
+    for (jsize i = 0; i < leg_count; i++) num_cands[i] = static_cast<int>(nc[i]);
+    env->ReleaseIntArrayElements(jsubNumCands, nc, JNI_ABORT);
+  }
+  if (env->ExceptionCheck()) return nullptr;
+
+  for (jsize leg = 0; leg < leg_count; leg++) {
+    // field name (every leg has one). jstring_to_std copies + releases internally.
+    jstring jfield = static_cast<jstring>(env->GetObjectArrayElement(jsubFields, leg));
+    if (env->ExceptionCheck()) return nullptr;
+    std::string field = jstring_to_std(env, jfield);
+    env->DeleteLocalRef(jfield);
+    if (env->ExceptionCheck()) return nullptr;
+
+    // Build this leg's sub-query; the guard frees it (add_sub_query COPIES —
+    // the guard always runs, success or failure).
+    zvec_sub_query_t* sub = zvec_sub_query_create();
+    if (!sub) {
+      zvec_throw(env, ZVEC_ERROR_INTERNAL_ERROR, "sub_query_create returned null");
+      return nullptr;
+    }
+    SubQueryGuard sub_guard{sub};
+
+    ZVEC_CHECK_JNI_JINT(env,
+        zvec_sub_query_set_field_name(sub, field.c_str()));
+
+    // num_candidates: 0 = keep the engine default (the Kotlin side passes 0 when
+    // the SubQuery left it null). zvec_sub_query_set_num_candidates takes the int
+    // verbatim, so only forward a positive value.
+    if (num_cands[leg] > 0) {
+      ZVEC_CHECK_JNI_JINT(env,
+          zvec_sub_query_set_num_candidates(sub, num_cands[leg]));
+    }
+
+    if (has_vec[leg] == 1) {
+      // Vector leg: read the FP32 query vector (the Kotlin side always supplies
+      // a non-null array slot here). Capture rc, release the JVM array, then
+      // check — mirroring nativeQuery, so a throw-return can't leak a pin.
+      jfloatArray jvec = static_cast<jfloatArray>(env->GetObjectArrayElement(jsubVectors, leg));
+      if (env->ExceptionCheck()) return nullptr;
+      jsize vlen = jvec ? env->GetArrayLength(jvec) : 0;
+      if (env->ExceptionCheck()) {
+        if (jvec) env->DeleteLocalRef(jvec);
+        return nullptr;
+      }
+      // GetFloatArrayElements copies (or pins, JNI_ABORT-released — no writeback);
+      // either way we hand zvec a contiguous FP32 buffer of exactly vlen*4 bytes.
+      jfloat* vec = jvec ? env->GetFloatArrayElements(jvec, nullptr) : nullptr;
+      zvec_error_code_t rc = zvec_sub_query_set_query_vector(
+          sub, vec, static_cast<size_t>(vlen) * sizeof(float));
+      if (vec) env->ReleaseFloatArrayElements(jvec, vec, JNI_ABORT);
+      if (jvec) env->DeleteLocalRef(jvec);
+      ZVEC_CHECK_JNI_JINT(env, rc);
+    } else {
+      // FTS leg: build an fts_t payload carrying the match string, attach it.
+      // set_fts COPIES the payload (c_api.h:2377), so the FtsGuard always frees
+      // it. jstring_to_std copies + releases internally.
+      jstring jfts = static_cast<jstring>(env->GetObjectArrayElement(jsubFts, leg));
+      if (env->ExceptionCheck()) return nullptr;
+      std::string fts_match = jstring_to_std(env, jfts);
+      if (jfts) env->DeleteLocalRef(jfts);
+      if (env->ExceptionCheck()) return nullptr;
+      zvec_fts_t* fts = zvec_fts_create();
+      if (!fts) {
+        zvec_throw(env, ZVEC_ERROR_INTERNAL_ERROR, "fts_create returned null");
+        return nullptr;
+      }
+      FtsGuard fts_guard{fts};
+      ZVEC_CHECK_JNI_JINT(env, zvec_fts_set_match_string(fts, fts_match.c_str()));
+      ZVEC_CHECK_JNI_JINT(env, zvec_sub_query_set_fts(sub, fts));
+    }
+
+    // Add the leg to the multi-query. add_sub_query COPIES the sub-query, so the
+    // SubQueryGuard still owns + frees it (the corrected non-adopt pattern).
+    ZVEC_CHECK_JNI_JINT(env, zvec_multi_query_add_sub_query(mq, sub));
+  }
+
+  // ---- Reranker + topK + filter + output_fields + run ---------------------
+  constexpr int RERANKER_RRF = 0;
+  constexpr int RERANKER_WEIGHTED = 1;
+  if (jrerankerMode == RERANKER_WEIGHTED) {
+    // Weighted: positional double[] aligned to leg order (Kotlin resolved the
+    // field-keyed map before calling). Capture rc, release the JVM array, then
+    // check — so a throw-return can't leak a pin.
+    jsize wlen = env->GetArrayLength(jweightedWeights);
+    if (env->ExceptionCheck()) return nullptr;
+    if (wlen != leg_count) {
+      zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT,
+                 "weighted weights length != sub-query count");
+      return nullptr;
+    }
+    jdouble* w = env->GetDoubleArrayElements(jweightedWeights, nullptr);
+    if (!w) {
+      if (!env->ExceptionCheck()) {
+        zvec_throw(env, ZVEC_ERROR_INTERNAL_ERROR, "GetDoubleArrayElements returned null");
+      }
+      return nullptr;
+    }
+    zvec_error_code_t rc = zvec_multi_query_set_rerank_weighted(
+        mq, w, static_cast<size_t>(wlen));
+    env->ReleaseDoubleArrayElements(jweightedWeights, w, JNI_ABORT);
+    ZVEC_CHECK_JNI_JINT(env, rc);
+  } else {
+    // RRF (default). rankConstant = 60 is the engine default; the Kotlin default
+    // passes 60. An explicit RrfReranker(rankConstant) forwards it verbatim.
+    ZVEC_CHECK_JNI_JINT(env,
+        zvec_multi_query_set_rerank_rrf(mq, static_cast<int>(jrankConstant)));
+  }
+
+  ZVEC_CHECK_JNI_JINT(env,
+      zvec_multi_query_set_topk(mq, static_cast<int>(jtopk)));
+
+  // Optional filter — raw SQL-ish text (escape user values; see hybridSearch).
+  if (jfilter != nullptr) {
+    std::string filter = jstring_to_std(env, jfilter);
+    if (env->ExceptionCheck()) return nullptr;
+    ZVEC_CHECK_JNI_JINT(env,
+        zvec_multi_query_set_filter(mq, filter.c_str()));
+  }
+
+  // output_fields: null = all fields; otherwise the projection set. Copied out
+  // eagerly so no JNI reference is held across the zvec call (Rule 1).
+  if (joutputFields != nullptr) {
+    jsize ofn = env->GetArrayLength(joutputFields);
+    if (env->ExceptionCheck()) return nullptr;
+    std::vector<std::string> out_fields_storage(ofn);
+    std::vector<const char*> out_field_ptrs(ofn);
+    for (jsize i = 0; i < ofn; i++) {
+      jstring jf = static_cast<jstring>(env->GetObjectArrayElement(joutputFields, i));
+      if (env->ExceptionCheck()) return nullptr;
+      out_fields_storage[i] = jstring_to_std(env, jf);
+      env->DeleteLocalRef(jf);
+      if (env->ExceptionCheck()) return nullptr;
+      out_field_ptrs[i] = out_fields_storage[i].c_str();
+    }
+    ZVEC_CHECK_JNI_JINT(env,
+        zvec_multi_query_set_output_fields(
+            mq, out_field_ptrs.data(), static_cast<size_t>(ofn)));
+  }
+
+  // Run + walk results. zvec_collection_multi_query (c_api.h:3313) returns a
+  // result array freed by zvec_docs_free; the DocsGuard owns it on any exit.
+  zvec_doc_t** docs = nullptr;
+  size_t result_count = 0;
+  ZVEC_CHECK_JNI_JINT(env,
+      zvec_collection_multi_query(col, mq, &docs, &result_count));
+
+  DocsGuard docs_guard{docs, result_count};
+  return collect_docs(env, col, docs, result_count);
+}
+
 } // extern "C"

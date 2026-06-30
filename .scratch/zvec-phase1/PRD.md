@@ -16,7 +16,7 @@
   it does not re-litigate Phase-0 decisions.
 - **Tracker convention:** [`docs/agents/issue-tracker.md`](../../docs/agents/issue-tracker.md) —
   issues are `.scratch/zvec-phase1/issues/<NN>-<slug>.md`, numbered from `01`.
-- **Status:** in-progress; **Issue 06 (Single-vector Query) completed**. Prerequisites verified present
+- **Status:** in-progress; **Issue 07 (Hybrid Search) completed**. Prerequisites verified present
   against the tree (see "Prerequisites" below). Execution order is the issue index order;
   dependencies are linear where the data path demands and fan out at the query tier.
 

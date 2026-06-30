@@ -283,3 +283,39 @@ struct FtsGuard {
     }
 };
 
+// Issue 07 (hybrid search): the multi-query fusion handle. Built, configured with
+// the reranker / topK / filter / output_fields, fed each leg's sub-query, run via
+// zvec_collection_multi_query, then freed — all inside one internal block of
+// nativeMultiQuery (Q7 — the caller never sees a multi-query handle). zvec takes
+// it as `const` (c_api.h:3314), so the collection does NOT adopt it; this guard
+// always owns + frees it on any exit path, including a macro throw-return from
+// any of the set_rerank_* / set_topk / set_filter / set_output_fields / add_sub
+// setters below the create.
+struct MultiQueryGuard {
+    zvec_multi_query_t* q = nullptr;
+    ~MultiQueryGuard() {
+        if (q) {
+            zvec_multi_query_destroy(q);
+        }
+    }
+};
+
+// Issue 07 (hybrid search): one query leg's sub-query handle. CRITICAL OWNERSHIP
+// NOTE: zvec_multi_query_add_sub_query COPIES the sub-query (c_api.h:2144:
+// "sub_query to add (copied, caller retains ownership)") — it does NOT adopt it.
+// Both reference bindings confirm this: the Rust oracle passes `&SubQuery`
+// (multi_query.rs:44) and the SubQuery owns its own Drop (multi_query.rs:121);
+// the Go oracle's test asserts `sub.handle` stays valid after AddSubQuery
+// (multi_query_test.go:122). So this guard ALWAYS frees the sub-query on any
+// exit path — success OR failure — exactly like the FtsGuard (issue 06). The
+// issue's "adopt-on-success" JNI note was a misread of the C ownership; this is
+// the corrected pattern.
+struct SubQueryGuard {
+    zvec_sub_query_t* s = nullptr;
+    ~SubQueryGuard() {
+        if (s) {
+            zvec_sub_query_destroy(s);
+        }
+    }
+};
+

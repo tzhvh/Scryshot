@@ -501,11 +501,144 @@ class ZvecCollection internal constructor(
         }
     }
 
+    // ---- Hybrid search (issue 07) -------------------------------------------
+    // The multi-query fusion surface: fuses multiple query legs (one vector +
+    // one FTS, typically) via a reranker. `multi_query_t` + each leg's
+    // `sub_query_t` are the second place in the SDK where the caller NEVER sees a
+    // handle, even transiently (Q7): the JNI layer builds the multi-query, builds
+    // + adds each sub-query (COPIED — see SubQuery), sets the reranker / topK /
+    // filter / output_fields, runs zvec_collection_multi_query, and walks the
+    // result array via the shared `collect_docs` (issue 05). Zero leak surface by
+    // construction; no `use {}` at the call site.
+    //
+    // R3 DISCHARGED (verified against the live engine before this shipped): the
+    // v0.5.1 FTS-sub-query + vector-sub-query fusion path works on our pin. RRF
+    // and Weighted rerankers both fuse a vector leg + an FTS leg correctly; the
+    // post-fusion topK is honoured. The fusion is now a proven surface — Phase 4
+    // (hybrid tuning) carries zero fusion research risk.
+    //
+    // R3 score-semantics finding (verified live): fused scores are NOT raw
+    // distances. RRF yields tiny 1/(k+rank)-summed values (≈0.03 on a 2-leg
+    // query); Weighted yields a summed-weighted score whose scale mixes the legs'
+    // raw scales (cosine distance ∈ [0,2] + BM25 ∈ [0,∞)). Both are DISTINCT from
+    // R1's cosine-distance convention. The SDK surfaces the engine's raw fused
+    // score untouched (no normalization) — Phase 4 interprets it.
+    //
+    // All suspend, no internal dispatcher hop (ADR 0007) — exactly like the
+    // read/write/single-query paths.
+
+    /**
+     * Run a hybrid search fusing multiple query legs via a [reranker], returning a
+     * finite ranked result list. Each [SubQuery] is one leg (a vector similarity
+     * leg or an FTS leg); a typical hybrid is **one vector + one FTS** leg, fused
+     * by [RrfReranker] (the default, robust to incomparable score scales).
+     *
+     * The result is ordered by the engine's fused score (highest first). Unlike
+     * the single-vector [query], the fused score's scale depends on the reranker
+     * (see the R3 finding above) — the SDK surfaces it raw.
+     *
+     * @param queries the query legs. At least one is required (empty throws
+     *   [ZvecErrorCode.INVALID_ARGUMENT] before touching native). Each leg must
+     *   carry exactly one of [SubQuery.vector] / [SubQuery.fts].
+     * @param topK post-fusion result count (default 20). Distinct from each leg's
+     *   [SubQuery.numCandidates] (the per-leg candidate count before fusion).
+     * @param reranker fusion strategy; [RrfReranker] is the default.
+     * @param filter optional SQL filter-expression subset, applied BEFORE search
+     *   (same raw `const char*` SQL subset as [QueryRequest.filter]). **⚠
+     *   Injection:** if any part is user input, escape it first via
+     *   `ZvecFilters.escapeFilterValue` (issue 08) — never interpolate a raw user
+     *   value. Until 08 lands, only pass static, developer-controlled filters.
+     * @param outputFields projection — `null` (default) = all fields; otherwise
+     *   only the named fields are returned (same semantics as [fetch] / [query]).
+     *
+     * @throws ZvecException if [queries] is empty, if a leg sets both/neither of
+     *   [SubQuery.vector] / [SubQuery.fts], or on any engine error.
+     */
+    suspend fun hybridSearch(
+        queries: List<SubQuery>,
+        topK: Int = 20,
+        reranker: Reranker = RrfReranker(),
+        filter: String? = null,
+        outputFields: List<String>? = null,
+    ): List<ZvecDoc> {
+        ensureNotClosed()
+        if (queries.isEmpty()) {
+            throw ZvecException(
+                ZvecErrorCode.INVALID_ARGUMENT,
+                "hybridSearch needs at least one sub-query (queries was empty)",
+            )
+        }
+        // Each leg must carry exactly one payload (vector XOR fts). Reject before
+        // touching native, mirroring query()'s exactly-one-of discipline.
+        queries.forEachIndexed { i, q ->
+            val hasVec = q.vector != null
+            val hasFts = q.fts != null
+            when {
+                !hasVec && !hasFts -> throw ZvecException(
+                    ZvecErrorCode.INVALID_ARGUMENT,
+                    "sub-query[$i] (field=${q.field}) needs a vector or fts (both were null)",
+                )
+                hasVec && hasFts -> throw ZvecException(
+                    ZvecErrorCode.INVALID_ARGUMENT,
+                    "sub-query[$i] (field=${q.field}) set both vector and fts; a leg carries one payload",
+                )
+            }
+        }
+        val rows = ZvecNative.nativeMultiQuery(
+            handle = nativeHandle(),
+            subFields = Array(queries.size) { queries[it].field },
+            subHasVector = BooleanArray(queries.size) { queries[it].vector != null },
+            subVectors = Array(queries.size) { queries[it].vector?.toFloatArray() ?: FloatArray(0) },
+            subFts = Array(queries.size) { queries[it].fts },
+            subNumCands = IntArray(queries.size) { queries[it].numCandidates ?: 0 },
+            rerankerMode = rerankerMode(reranker),
+            rankConstant = (reranker as? RrfReranker)?.rankConstant ?: 0,
+            weightedWeights = weightedWeights(reranker, queries),
+            topK = topK,
+            filter = filter,
+            outputFields = outputFields?.toTypedArray(),
+        )
+        return ArrayList<ZvecDoc>(rows.size).apply {
+            for (row in rows) {
+                add(unpackRow(row ?: error("null row from nativeMultiQuery"), keepScore = true))
+            }
+        }
+    }
+
+    /** The C-side reranker selector: 0 = RRF, 1 = Weighted. Mirrors zvec_jni_doc. */
+    private fun rerankerMode(reranker: Reranker): Int = when (reranker) {
+        is RrfReranker -> RerankerMode.RERANKER_RRF
+        is WeightedReranker -> RerankerMode.RERANKER_WEIGHTED
+    }
+
+    /**
+     * Resolve a [WeightedReranker] field-keyed map to the POSITIONAL `double[]`
+     * the C API expects, aligned to the sub-query order. A leg whose field is
+     * absent from the map defaults to `0.0` (the engine zeroes its contribution),
+     * so the map should name every leg's field. RRF rerankers pass an empty array
+     * (the JNI layer ignores it in RRF mode).
+     */
+    private fun weightedWeights(reranker: Reranker, queries: List<SubQuery>): DoubleArray =
+        if (reranker !is WeightedReranker) {
+            DoubleArray(0)
+        } else {
+            DoubleArray(queries.size) { i ->
+                // field-keyed → positional; absent field defaults to 0.0.
+                (reranker.weights[queries[i].field] ?: 0.0f).toDouble()
+            }
+        }
+
     private object WriteOp {
         // Mirror of the OP_* constants in zvec_jni_doc.cc.
         const val OP_INSERT = 0
         const val OP_UPSERT = 1
         const val OP_UPDATE = 2
+    }
+
+    private object RerankerMode {
+        // Mirror of the RERANKER_* constants in zvec_jni_doc.cc (issue 07).
+        const val RERANKER_RRF = 0
+        const val RERANKER_WEIGHTED = 1
     }
 
     companion object {

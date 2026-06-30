@@ -267,5 +267,47 @@ object ZvecNative {
         outputFields: Array<String>?,
     ): Array<Any?>
 
+    // ---- Hybrid search (issue 07) ------------------------------------------
+    // Multi-query fusion (vector + FTS legs, fused via RRF or weighted reranker).
+    // The JNI layer builds a multi_query_t, then for EACH sub-query builds a
+    // sub_query_t (set field_name + optional num_candidates + a query vector OR an
+    // fts_t payload), and adds it to the multi-query. CRITICAL: add_sub_query
+    // COPIES the sub-query (c_api.h:2144; confirmed by both reference bindings —
+    // the caller ALWAYS retains/frees it), so the SubQueryGuard always frees it,
+    // success or failure (the FtsGuard pattern from 06, NOT adopt-on-success).
+    //
+    // The reranker selects the fusion setter: RRF → zvec_multi_query_set_rerank_rrf
+    // (rankConstant); Weighted → zvec_multi_query_set_rerank_weighted with a
+    // POSITIONAL double[] aligned to the sub-query order (Kotlin passes a field-
+    // keyed map; the Kotlin layer resolves field→position before calling). Then
+    // zvec_multi_query_set_topk (post-fusion count), set_filter, set_output_fields,
+    // zvec_collection_multi_query, and collect_docs (issue 05) walks the result
+    // array into the same flat Object[] rows query/fetch use. All handles
+    // (MultiQueryGuard / SubQueryGuard / FtsGuard / DocsGuard) freed on any exit.
+    //
+    // The sub-query legs arrive as parallel arrays (one slot per leg):
+    //  - subFields[leg], subHasVector[leg] (vector vs FTS mode), subNumCands[leg]
+    //  - subVectors[leg]: the FP32 vector (only meaningful when subHasVector[leg])
+    //  - subFts[leg]: the FTS match string (only when !subHasVector[leg])
+    // rerankerMode: 0 = RRF (rerankerParam = rankConstant), 1 = Weighted (the
+    // weightedWeights array is consulted; rerankerParam unused). An empty subFields
+    // is rejected by the engine — Kotlin validates queries.size >= 1 before calling.
+    // Returns the same `Array<Any?>` shape as nativeQuery (one Object[] row per
+    // result doc). Empty result is a zero-length array.
+    @JvmStatic external fun nativeMultiQuery(
+        handle: Long,
+        subFields: Array<String>,
+        subHasVector: BooleanArray,
+        subVectors: Array<FloatArray>,
+        subFts: Array<String?>,
+        subNumCands: IntArray,
+        rerankerMode: Int,
+        rankConstant: Int,
+        weightedWeights: DoubleArray,
+        topK: Int,
+        filter: String?,
+        outputFields: Array<String>?,
+    ): Array<Any?>
+
     @JvmStatic external fun nativeClose(handle: Long)
 }
