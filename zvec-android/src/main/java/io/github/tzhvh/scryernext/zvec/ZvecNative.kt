@@ -216,5 +216,30 @@ object ZvecNative {
         fieldTypes: IntArray,
     ): Any?
 
+    // ---- Fetch + projection (issue 05) ----------------------------------
+    // The public read path: fetch by pks with an optional field projection and
+    // the load-bearing includeVector=false default. The JNI layer calls
+    // zvec_collection_fetch (c_api.h:3332), wraps the result array in DocsGuard,
+    // and runs the shared `collect_docs` helper to copy each doc out into a flat
+    // Object[] row. There is no zvec_doc_get_field_type, so collect_docs resolves
+    // each field's data_type from the collection schema (via
+    // zvec_collection_get_schema) — the public fetch() takes no caller types.
+    //
+    // Returns `Array<Any?>` = one Object[] row per FOUND doc (absent pks are
+    // omitted by the engine; order is NOT guaranteed). Row layout (names inline,
+    // so it's correct under a projection and the engine's nullable-field re-add):
+    //   [0]     = pk (String)
+    //   [1]     = score (Float — engine value; query-only, Kotlin fetch nulls it)
+    //   [2]     = present-field count (Int)
+    //   [3..]   = interleaved (name: String, value: boxed) pairs, one per field.
+    // A boxed value of null = stored null → ZvecValue.Null (distinct from an
+    // absent name = not requested under the projection).
+    @JvmStatic external fun nativeFetch(
+        handle: Long,
+        pks: Array<String>,
+        outputFields: Array<String>?,
+        includeVector: Boolean,
+    ): Array<Any?>
+
     @JvmStatic external fun nativeClose(handle: Long)
 }

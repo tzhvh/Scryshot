@@ -34,6 +34,21 @@ constexpr int KIND_VEC_F16 = 7;
 constexpr int KIND_VEC_I8 = 8;
 constexpr int KIND_NULL = 9;
 
+// zvec_data_type_t (c_api.h:788) values the read path dispatches on. Pinned
+// explicit (not the enum) so a header reorder can never silently drift the int
+// the per-field type-switch keys on. Mirrors FieldType.toNative() in Kotlin.
+constexpr zvec_data_type_t DT_BOOL = 3;
+constexpr zvec_data_type_t DT_INT32 = 4;
+constexpr zvec_data_type_t DT_INT64 = 5;
+constexpr zvec_data_type_t DT_UINT32 = 6;
+constexpr zvec_data_type_t DT_UINT64 = 7;
+constexpr zvec_data_type_t DT_FLOAT = 8;
+constexpr zvec_data_type_t DT_DOUBLE = 9;
+constexpr zvec_data_type_t DT_STRING = 2;
+constexpr zvec_data_type_t DT_VECTOR_FP16 = 22;
+constexpr zvec_data_type_t DT_VECTOR_FP32 = 23;
+constexpr zvec_data_type_t DT_VECTOR_INT8 = 26;
+
 // Write op selector (mirror ZvecCollection's call sites). Insert / upsert /
 // update select different C _with_results variants over the same doc-build path.
 constexpr int OP_INSERT = 0;
@@ -371,7 +386,7 @@ struct DocsGuard {
 };
 
 // Bulk input-doc cleanup. The C `_with_results` calls do NOT take ownership of
-// the input docs (the Rust oracle's Doc Drop calls zvec_doc_destroy itself), so
+// the input docs (the Rust oracle's Doc drop calls zvec_doc_destroy itself), so
 // the bulk path owns each built doc and must destroy it after the call — on the
 // success path AND the throw-return path. This guard runs on any scope exit.
 struct BuiltDocsGuard {
@@ -382,6 +397,310 @@ struct BuiltDocsGuard {
     }
   }
 };
+
+// ===========================================================================
+// Issue 05: the read path — fetch + projection, and the `collect_docs` helper
+// that issue 06 (query) reuses verbatim.
+//
+// The C read getters (zvec_doc_get_field_value_basic for fixed scalars,
+// zvec_doc_get_field_value_pointer for variable-size strings/vectors) require a
+// caller-supplied data_type per field — there is NO zvec_doc_get_field_type.
+// The Rust oracle punts this to its caller (its Doc::get_* are typed). The SDK
+// can't: the public fetch(pks, outputFields, includeVector) takes no types. So
+// the JNI layer resolves each field's data_type from the COLLECTION SCHEMA
+// (zvec_collection_get_schema + zvec_collection_schema_get_field + 
+// zvec_field_schema_get_data_type), which is robust to schema drift (a later
+// addColumn) and lets the read path be shared by query in issue 06.
+//
+// The value-type invariant (ADR 0006): every value is COPIED out of the doc
+// before zvec_docs_free frees the whole array + each doc. No doc handle escapes.
+// ===========================================================================
+
+// JNI classes/methods the read path boxes scalars into. Resolved once per fetch
+// (cached across the result array) — a FindClass/GetMethodID pair is the cost,
+// not a per-doc cost. A null class means JVM-OOM, surfaced as a pending exception.
+struct BoxedClasses {
+  jclass bool_class = nullptr;
+  jclass long_class = nullptr;
+  jclass dbl_class = nullptr;
+  jmethodID bool_ctor = nullptr;
+  jmethodID long_ctor = nullptr;
+  jmethodID dbl_ctor = nullptr;
+};
+
+// Resolve the JDK boxed-type classes + ctors used to wrap scalars into Object[].
+// Returns false with a pending exception on a JVM-OOM (FindClass failure).
+bool resolve_boxed_classes(JNIEnv* env, BoxedClasses& out) {
+  out.bool_class = env->FindClass("java/lang/Boolean");
+  out.long_class = env->FindClass("java/lang/Long");
+  out.dbl_class = env->FindClass("java/lang/Double");
+  if (!out.bool_class || !out.long_class || !out.dbl_class) return false;
+  out.bool_ctor = env->GetMethodID(out.bool_class, "<init>", "(Z)V");
+  out.long_ctor = env->GetMethodID(out.long_class, "<init>", "(J)V");
+  out.dbl_ctor = env->GetMethodID(out.dbl_class, "<init>", "(D)V");
+  return out.bool_ctor && out.long_ctor && out.dbl_ctor;
+}
+
+// Extract ONE field's value from `doc` into a boxed jobject (or a fresh JVM
+// primitive array for vectors). The getter is chosen by the schema-resolved
+// `dt` (the field's declared data_type): fixed scalars via get_field_value_basic
+// into a sized buffer; variable-size (strings/vectors) via get_field_value_pointer
+// into doc-internal storage, copied out into a fresh JVM array/string BEFORE the
+// doc is freed (the borrowed-pointer contract). Returns null on a stored null
+// (caller maps it to ZvecValue.Null); returns null with a pending exception on a
+// getter failure. The caller must NOT hold the returned borrow past the doc's
+// lifetime — this function copies, so no borrow escapes.
+jobject extract_field_value(JNIEnv* env, const zvec_doc_t* doc,
+                            const char* field_name, zvec_data_type_t dt,
+                            const BoxedClasses& bc) {
+  // Stored null → null slot (Kotlin maps it to ZvecValue.Null). Distinct from an
+  // absent key (which never reaches here — only present fields are enumerated).
+  if (zvec_doc_is_field_null(doc, field_name)) return nullptr;
+
+  switch (dt) {
+    // Fixed-size scalars via get_field_value_basic (exact-size buffer per type).
+    case DT_BOOL: {
+      bool v = false;
+      ZVEC_CHECK_JNI_JINT(env, zvec_doc_get_field_value_basic(
+          doc, field_name, ZVEC_DATA_TYPE_BOOL, &v, sizeof(bool)));
+      return env->NewObject(bc.bool_class, bc.bool_ctor, v ? JNI_TRUE : JNI_FALSE);
+    }
+    case DT_INT32: {
+      int32_t v = 0;
+      ZVEC_CHECK_JNI_JINT(env, zvec_doc_get_field_value_basic(
+          doc, field_name, ZVEC_DATA_TYPE_INT32, &v, sizeof(int32_t)));
+      return env->NewObject(bc.long_class, bc.long_ctor,
+                            static_cast<jlong>(v));
+    }
+    case DT_INT64: {
+      int64_t v = 0;
+      ZVEC_CHECK_JNI_JINT(env, zvec_doc_get_field_value_basic(
+          doc, field_name, ZVEC_DATA_TYPE_INT64, &v, sizeof(int64_t)));
+      return env->NewObject(bc.long_class, bc.long_ctor,
+                            static_cast<jlong>(v));
+    }
+    case DT_UINT32: {
+      uint32_t v = 0;
+      ZVEC_CHECK_JNI_JINT(env, zvec_doc_get_field_value_basic(
+          doc, field_name, ZVEC_DATA_TYPE_UINT32, &v, sizeof(uint32_t)));
+      return env->NewObject(bc.long_class, bc.long_ctor,
+                            static_cast<jlong>(v));
+    }
+    case DT_UINT64: {
+      uint64_t v = 0;
+      ZVEC_CHECK_JNI_JINT(env, zvec_doc_get_field_value_basic(
+          doc, field_name, ZVEC_DATA_TYPE_UINT64, &v, sizeof(uint64_t)));
+      return env->NewObject(bc.long_class, bc.long_ctor,
+                            static_cast<jlong>(v));
+    }
+    case DT_FLOAT: {
+      float v = 0.f;
+      ZVEC_CHECK_JNI_JINT(env, zvec_doc_get_field_value_basic(
+          doc, field_name, ZVEC_DATA_TYPE_FLOAT, &v, sizeof(float)));
+      return env->NewObject(bc.dbl_class, bc.dbl_ctor,
+                            static_cast<jdouble>(v));
+    }
+    case DT_DOUBLE: {
+      double v = 0.0;
+      ZVEC_CHECK_JNI_JINT(env, zvec_doc_get_field_value_basic(
+          doc, field_name, ZVEC_DATA_TYPE_DOUBLE, &v, sizeof(double)));
+      return env->NewObject(bc.dbl_class, bc.dbl_ctor,
+                            static_cast<jdouble>(v));
+    }
+    // Variable-size via get_field_value_pointer (borrows doc-internal storage):
+    // copy into a fresh JVM string/array before the doc is freed.
+    case DT_STRING: {
+      const void* ptr = nullptr;
+      size_t sz = 0;
+      ZVEC_CHECK_JNI_JINT(env, zvec_doc_get_field_value_pointer(
+          doc, field_name, ZVEC_DATA_TYPE_STRING, &ptr, &sz));
+      // ptr points at a null-terminated C string in the doc; NewStringUTF copies.
+      return ptr ? env->NewStringUTF(static_cast<const char*>(ptr)) : nullptr;
+    }
+    case DT_VECTOR_FP32: {
+      const void* ptr = nullptr;
+      size_t sz = 0;
+      ZVEC_CHECK_JNI_JINT(env, zvec_doc_get_field_value_pointer(
+          doc, field_name, ZVEC_DATA_TYPE_VECTOR_FP32, &ptr, &sz));
+      jsize len = static_cast<jsize>(sz / sizeof(float));
+      jfloatArray arr = env->NewFloatArray(len);
+      if (arr && len > 0) {
+        env->SetFloatArrayRegion(arr, 0, len, static_cast<const jfloat*>(ptr));
+      }
+      return arr;
+    }
+    case DT_VECTOR_FP16: {
+      const void* ptr = nullptr;
+      size_t sz = 0;
+      ZVEC_CHECK_JNI_JINT(env, zvec_doc_get_field_value_pointer(
+          doc, field_name, ZVEC_DATA_TYPE_VECTOR_FP16, &ptr, &sz));
+      // float16_t is 2 bytes; the JVM short is 2 bytes of raw half-16 bits.
+      jsize len = static_cast<jsize>(sz / 2);
+      jshortArray arr = env->NewShortArray(len);
+      if (arr && len > 0) {
+        env->SetShortArrayRegion(arr, 0, len, static_cast<const jshort*>(ptr));
+      }
+      return arr;
+    }
+    case DT_VECTOR_INT8: {
+      const void* ptr = nullptr;
+      size_t sz = 0;
+      ZVEC_CHECK_JNI_JINT(env, zvec_doc_get_field_value_pointer(
+          doc, field_name, ZVEC_DATA_TYPE_VECTOR_INT8, &ptr, &sz));
+      jsize len = static_cast<jsize>(sz);
+      jbyteArray arr = env->NewByteArray(len);
+      if (arr && len > 0) {
+        env->SetByteArrayRegion(arr, 0, len, static_cast<const jbyte*>(ptr));
+      }
+      return arr;
+    }
+    default:
+      // A type the read path doesn't model (ARRAY_*, SPARSE_*, BINARY, …).
+      // Leave the slot null — the Kotlin side treats an unmapped slot as
+      // ZvecValue.Null rather than guessing the type. The supported set matches
+      // ZvecValue's arms + FieldType.toNative(); adding a type is a new branch.
+      return nullptr;
+  }
+}
+
+// Copy ONE result doc into a flat Object[] row the Kotlin side unpacks into a
+// ZvecDoc. Layout (names inline, so the read path is correct under a projection
+// and the engine's nullable-field re-addition — the SDK doesn't have to guess
+// which field each slot is):
+//   [0]           = pk (String)
+//   [1]           = score (Float — engine value; query-only, Kotlin fetch nulls it)
+//   [2]           = present-field count (Int)
+//   [3..]         = interleaved (name: String, value: boxed) per field
+// Absent fields (under a projection) are never enumerated — the engine only
+// returns requested fields. `schema` (non-owning borrow, may be null) supplies
+// each field's data_type; when null or a field is unknown to the schema, the
+// field maps to ZvecValue.Null.
+//
+// Returns null on a pending exception (the caller's DocsGuard still frees the
+// whole array). Issue 06 calls this on query results against the same schema.
+jobjectArray collect_one_doc(JNIEnv* env, const zvec_doc_t* doc,
+                             const zvec_collection_schema_t* schema,
+                             const BoxedClasses& bc) {
+  // Resolve this doc's field names (allocated; freed below). Includes stored-
+  // null fields (field_names() iterates the map keys regardless of monostate).
+  char** field_names = nullptr;
+  size_t field_count = 0;
+  ZVEC_CHECK_JNI_JINT(env, zvec_doc_get_field_names(doc, &field_names, &field_count));
+
+  jclass obj_class = env->FindClass("java/lang/Object");
+  jclass int_class = env->FindClass("java/lang/Integer");
+  jmethodID int_ctor = env->GetMethodID(int_class, "<init>", "(I)V");
+  if (!obj_class || !int_class || !int_ctor) {
+    zvec_free_str_array(field_names, field_count);
+    return nullptr;
+  }
+
+  // pk + score + count + interleaved (name, value) pairs.
+  jsize row_len = static_cast<jsize>(3 + 2 * field_count);
+  jobjectArray row = env->NewObjectArray(row_len, obj_class, nullptr);
+  if (!row || env->ExceptionCheck()) {
+    zvec_free_str_array(field_names, field_count);
+    return nullptr;
+  }
+
+  // [0] = pk (pointer is valid for the doc's lifetime — copy via NewStringUTF).
+  const char* pk_ptr = zvec_doc_get_pk_pointer(doc);
+  jstring jpk = env->NewStringUTF(pk_ptr ? pk_ptr : "");
+  env->SetObjectArrayElement(row, 0, jpk);
+  env->DeleteLocalRef(jpk);
+  if (env->ExceptionCheck()) { zvec_free_str_array(field_names, field_count); return nullptr; }
+
+  // [1] = score. Always read from the doc so the shared collect_docs path also
+  // serves query results (issue 06); for a plain fetch the engine's score is 0.0
+  // and the Kotlin fetch() nulls it out (score is a query-only concept).
+  float score = zvec_doc_get_score(doc);
+  jclass float_class = env->FindClass("java/lang/Float");
+  jmethodID float_ctor = env->GetMethodID(float_class, "<init>", "(F)V");
+  if (!float_class || !float_ctor) { zvec_free_str_array(field_names, field_count); return nullptr; }
+  jobject jscore = env->NewObject(float_class, float_ctor, static_cast<jfloat>(score));
+  env->SetObjectArrayElement(row, 1, jscore);
+  env->DeleteLocalRef(jscore);
+  env->DeleteLocalRef(float_class);
+  if (env->ExceptionCheck()) { zvec_free_str_array(field_names, field_count); return nullptr; }
+
+  // [2] = present-field count.
+  jobject jcount = env->NewObject(int_class, int_ctor, static_cast<jint>(field_count));
+  env->SetObjectArrayElement(row, 2, jcount);
+  env->DeleteLocalRef(jcount);
+  if (env->ExceptionCheck()) { zvec_free_str_array(field_names, field_count); return nullptr; }
+
+  // [3..] = interleaved (name, value) pairs: resolve the field's declared
+  // data_type from the schema, then extract. A field absent from the schema
+  // (schema drift) maps to ZvecValue.Null — never a wrong-typed read.
+  jsize slot = 3;
+  for (size_t i = 0; i < field_count; i++) {
+    const char* fname = field_names[i];
+    jstring jname = env->NewStringUTF(fname);
+    env->SetObjectArrayElement(row, slot, jname);
+    env->DeleteLocalRef(jname);
+    if (env->ExceptionCheck()) { zvec_free_str_array(field_names, field_count); return nullptr; }
+
+    zvec_data_type_t dt = DT_STRING;  // default; overridden when the schema knows the field
+    if (schema) {
+      // get_field is a NON-owning borrow into `schema` (valid while the guard
+      // holds it); returns NULL for a field the schema doesn't know.
+      zvec_field_schema_t* fs = zvec_collection_schema_get_field(schema, fname);
+      if (fs) dt = zvec_field_schema_get_data_type(fs);
+    }
+    jobject boxed = extract_field_value(env, doc, fname, dt, bc);
+    if (env->ExceptionCheck()) {
+      zvec_free_str_array(field_names, field_count);
+      return nullptr;
+    }
+    env->SetObjectArrayElement(row, slot + 1, boxed);
+    if (boxed) env->DeleteLocalRef(boxed);
+    if (env->ExceptionCheck()) { zvec_free_str_array(field_names, field_count); return nullptr; }
+    slot += 2;
+  }
+
+  zvec_free_str_array(field_names, field_count);
+  return row;
+}
+
+// `collect_docs` — the shared read-path result-array reader (issue 05 fetch +
+// issue 06 query). Walks `docs`/`count`, copies each doc out into a flat Object[]
+// row (resolving each field's data_type from the collection schema), then the
+// caller's DocsGuard frees the whole array + every doc. Because we copy out, no
+// doc handle escapes (the value-type invariant, ADR 0006 / Q3).
+//
+// `col` is the owning collection handle: the schema is fetched once per call
+// (under CollectionSchemaGuard) and shared across all result docs. Returns an
+// Object[] (one row per doc) or null on a pending exception. Absent pks are
+// already absent from `docs` (the engine omits them — `count` is found docs).
+jobjectArray collect_docs(JNIEnv* env, zvec_collection_t* col,
+                          zvec_doc_t** docs, size_t count) {
+  // Fetch the schema once for the whole batch (per-field type resolution).
+  // Failure to read it is non-fatal — fields fall back to the null mapping.
+  zvec_collection_schema_t* raw_schema = nullptr;
+  if (col) {
+    zvec_collection_get_schema(col, &raw_schema);  // best-effort; ignore error
+  }
+  CollectionSchemaGuard schema_guard{raw_schema};
+
+  BoxedClasses bc;
+  if (!resolve_boxed_classes(env, bc)) return nullptr;
+  if (env->ExceptionCheck()) return nullptr;
+
+  jclass obj_class = env->FindClass("java/lang/Object");
+  jobjectArray result =
+      env->NewObjectArray(static_cast<jsize>(count), obj_class, nullptr);
+  if (!result || env->ExceptionCheck()) return nullptr;
+
+  for (size_t i = 0; i < count; i++) {
+    if (!docs[i]) continue;  // defensive — engine omits absent pks
+    jobjectArray row = collect_one_doc(env, docs[i], raw_schema, bc);
+    if (env->ExceptionCheck() || !row) return nullptr;
+    env->SetObjectArrayElement(result, static_cast<jsize>(i), row);
+    env->DeleteLocalRef(row);
+    if (env->ExceptionCheck()) return nullptr;
+  }
+  return result;
+}
 
 } // namespace
 
@@ -864,6 +1183,83 @@ Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeFetchTyped(
   }
 
   return result;
+}
+
+// Issue 05: the public fetch + projection surface. Marshals pks + output_fields,
+// calls zvec_collection_fetch (c_api.h:3332), wraps the result array in DocsGuard
+// (frees the whole array + every doc on any exit path), and runs collect_docs to
+// copy each doc out into a flat Object[] row (resolving each field's data_type
+// from the collection schema — there is no zvec_doc_get_field_type).
+//
+// output_fields: a null joutputFields = all fields; otherwise the projection set.
+// include_vector: whether vector fields are returned at all (the load-bearing
+// `false` default — see ZvecCollection.fetch). Absent pks are omitted by the
+// engine — the returned array carries only found docs (count == found_count).
+// Result order is NOT guaranteed (verified live: a [d1, ghost, d2] fetch can
+// return [d2, d1]); callers index by pk, not by input position.
+//
+// Returns `Array<Any?>` (one Object[] row per found doc). The Kotlin side maps
+// null joutputFields and the per-row layout into ZvecDocs. Empty pks is short-
+// circuited in Kotlin (fetch returns emptyList() without touching native).
+JNIEXPORT jobjectArray JNICALL
+Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeFetch(
+    JNIEnv* env, jclass, jlong handle,
+    jobjectArray jpks, jobjectArray joutputFields, jboolean jincludeVector) {
+
+  zvec_collection_t* col = reinterpret_cast<zvec_collection_t*>(handle);
+  if (!col) {
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Collection handle is null");
+    return nullptr;
+  }
+
+  jsize n = env->GetArrayLength(jpks);
+  if (env->ExceptionCheck()) return nullptr;
+
+  // Copy pks eagerly into owning std::strings (Rule 1); collect const char*
+  // pointers for the C call. The std::strings must outlive the call.
+  std::vector<std::string> pks(n);
+  std::vector<const char*> pk_ptrs(n);
+  for (jsize i = 0; i < n; i++) {
+    jstring jpk = static_cast<jstring>(env->GetObjectArrayElement(jpks, i));
+    if (env->ExceptionCheck()) return nullptr;
+    pks[i] = jstring_to_std(env, jpk);
+    env->DeleteLocalRef(jpk);
+    if (env->ExceptionCheck()) return nullptr;
+    pk_ptrs[i] = pks[i].c_str();
+  }
+
+  // output_fields: null = all fields; otherwise the projection set. Copied out
+  // eagerly so no JNI reference is held across the zvec call (Rule 1).
+  std::vector<std::string> out_fields_storage;
+  std::vector<const char*> out_field_ptrs;
+  const char* const* out_fields_ptr = nullptr;
+  size_t out_field_count = 0;
+  if (joutputFields != nullptr) {
+    jsize ofn = env->GetArrayLength(joutputFields);
+    if (env->ExceptionCheck()) return nullptr;
+    out_fields_storage.resize(ofn);
+    out_field_ptrs.resize(ofn);
+    for (jsize i = 0; i < ofn; i++) {
+      jstring jf = static_cast<jstring>(env->GetObjectArrayElement(joutputFields, i));
+      if (env->ExceptionCheck()) return nullptr;
+      out_fields_storage[i] = jstring_to_std(env, jf);
+      env->DeleteLocalRef(jf);
+      if (env->ExceptionCheck()) return nullptr;
+      out_field_ptrs[i] = out_fields_storage[i].c_str();
+    }
+    out_fields_ptr = out_field_ptrs.data();
+    out_field_count = static_cast<size_t>(ofn);
+  }
+
+  zvec_doc_t** docs = nullptr;
+  size_t found_count = 0;
+  ZVEC_CHECK_JNI_JINT(env,
+      zvec_collection_fetch(col, pk_ptrs.data(), static_cast<size_t>(n),
+                            out_fields_ptr, out_field_count,
+                            jincludeVector == JNI_TRUE, &docs, &found_count));
+
+  DocsGuard docs_guard{docs, found_count};
+  return collect_docs(env, col, docs, found_count);
 }
 
 } // extern "C"

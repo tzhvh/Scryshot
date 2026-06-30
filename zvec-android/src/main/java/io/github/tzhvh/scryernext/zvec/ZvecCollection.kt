@@ -300,19 +300,122 @@ class ZvecCollection internal constructor(
         val fields = LinkedHashMap<String, ZvecValue>(fieldNames.size)
         fieldNames.forEachIndexed { i, name ->
             val v = arr[2 + i]
-            fields[name] = when (v) {
-                is Boolean -> ZvecValue.ScalarBool(v)
-                is Long -> ZvecValue.ScalarInt(v)
-                is Double -> ZvecValue.ScalarFloat(v)
-                is String -> ZvecValue.Str(v)
-                is FloatArray -> ZvecValue.VecF32(v)
-                is ShortArray -> ZvecValue.VecF16(v)
-                is ByteArray -> ZvecValue.VecI8(v)
-                null -> ZvecValue.Null
-                else -> error("unsupported fetch-typed value for '$name': ${v::class.java}")
-            }
+            fields[name] = boxToValue(v)
         }
         return ZvecDoc(pk = pk, score = score, fields = fields)
+    }
+
+    /**
+     * Map one JNI-boxed fetch value to its [ZvecValue] arm. Shared by the
+     * [fetchTyped] scratch reader and the public [fetch] read path (the per-type
+     * `when` the JNI dispatch mirrors — one flat box→value mapping on the JVM
+     * side). A null box is a stored null → [ZvecValue.Null].
+     */
+    private fun boxToValue(v: Any?): ZvecValue = when (v) {
+        is Boolean -> ZvecValue.ScalarBool(v)
+        is Long -> ZvecValue.ScalarInt(v)
+        is Double -> ZvecValue.ScalarFloat(v)
+        is String -> ZvecValue.Str(v)
+        is FloatArray -> ZvecValue.VecF32(v)
+        is ShortArray -> ZvecValue.VecF16(v)
+        is ByteArray -> ZvecValue.VecI8(v)
+        null -> ZvecValue.Null
+        else -> error("unsupported fetch value: ${v::class.java}")
+    }
+
+    // ---- Fetch + projection (issue 05) ----------------------------------
+    // The public read path. `collect_docs` runs in the JNI layer: it walks the
+    // zvec_doc_t** result array, COPIES pk + score + each present field into a
+    // flat Object[] row, then zvec_docs_free frees the whole array + every doc
+    // (the value-type invariant, ADR 0006 — no doc handle escapes). There is no
+    // zvec_doc_get_field_type, so the JNI layer resolves each field's data_type
+    // from the collection schema; the public fetch() takes no caller types.
+    //
+    // All suspend, no internal dispatcher hop (ADR 0007) — zvec calls are
+    // uncancellable native blocking calls, so the caller owns the dispatcher and
+    // the cancellation boundary, exactly like the write path.
+
+    /**
+     * Fetch documents by primary key, with an optional field projection.
+     *
+     * Engine behavior (verified against the live engine before this shipped):
+     *  - An **absent** pk is silently omitted from the result — fetch never
+     *    throws for a missing pk. The returned list carries only the found docs.
+     *  - **Result order is not guaranteed** (a `[d1, ghost, d2]` fetch may return
+     *    `[d2, d1]`); index by [ZvecDoc.pk], not by input position.
+     *  - A **nullable** field that is null in storage comes back as
+     *    [ZvecValue.Null] (the engine re-adds every schema-nullable field that's
+     *    absent, as null — `normalize_nullable_fields_for_fetch`, c_api.cc:6689),
+     *    whether or not it was in [outputFields]. The "absent key = not requested"
+     *    contract therefore holds cleanly only for **non-nullable** fields.
+     *
+     * @param pks primary keys to fetch. An empty list is a no-op `emptyList()`
+     *   WITHOUT touching native (the C fetch rejects count==0; an empty batch is
+     *   a success, not an error).
+     * @param outputFields projection — `null` (default) = all fields; otherwise
+     *   only the named fields are returned. Absent (non-nullable) keys in the
+     *   returned [ZvecDoc.fields] = "not requested" under a projection.
+     * @param includeVector **load-bearing default `false`** (Q11): vectors are
+     *   the large payload (~5 KB × N for FP32 embeddings). The default must be
+     *   "don't pull them unless asked" — the gallery-listing use case the
+     *   projection exists for; `true` would deserialize full vectors on every
+     *   list query, the OOM path the projection was written to prevent.
+     *
+     * @throws ZvecException on any engine error (a missing pk is NOT an error —
+     *   it's omitted from the result).
+     */
+    suspend fun fetch(
+        pks: List<String>,
+        outputFields: List<String>? = null,
+        includeVector: Boolean = false,
+    ): List<ZvecDoc> {
+        ensureNotClosed()
+        if (pks.isEmpty()) return emptyList()
+        val rows = ZvecNative.nativeFetch(
+            handle = nativeHandle(),
+            pks = pks.toTypedArray(),
+            outputFields = outputFields?.toTypedArray(),
+            includeVector = includeVector,
+        )
+        return ArrayList<ZvecDoc>(rows.size).apply {
+            for (row in rows) {
+                // Each row is a non-null Object[] (collect_docs emits one per
+                // found doc); the Array<Any?> signature is only because JVM
+                // arrays of Object are naturally nullable at the JNI boundary.
+                add(unpackFetchRow(row ?: error("null row from nativeFetch")))
+            }
+        }
+    }
+
+    /**
+     * Unpack one flat `Object[]` fetch row into a typed [ZvecDoc]. Layout (names
+     * inline, produced by the shared `collect_docs` JNI helper so it's correct
+     * under a projection and the engine's nullable-field re-addition — the SDK
+     * doesn't have to guess which field each slot is):
+     *   [0]     = pk (String)
+     *   [1]     = score (Float — the engine's value; null on a plain fetch)
+     *   [2]     = present-field count (Int)
+     *   [3..]   = interleaved (name: String, value: boxed) pairs, one per field
+     *
+     * Fetch has no meaningful score (the engine returns 0.0); null it out so the
+     * read path stays consistent with `ZvecDoc.score = null` (the score is a
+     * query-only concept, set by issue 06's query path).
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun unpackFetchRow(row: Any): ZvecDoc {
+        val arr = row as Array<Any?>
+        val pk = arr[0] as String
+        val fieldCount = arr[2] as Int
+        val fields = LinkedHashMap<String, ZvecValue>(fieldCount)
+        var slot = 3
+        repeat(fieldCount) {
+            val name = arr[slot] as String
+            val value = boxToValue(arr[slot + 1])
+            fields[name] = value
+            slot += 2
+        }
+        // score is query-only; fetch surfaces null (see KDoc).
+        return ZvecDoc(pk = pk, score = null, fields = fields)
     }
 
     private object WriteOp {

@@ -227,3 +227,23 @@ struct FtsStringArrayGuard {
     }
 };
 
+// Issue 05 (fetch/projection): wraps the collection schema returned by
+// zvec_collection_get_schema (c_api.h:3026). The schema handle is owned by the
+// caller and must be destroyed; the per-field handles it exposes
+// (zvec_collection_schema_get_field, c_api.h:2782) are NON-owning borrows into
+// it, so they are valid only while this guard's schema is alive. Runs on any
+// exit path, including a macro throw-return mid-extraction.
+//
+// Reused verbatim by issue 06 (query results): the per-type read path resolves
+// each field's data_type from this schema, because there is no
+// zvec_doc_get_field_type — the read getters (zvec_doc_get_field_value_basic /
+// _pointer) require a caller-supplied data_type per field.
+struct CollectionSchemaGuard {
+    zvec_collection_schema_t* s = nullptr;
+    ~CollectionSchemaGuard() {
+        if (s) {
+            zvec_collection_schema_destroy(s);
+        }
+    }
+};
+
