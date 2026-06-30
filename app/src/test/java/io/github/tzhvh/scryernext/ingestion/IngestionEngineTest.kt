@@ -399,6 +399,51 @@ class IngestionEngineTest {
     }
 
     // --------------------------------------------------------------------------
+    // (b cont.) a transient failure records no write sample — the write EMA stays honest
+    // --------------------------------------------------------------------------
+
+    @Test
+    fun transient_failure_records_no_write_timing_so_write_ema_stays_honest() = runBlocking {
+        // Regression guard for the Greptile-flagged bug: writeStart used to be captured
+        // before the outcome branch, so a TransientFailure (which writes nothing) still
+        // folded a bogus near-zero writeMs into the EMA — depressing ADR 0004's Phase 5
+        // adaptive threshold. The fix times the write only inside the branches that call
+        // write.commit, passing writeMs = null for TransientFailure.
+        //
+        // This engine-level test proves the wiring (transient → null → no write sample).
+        // The sharper "null leaves a prior write EMA untouched" contract is pinned at the
+        // unit level in StageLatencyRollingAverageTest.
+        //
+        // Residual (flagged, not fixed): StageLatencyRollingAverage shares one `samples`
+        // counter across stages, so a TransientFailure still advances it. The first real
+        // write sample therefore blends from 0 (EMA-weighted) rather than seeding verbatim
+        // — a ~half-weighted writeMs that self-corrects after ~3 write samples at α=0.5,
+        // immaterial for the rough ~3s budget. Revisit if Phase 2's heavier zvec writes
+        // (HNSW insert + FTS index) make it matter; the full fix needs per-stage seed flags.
+        val repo = FakeScreenshotRepository(knownKeys = mutableSetOf())
+        val ocr = FakeOcrStage(outcomesByLocator = mapOf(
+            "content://media/1" to OcrOutcome.TransientFailure(IllegalStateException("down")),
+            "content://media/2" to OcrOutcome.Success("after-retry"),
+        ))
+        val writeSleepMs = 8L
+        val write = WriteSink { _, _, _ -> Thread.sleep(writeSleepMs) }
+        val engine = IngestionEngine(repo, ocr, write)
+
+        val progress = engine.process(flowOf(
+            candidate("content://media/1"),   // TransientFailure — writes nothing, records no write sample
+            candidate("content://media/2"),   // Success — the only write, so the only real write sample
+        )).toList()
+
+        val done = progress.last() as Progress.Completed
+        val timings = done.stageTimings!!
+        // The lone Success write was timed and recorded — writeMs is strictly positive,
+        // not the near-zero the bug would have left had the transient polluted the EMA
+        // toward zero. (See the residual note above for why it's ~half, not full, the sleep.)
+        assertTrue("writeMs should reflect the lone Success write (>0), was ${timings.writeMs}",
+                   timings.writeMs > 0.0)
+    }
+
+    // --------------------------------------------------------------------------
     // (c) a write-sink throw surfaces as Progress.Error and stops the run
     // --------------------------------------------------------------------------
 

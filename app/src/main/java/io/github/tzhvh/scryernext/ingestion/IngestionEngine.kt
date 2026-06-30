@@ -130,28 +130,61 @@ class IngestionEngine(
             val outcome = ocr.attempt(candidate, bytes)
             val ocrMs = msSince(ocrStart)
 
-            val writeStart = System.nanoTime()
+            // ─── MERGE NOTE — resolving conflicts with the pending zvec phases ───────────
+            // As of this commit, `zvec-phase1` (the Kotlin SDK) adds only NEW files under
+            // app/.../zvec/ and zvec-android/ — it does NOT touch this block and merges clean.
+            // The conflict points are the LATER phases, which both re-edit the `when` below:
+            //
+            //   • Phase 2 (RoomWriteSink → ZvecWriteSink): keep the same `write.commit(...)`
+            //     calls; only the sink's implementation changes. No structural conflict —
+            //     the constructor's `write: WriteSink` seam is intentionally sink-agnostic.
+            //
+            //   • Phase 3 (append the EMBED stage): the loop becomes READ → DEDUP → OCR →
+            //     EMBED → WRITE, and the constructor gains an `embed: EmbedStage`. RESOLVE
+            //     by extending this `when`-expression: insert a `val embedMs = ...` timing
+            //     between the OCR and WRITE sections, and thread `embedMs` (NON-null — embed
+            //     runs for every Success; check its own transient-failure contract when it
+            //     lands) into `timings.record(...)`. Do NOT revert this `when` back to a
+            //     statement form or re-introduce an eager `writeStart` before the branches —
+            //     that resurrectes the write-EMA-pollution bug this commit fixes (issue `07`,
+            //     ADR 0004 §7.3). The load-bearing rule across both phases: record a stage's
+            //     latency ONLY in the branches where that stage actually ran.
+            // ─── end merge note ─────────────────────────────────────────────────────
+            //
             // Branch order is load-bearing for the §7.2 taxonomy — keep it explicit.
             //   Success              → write text + processed=true,  count indexed
             //   PermanentContentFail → write null  + processed=true,  count indexed (processed-but-empty)
             //   TransientFailure     → write nothing,                  count failed (re-attemptable)
             //
+            // The `when` is an expression yielding the write latency (or null when no write
+            // happened): only Success / PermanentContentFailure call [write], so only they
+            // time it — the write sample stays honest (issue `07`; a near-zero sample on
+            // TransientFailure would depress the write EMA that feeds ADR 0004's adaptive
+            // threshold). TransientFailure still pays real read + OCR cost, so those EMAs
+            // *are* recorded below (a slow-but-transient OCR is exactly the per-file cost
+            // signal Phase 5 wants).
+            //
             // A thrown write sink is an Insert/store failure (distinct from any OcrOutcome):
             // it surfaces as Progress.Error and STOPS the run, rather than being swallowed
             // per-file (ADR 0004 §7.2). CancellationException is rethrown so the caller-owned
             // cancel contract is unaffected — a write throw is *not* cancellation.
-            try {
+            val writeMs: Double? = try {
                 when (outcome) {
                     is OcrOutcome.Success -> {
+                        val writeStart = System.nanoTime()
                         write.commit(candidate, outcome.text, processed = true)
                         indexed += 1
+                        msSince(writeStart)
                     }
                     is OcrOutcome.PermanentContentFailure -> {
+                        val writeStart = System.nanoTime()
                         write.commit(candidate, null, processed = true)
                         indexed += 1
+                        msSince(writeStart)
                     }
                     is OcrOutcome.TransientFailure -> {
                         failed += 1
+                        null   // no write occurred → no write sample keeps the write EMA honest
                     }
                 }
             } catch (ce: kotlinx.coroutines.CancellationException) {
@@ -160,7 +193,6 @@ class IngestionEngine(
                 emit(Progress.Error(t))
                 return@flow
             }
-            val writeMs = msSince(writeStart)
 
             timings.record(readMs = readMs, decodeMs = 0.0, ocrMs = ocrMs, writeMs = writeMs)
 

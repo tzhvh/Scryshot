@@ -44,12 +44,22 @@ internal class StageLatencyRollingAverage(
     private var writeMs: Double = 0.0
     private var samples: Int = 0
 
-    /** Observe one candidate's four stage durations (ms). */
-    fun record(readMs: Double, decodeMs: Double, ocrMs: Double, writeMs: Double) {
+    /**
+     * Observe one candidate's stage durations (ms). [writeMs] is nullable: a candidate
+     * whose OCR result was [OcrOutcome.TransientFailure] writes nothing, so it records
+     * **no write sample** — `null` leaves the write EMA untouched (rather than seeding it
+     * with a bogus near-zero latency, which would depress ADR 0004's Phase 5 adaptive
+     * threshold). The asymmetry (read/decode/ocr non-null, write nullable) is principled:
+     * read + OCR run for every non-dedup candidate, while write only runs for
+     * Success / PermanentContentFailure. The same "record only what ran" rule will cover
+     * the Phase 3 `EMBED` stage and Phase 2's READ→DEDUP relocation (a dedup-skip records
+     * readMs but null ocr/write).
+     */
+    fun record(readMs: Double, decodeMs: Double, ocrMs: Double, writeMs: Double?) {
         this.readMs = ema(this.readMs, readMs)
         this.decodeMs = ema(this.decodeMs, decodeMs)
         this.ocrMs = ema(this.ocrMs, ocrMs)
-        this.writeMs = ema(this.writeMs, writeMs)
+        if (writeMs != null) this.writeMs = ema(this.writeMs, writeMs)
         samples += 1
     }
 

@@ -70,4 +70,30 @@ class StageLatencyRollingAverageTest {
         assertTrue("ocrMs should smooth toward ~100ms, was ${snap.ocrMs}",
                    snap.ocrMs in 95.0..105.0)
     }
+
+    @Test
+    fun null_writeMs_leaves_write_ema_untouched_but_still_counts_a_sample() {
+        // A TransientFailure writes nothing, so the engine records writeMs = null. That must
+        // NOT touch the write EMA (a bogus near-zero would depress ADR 0004's Phase 5
+        // adaptive threshold) — but it DOES still advance `samples`, because read + OCR
+        // genuinely ran and were averaged in. This pins the new nullable-writeMs contract.
+        val avg = StageLatencyRollingAverage(alpha = 0.5)
+        avg.record(readMs = 10.0, decodeMs = 0.0, ocrMs = 20.0, writeMs = null)
+        val snap = avg.snapshot()
+        assertEquals(0.0, snap.writeMs, 1e-9)        // untouched — stayed at the all-zero default
+        assertEquals(10.0, snap.readMs, 1e-9)        // still recorded: read ran
+        assertEquals(20.0, snap.ocrMs, 1e-9)         // still recorded: OCR ran
+        assertEquals(1, avg.sampleCount())           // a sample was still counted
+    }
+
+    @Test
+    fun null_writeMs_does_not_pollute_a_prior_write_ema() {
+        // The real hazard: a real write latency is already in the EMA, then a TransientFailure
+        // arrives. `writeMs = null` must leave that prior average intact, not blend it toward 0.
+        val avg = StageLatencyRollingAverage(alpha = 0.5)
+        avg.record(readMs = 5.0, decodeMs = 0.0, ocrMs = 5.0, writeMs = 40.0)  // seed write EMA at 40
+        avg.record(readMs = 5.0, decodeMs = 0.0, ocrMs = 5.0, writeMs = null)  // transient — must not touch write
+        assertEquals(40.0, avg.snapshot().writeMs, 1e-9)
+        assertEquals(2, avg.sampleCount())
+    }
 }
