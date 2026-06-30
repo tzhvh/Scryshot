@@ -165,4 +165,108 @@ class ZvecSchemaTest {
             assertTrue("FTS schema create must succeed", dir.exists())
         }
     }
+
+    // ---- Issue 09: stats + flush ---------------------------------------------
+    // Folded into ZvecSchemaTest per the issue (no one-method test class). The
+    // schema here is the stats-shaped one: a vector field (so the engine's
+    // `index_completeness` map has an entry — collection.cc:406 iterates
+    // vector_fields() ONLY) plus a scalar field (to pin that scalars are NOT in
+    // the indexes list). docCount after inserts is what Phase 2's migration
+    // progress UI reads.
+
+    /**
+     * The empty-collection stats: `docCount == 0`, and `indexes` reflects the
+     * schema. The engine's `Stats()` reports completeness `1.0` for every vector
+     * field on an empty collection (`collection.cc:410` — "if no doc,
+     * completeness is 1"), so a freshly-created vector field lands here at `1.0`.
+     *
+     * **Pinned by this test:** the `indexes` list contains the VECTOR field and
+     * NOT the scalar `size` field — the engine's `index_completeness` map is keyed
+     * only by vector field names (`collection.cc:406`). The issue said "lists the
+     * schema's indexed fields"; the source + live engine narrow that to vector
+     * fields only, and this test holds the line.
+     */
+    @Test fun statsOnEmptyCollection() = runBlocking {
+        val dir = freshPath()
+        val schema = CollectionSchema(
+            name = "stats_empty",
+            fields = listOf(
+                FieldSchema("size", FieldType.INT64, nullable = false),
+                FieldSchema(
+                    name = "embedding",
+                    type = FieldType.VECTOR_FP32,
+                    nullable = false,
+                    dimension = 8,
+                    indexParams = IndexParams.HnswParams(m = 16, efConstruction = 200),
+                ),
+            ),
+        )
+        ZvecCollection.createAndOpen(dir, schema).use { col ->
+            val stats = col.stats()
+            assertEquals("empty collection reports zero docs", 0L, stats.docCount)
+            assertEquals(
+                "indexes lists VECTOR fields only — the scalar 'size' is absent",
+                listOf("embedding"),
+                stats.indexes.map { it.name },
+            )
+            // Engine convention (collection.cc:410): empty → completeness 1.0.
+            stats.indexes.forEach { stat ->
+                assertTrue(
+                    "completeness must be in [0, 1], was ${stat.completeness}",
+                    stat.completeness >= 0.0f && stat.completeness <= 1.0f,
+                )
+            }
+        }
+    }
+
+    /**
+     * After inserting N docs, `stats().docCount == N`. `flush()` returns without
+     * throwing after writes (the engine's durability flush, `c_api.h:3016`).
+     *
+     * `docCount` is a uint64_t at the C boundary → `Long`; it counts LIVE docs
+     * only (the engine sums per-segment `doc_count(delete_store_->make_filter())`,
+     * `collection.cc:417`, so soft-deleted docs are excluded).
+     */
+    @Test fun statsDocCountAfterInsertsAndFlushNoThrow() = runBlocking {
+        val dir = freshPath()
+        val schema = CollectionSchema(
+            name = "stats_docs",
+            fields = listOf(
+                FieldSchema("title", FieldType.STRING, nullable = false),
+                FieldSchema(
+                    name = "embedding",
+                    type = FieldType.VECTOR_FP32,
+                    nullable = false,
+                    dimension = 8,
+                    indexParams = IndexParams.HnswParams(m = 16, efConstruction = 200),
+                ),
+            ),
+        )
+        ZvecCollection.createAndOpen(dir, schema).use { col ->
+            repeat(3) { i ->
+                col.insert {
+                    pk = "doc$i"
+                    string("title", "screenshot $i")
+                    vectorF32("embedding", FloatArray(8) { it.toFloat() })
+                }
+            }
+
+            // flush() is the durability knob: no-throw after writes.
+            col.flush()
+
+            val stats = col.stats()
+            assertEquals("docCount reflects the inserts", 3L, stats.docCount)
+
+            // The vector field appears with a completeness in [0, 1]. After inserts
+            // the graph index may still be building (completeness < 1.0 is a real,
+            // legal value — see IndexStat.completeness); we only assert the range +
+            // that the right field is reported.
+            val embStat = stats.indexes.singleOrNull { it.name == "embedding" }
+            assertNotNull("the HNSW vector field is reported", embStat)
+            assertTrue(
+                "completeness in [0, 1], was ${embStat!!.completeness}",
+                embStat.completeness >= 0.0f && embStat.completeness <= 1.0f,
+            )
+        }
+    }
 }

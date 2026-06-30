@@ -628,6 +628,72 @@ class ZvecCollection internal constructor(
             }
         }
 
+    // ---- Stats + flush (issue 09) ----------------------------------------
+    // The collection-observability surface. stats() reads the C stats struct
+    // under a StatsGuard (zvec_collection_get_stats → get_doc_count +
+    // get_index_count + per-index get_index_name/get_index_completeness, freed
+    // with zvec_collection_stats_destroy), copies it into a GC-owned
+    // CollectionStats, and frees the C handle — no handle escapes (same
+    // value-type pattern as ZvecDoc). flush() is the engine's durability flush.
+    //
+    // All suspend, no internal dispatcher hop (ADR 0007) — zvec calls are
+    // uncancellable native blocking calls, so the caller owns the dispatcher and
+    // the cancellation boundary, exactly like the read/write/query paths.
+
+    /**
+     * Read collection-level stats: live document count + per-vector-field index
+     * completeness. Phase 2's migration-progress UI ("Analyzing 45 of 842…")
+     * reads [CollectionStats.docCount].
+     *
+     * **⚠ `stats.indexes` reports VECTOR fields only** (engine behavior, verified
+     * against the pinned `v0.5.1` source `collection.cc:406` + the live engine):
+     * `Stats()` populates `index_completeness` by iterating
+     * `schema_->vector_fields()`, so a scalar field with an INVERT or FTS index
+     * does NOT appear here. This is exactly what the engine reports — the SDK
+     * surfaces it untouched. The list's order is a hash order, not schema order
+     * (the C getters walk an `unordered_map`, `c_api.cc:1278`); index by
+     * [IndexStat.name].
+     *
+     * @throws ZvecException on any engine error.
+     */
+    suspend fun stats(): CollectionStats {
+        ensureNotClosed()
+        val raw = ZvecNative.nativeStats(nativeHandle())
+        return unpackStats(raw)
+    }
+
+    /**
+     * Unpack the flat `Object[]` from [ZvecNative.nativeStats] into a
+     * [CollectionStats]. Layout: [0]=docCount (Long), [1]=indexNames (String[]),
+     * [2]=indexCompleteness (FloatArray) — indexNames[i] paired with
+     * indexCompleteness[i]. The pairs fold into [IndexStat]s; the count is taken
+     * from indexNames so the two arrays stay aligned by construction.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun unpackStats(raw: Array<Any?>): CollectionStats {
+        val docCount = raw[0] as Long
+        val names = raw[1] as Array<String>
+        val completeness = raw[2] as FloatArray
+        val indexes = ArrayList<IndexStat>(names.size)
+        for (i in names.indices) {
+            indexes += IndexStat(name = names[i], completeness = completeness[i])
+        }
+        return CollectionStats(docCount = docCount, indexes = indexes)
+    }
+
+    /**
+     * Flush the collection's in-memory writes to disk (the engine's durability
+     * flush, `zvec_collection_flush`, `c_api.h:3016`). Available for callers that
+     * want a write-durability guarantee — Phase 2's migration may call it after a
+     * bulk batch. Returns without throwing on success.
+     *
+     * @throws ZvecException on any engine error.
+     */
+    suspend fun flush() {
+        ensureNotClosed()
+        ZvecNative.nativeFlush(nativeHandle())
+    }
+
     private object WriteOp {
         // Mirror of the OP_* constants in zvec_jni_doc.cc.
         const val OP_INSERT = 0

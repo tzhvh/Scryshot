@@ -319,3 +319,21 @@ struct SubQueryGuard {
     }
 };
 
+// Issue 09 (stats): wraps the `zvec_collection_stats_t*` returned by
+// zvec_collection_get_stats (c_api.h:3048). The handle is caller-owned and MUST
+// be freed with zvec_collection_stats_destroy (c_api.h:3056); the per-index
+// (name, completeness) pairs it exposes via the `stats_get_index_*` getters are
+// borrowed into it (the index name is "owned by stats, do not free",
+// c_api.h:2492), so they are valid only while this guard's stats is alive — the
+// JNI layer COPIES name + completeness into Kotlin objects before the dtor runs.
+// Runs on any exit path, including a macro throw-return mid-extraction, so the
+// stats handle can never leak.
+struct StatsGuard {
+    zvec_collection_stats_t* s = nullptr;
+    ~StatsGuard() {
+        if (s) {
+            zvec_collection_stats_destroy(s);
+        }
+    }
+};
+

@@ -60,6 +60,26 @@ object ZvecNative {
         maxBufferSize: Long,
     ): Long
 
+    // ---- Stats + flush (issue 09) ----------------------------------------
+    // The collection-observability surface. nativeStats reads
+    // zvec_collection_get_stats (c_api.h:3048) under a StatsGuard, copies
+    // docCount + each vector field's (name, completeness) into JVM objects, and
+    // frees the C stats handle on any exit path (no handle escapes — the same
+    // value-type invariant as collect_docs, ADR 0006). nativeFlush is the
+    // engine's durability flush (c_api.h:3016).
+    //
+    // nativeStats returns `Array<Any?>` = `[0]: Long docCount, [1]: Array<String>
+    // indexNames, [2]: FloatArray indexCompleteness` (indexNames[i] paired with
+    // indexCompleteness[i], index-aligned). docCount is a uint64_t at the C
+    // boundary (c_api.h:2477) → Long. The Kotlin side folds these into a
+    // CollectionStats. The `indexes` list reflects the schema's VECTOR fields
+    // ONLY (the engine's Stats() iterates schema_->vector_fields(),
+    // collection.cc:406); scalar INVERT/FTS indexes are NOT reported — see
+    // CollectionStats's KDoc.
+    @JvmStatic external fun nativeStats(handle: Long): Array<Any?>
+
+    @JvmStatic external fun nativeFlush(handle: Long)
+
     // Phase-0 probe: hardcoded two-field schema. Kept for the regression guard
     // (ZvecRoundtripTest); issue 02's nativeSchemaCreateAndOpen generalizes it.
     @JvmStatic external fun nativeCreateAndOpen(path: String, schemaName: String): Long

@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <string>
+#include <vector>
 #include <zvec/c_api.h>
 #include "zvec_jni_marshalling.h"
 
@@ -95,6 +96,121 @@ Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeClose(
   if (col) {
     ZVEC_CHECK_JNI_VOID(env, zvec_collection_close(col));
   }
+}
+
+// ---- Stats + flush (issue 09) --------------------------------------------
+// The collection-observability surface. `nativeStats` reads
+// zvec_collection_get_stats (c_api.h:3048) into a value-type struct: it calls
+// get_stats (returns a caller-owned zvec_collection_stats_t*), walks
+// get_index_count + per-index get_index_name/get_index_completeness, COPIES
+// docCount + each (name, completeness) pair into JVM objects, then frees the C
+// handle via StatsGuard on any exit path. No handle escapes (same value-type
+// invariant as collect_docs — ADR 0006). `nativeFlush` is the engine's
+// durability flush (c_api.h:3016).
+//
+// Returns `Array<Any?>` = `[0]: Long docCount, [1]: Array<String> indexNames,
+// [2]: FloatArray indexCompleteness` (indexNames[i] paired with
+// indexCompleteness[i], index-aligned). The Kotlin side folds these into a
+// CollectionStats(docCount, List<IndexStat>). docCount is a uint64_t at the C
+// boundary (c_api.h:2477) → jlong.
+
+JNIEXPORT jobjectArray JNICALL
+Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeStats(
+    JNIEnv* env, jclass, jlong handle) {
+  zvec_collection_t* col = reinterpret_cast<zvec_collection_t*>(handle);
+  if (!col) {
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Collection handle is null");
+    return nullptr;
+  }
+
+  zvec_collection_stats_t* raw_stats = nullptr;
+  // get_stats takes the collection as `const` (c_api.h:3048) but writes the
+  // caller-owned handle through the out-param; a non-OK throws ZvecException
+  // before the guard is constructed, so there is nothing to free in that path.
+  ZVEC_CHECK_JNI_JLONG(env, zvec_collection_get_stats(col, &raw_stats));
+  if (!raw_stats) {
+    zvec_throw(env, ZVEC_ERROR_INTERNAL_ERROR,
+               "zvec_collection_get_stats returned OK but a null stats handle");
+    return nullptr;
+  }
+  StatsGuard stats_guard{raw_stats};
+
+  const uint64_t doc_count =
+      zvec_collection_stats_get_doc_count(raw_stats);
+  const size_t index_count =
+      zvec_collection_stats_get_index_count(raw_stats);
+
+  // docCount → Long.
+  jclass long_class = env->FindClass("java/lang/Long");
+  jmethodID long_value_of = env->GetStaticMethodID(
+      long_class, "valueOf", "(J)Ljava/lang/Long;");
+  jobject jdoc_count =
+      env->CallStaticObjectMethod(long_class, long_value_of,
+                                  static_cast<jlong>(doc_count));
+  // A pending exception from the boxing (JVM OOM) would make the array-building
+  // below unsafe; bail before touching JNI further (same discipline as
+  // jstring_to_std's guard).
+  if (env->ExceptionCheck()) return nullptr;
+
+  // indexNames → String[] (the engine iterates an unordered_map, so order is a
+  // hash order, not schema order — the Kotlin IndexStat list inherits it).
+  jclass string_class = env->FindClass("java/lang/String");
+  jobjectArray jindex_names =
+      env->NewObjectArray(static_cast<jsize>(index_count), string_class, nullptr);
+  ZVEC_CHECK_PTR(env, jindex_names, "NewObjectArray(indexNames)");
+
+  // indexCompleteness → float[].
+  jfloatArray jindex_completeness = env->NewFloatArray(static_cast<jsize>(index_count));
+  ZVEC_CHECK_PTR(env, jindex_completeness, "NewFloatArray(indexCompleteness)");
+
+  std::vector<float> completeness_buf;
+  completeness_buf.reserve(index_count);
+  for (size_t i = 0; i < index_count; ++i) {
+    const char* name = zvec_collection_stats_get_index_name(raw_stats, i);
+    // get_index_name returns nullptr only on an out-of-range i (c_api.cc:1274)
+    // — impossible here since i < index_count. Treat a null defensively as an
+    // internal error rather than feeding a nullptr to NewStringUTF.
+    if (!name) {
+      zvec_throw(env, ZVEC_ERROR_INTERNAL_ERROR,
+                 "zvec_collection_stats_get_index_name returned null");
+      return nullptr;
+    }
+    jstring jname = env->NewStringUTF(name);
+    if (env->ExceptionCheck()) return nullptr;
+    env->SetObjectArrayElement(jindex_names, static_cast<jsize>(i), jname);
+    if (env->ExceptionCheck()) return nullptr;
+    env->DeleteLocalRef(jname);
+
+    completeness_buf.push_back(
+        zvec_collection_stats_get_index_completeness(raw_stats, i));
+  }
+  env->SetFloatArrayRegion(jindex_completeness, 0,
+                           static_cast<jsize>(index_count),
+                           completeness_buf.data());
+  if (env->ExceptionCheck()) return nullptr;
+
+  // Pack [docCount, indexNames, indexCompleteness] into Object[].
+  jclass object_class = env->FindClass("java/lang/Object");
+  jobjectArray result = env->NewObjectArray(3, object_class, nullptr);
+  ZVEC_CHECK_PTR(env, result, "NewObjectArray(stats result)");
+  env->SetObjectArrayElement(result, 0, jdoc_count);
+  env->SetObjectArrayElement(result, 1, jindex_names);
+  env->SetObjectArrayElement(result, 2, jindex_completeness);
+
+  // StatsGuard frees the C stats handle here; the (name, completeness) data has
+  // been copied out, so the borrowed index-name pointers are no longer needed.
+  return result;
+}
+
+JNIEXPORT void JNICALL
+Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeFlush(
+    JNIEnv* env, jclass, jlong handle) {
+  zvec_collection_t* col = reinterpret_cast<zvec_collection_t*>(handle);
+  if (!col) {
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Collection handle is null");
+    return;
+  }
+  ZVEC_CHECK_JNI_VOID(env, zvec_collection_flush(col));
 }
 
 } // extern "C"
