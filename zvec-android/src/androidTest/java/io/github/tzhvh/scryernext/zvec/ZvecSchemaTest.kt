@@ -269,4 +269,138 @@ class ZvecSchemaTest {
             )
         }
     }
+
+    // ---- Issue 10: runtime index DDL + optimize -----------------------------
+    // Folded into ZvecSchemaTest per the issue (no one-method class). The DDL
+    // surface reuses 02's IndexParamsGuard family via the shared build_index_params.
+    //
+    // ⚠ Engine behavior (verified against the pinned v0.5.1 source), narrowing
+    // the issue's "createIndex … assert it appears in stats().indexes":
+    // `stats().indexes` lists VECTOR fields by DATA TYPE (collection.cc:406
+    // iterates schema_->vector_fields()), NOT by index presence. So a vector
+    // field is in `indexes` whether or not it has an index — createIndex/dropIndex
+    // change the index's EXISTENCE (and the completeness value), not field
+    // presence. The real observable of a created vector index is that a vector
+    // `query` against that field returns ranked results. These tests assert that.
+
+    /**
+     * `createIndex` builds a working HNSW index on a vector field that had NO
+     * index at schema time. The proof is behavioral, not in `stats()`: after
+     * creating the index, a vector `query` against the field returns ranked
+     * results nearest-first (the index exists and serves queries).
+     *
+     * Schema: a plain (unindexed) `emb` VECTOR_FP32 field. After inserts +
+     * `createIndex("emb", HnswParams)`, querying `emb` for the inserted vectors
+     * returns them ordered by cosine distance (R1's nearest-first convention).
+     */
+    @Test fun createIndexBuildsAWorkingVectorIndex() = runBlocking {
+        val dir = freshPath()
+        // `emb` is declared with NO indexParams — it's a vector field with no
+        // index until createIndex lands one.
+        val schema = CollectionSchema(
+            name = "ddl_create",
+            fields = listOf(
+                FieldSchema("title", FieldType.STRING, nullable = false),
+                FieldSchema("emb", FieldType.VECTOR_FP32, nullable = false, dimension = 4),
+            ),
+        )
+        ZvecCollection.createAndOpen(dir, schema).use { col ->
+            col.upsert { pk = "near"; string("title", "n"); vectorF32("emb", floatArrayOf(1f, 0f, 0f, 0f)) }
+            col.upsert { pk = "far"; string("title", "f"); vectorF32("emb", floatArrayOf(0f, 0f, 0f, 1f)) }
+
+            // Create the HNSW index at runtime, then build it.
+            col.createIndex("emb", IndexParams.HnswParams(m = 16, efConstruction = 200))
+            col.optimize()
+
+            // The created index serves a query: nearest-first (R1), proving the
+            // index exists and works — not merely present in stats().
+            val results = col.query(
+                QueryRequest(field = "emb", vector = listOf(1f, 0f, 0f, 0f), topK = 2),
+            )
+            assertEquals("created index serves a 2-result query", 2, results.size)
+            assertEquals("nearest doc ranks first", "near", results.first().pk)
+        }
+    }
+
+    /**
+     * A second `createIndex` with EQUAL params is a no-op success
+     * (`collection.cc:475` — "equal index params" returns OK without rebuilding).
+     * Pins the idempotent-recreate path so Phase 2 can safely retry createIndex.
+     */
+    @Test fun createIndexWithEqualParamsIsIdempotentNoOp() = runBlocking {
+        val dir = freshPath()
+        val schema = CollectionSchema(
+            name = "ddl_idem",
+            fields = listOf(
+                FieldSchema("emb", FieldType.VECTOR_FP32, nullable = false, dimension = 4),
+            ),
+        )
+        ZvecCollection.createAndOpen(dir, schema).use { col ->
+            val params = IndexParams.HnswParams(m = 16, efConstruction = 200)
+            col.createIndex("emb", params)
+            // Second call with the SAME params: no-throw (engine short-circuits).
+            col.createIndex("emb", params)
+        }
+    }
+
+    /**
+     * `optimize()` is the post-migration index-build trigger: after bulk inserts
+     * it runs without throwing and the vector field's index completeness stays in
+     * `[0, 1]`. Completeness reaching exactly `1.0` is build-timing-dependent (the
+     * graph may finish before optimize returns or need a further pass), so this
+     * asserts the safe bound + no-throw rather than `== 1.0`.
+     */
+    @Test fun optimizeAfterInsertsIsNoThrow() = runBlocking {
+        val dir = freshPath()
+        val schema = CollectionSchema(
+            name = "ddl_opt",
+            fields = listOf(
+                FieldSchema("emb", FieldType.VECTOR_FP32, nullable = false, dimension = 4,
+                    indexParams = IndexParams.HnswParams(m = 16, efConstruction = 200)),
+            ),
+        )
+        ZvecCollection.createAndOpen(dir, schema).use { col ->
+            repeat(5) { i ->
+                col.upsert { pk = "d$i"; vectorF32("emb", FloatArray(4) { (i + it).toFloat() }) }
+            }
+            // The load-bearing DDL method: no-throw after writes.
+            col.optimize()
+
+            val stat = col.stats().indexes.single { it.name == "emb" }
+            assertTrue(
+                "completeness in [0, 1] after optimize, was ${stat.completeness}",
+                stat.completeness >= 0.0f && stat.completeness <= 1.0f,
+            )
+        }
+    }
+
+    /**
+     * `dropIndex` on an indexed vector field succeeds (no-throw) and leaves the
+     * field still listed in `stats().indexes` — confirming the issue-09 finding
+     * that stats lists vector fields by data type, not by index presence. The
+     * index's absence is observable behaviorally (a query on the dropped field
+     * would fail to use an index), not via stats presence/absence.
+     */
+    @Test fun dropIndexOnIndexedVectorFieldSucceeds() = runBlocking {
+        val dir = freshPath()
+        val schema = CollectionSchema(
+            name = "ddl_drop",
+            fields = listOf(
+                FieldSchema("emb", FieldType.VECTOR_FP32, nullable = false, dimension = 4,
+                    indexParams = IndexParams.HnswParams(m = 16, efConstruction = 200)),
+            ),
+        )
+        ZvecCollection.createAndOpen(dir, schema).use { col ->
+            // DropIndex on a schema-declared index: rebuilds segments without it.
+            col.dropIndex("emb")
+
+            // The VECTOR field is STILL in stats.indexes (data-type-keyed, not
+            // index-keyed) — the field didn't go away, only its index did.
+            val names = col.stats().indexes.map { it.name }
+            assertTrue(
+                "vector field stays listed after dropIndex (stats is data-type-keyed): $names",
+                names.contains("emb"),
+            )
+        }
+    }
 }

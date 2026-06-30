@@ -213,4 +213,90 @@ Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeFlush(
   ZVEC_CHECK_JNI_VOID(env, zvec_collection_flush(col));
 }
 
+// ---- Runtime index DDL (issue 10) -----------------------------------------
+// createIndex / dropIndex / optimize on an OPEN collection (Q8 runtime-DDL
+// scope). nativeCreateIndex builds the one-field index-params handle via the
+// shared build_index_params (the SAME per-arm switch schema construction uses —
+// moved to zvec_jni_marshalling.h as `inline`), guards it, and calls
+// zvec_collection_create_index, which DEEP-COPIES the params (c_api.h:3075:
+// "caller retains ownership and should call zvec_index_params_destroy()"). The
+// IndexParamsGuard always frees the transient params on any exit path — success
+// OR failure — because the engine took a copy, never the handle itself (same
+// discipline as the FtsGuard/SubQueryGuard pattern; NOT adopt-on-success).
+//
+// The params arrive as a SINGLE field's slots in the descriptor arrays
+// (field_index=0, fts_base=0). This mirrors SchemaDescriptor.encodeIndexParams
+// on the Kotlin side, which flattens one IndexParams into a one-slot descriptor
+// — reusing build_index_params unchanged rather than a second per-arm switch.
+
+JNIEXPORT void JNICALL
+Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeCreateIndex(
+    JNIEnv* env, jclass, jlong handle, jstring jfield,
+    jint jindexKind,
+    jintArray jindexM, jintArray jindexEfConstruction,
+    jintArray jindexNList, jintArray jindexNIters,
+    jintArray jindexMetric,
+    jbooleanArray jindexEnableRangeOpt,
+    jobjectArray jftsTokenizer, jobjectArray jftsExtraParams,
+    jobjectArray jftsFilterNames, jintArray jftsFilterFieldIndices) {
+  zvec_collection_t* col = reinterpret_cast<zvec_collection_t*>(handle);
+  if (!col) {
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Collection handle is null");
+    return;
+  }
+
+  std::string field = jstring_to_std(env, jfield);
+  if (env->ExceptionCheck()) return;
+
+  // Single field → slot 0, fts_base 0 (no prior FTS fields to offset past).
+  zvec_index_params_t* params = build_index_params(
+      env, jindexKind,
+      jindexM, jindexEfConstruction, jindexNList, jindexNIters, jindexMetric,
+      jindexEnableRangeOpt, jftsTokenizer, jftsExtraParams,
+      jftsFilterNames, jftsFilterFieldIndices,
+      /*field_index=*/0, /*fts_base=*/0);
+  if (env->ExceptionCheck()) return;
+  IndexParamsGuard params_guard{params};
+
+  if (!params) {
+    // indexKind == NONE: a no-op create is a developer error (createIndex needs
+    // real params), not a silent success. Surface it before touching the engine.
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT,
+               "createIndex: params had no index type (NONE)");
+    return;
+  }
+
+  // create_index copies the params; params_guard frees our handle regardless.
+  ZVEC_CHECK_JNI_VOID(env,
+      zvec_collection_create_index(col, field.c_str(), params));
+}
+
+JNIEXPORT void JNICALL
+Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeDropIndex(
+    JNIEnv* env, jclass, jlong handle, jstring jfield) {
+  zvec_collection_t* col = reinterpret_cast<zvec_collection_t*>(handle);
+  if (!col) {
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Collection handle is null");
+    return;
+  }
+  std::string field = jstring_to_std(env, jfield);
+  if (env->ExceptionCheck()) return;
+  ZVEC_CHECK_JNI_VOID(env, zvec_collection_drop_index(col, field.c_str()));
+}
+
+JNIEXPORT void JNICALL
+Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeOptimize(
+    JNIEnv* env, jclass, jlong handle) {
+  zvec_collection_t* col = reinterpret_cast<zvec_collection_t*>(handle);
+  if (!col) {
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Collection handle is null");
+    return;
+  }
+  // Synchronous only — zvec_collection_optimize_async does not exist on the
+  // pinned v0.5.1. The native call blocks until the index build/segment merge
+  // finishes; the caller owns the dispatcher (ADR 0007), so it can run this on
+  // Dispatchers.IO / a background scope as it sees fit.
+  ZVEC_CHECK_JNI_VOID(env, zvec_collection_optimize(col));
+}
+
 } // extern "C"

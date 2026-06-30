@@ -80,6 +80,42 @@ object ZvecNative {
 
     @JvmStatic external fun nativeFlush(handle: Long)
 
+    // ---- Runtime index DDL (issue 10) --------------------------------------
+    // createIndex / dropIndex / optimize on an OPEN collection (Q8 runtime-DDL
+    // scope). nativeCreateIndex takes a SINGLE field's params in the same
+    // descriptor-array shape nativeSchemaCreateAndOpen consumes (one slot each),
+    // so the JNI layer reuses the shared build_index_params (the per-arm switch
+    // schema construction uses — extracted to zvec_jni_marshalling.h). The C
+    // zvec_collection_create_index DEEP-COPIES the params (c_api.h:3075), so the
+    // IndexParamsGuard frees the transient handle on any exit path — same
+    // borrow-always discipline as FtsGuard/SubQueryGuard, not adopt-on-success.
+    //
+    // The index_* arrays here are ONE-ELEMENT (the single field's slot at [0]).
+    // For FTS, ftsFilterNames carries this field's filters flat (and
+    // ftsFilterFieldIndices[0] = the filter count). dropIndex / optimize take
+    // just the handle (+ field name for drop); all three throw ZvecException on a
+    // non-OK engine code. optimize is SYNCHRONOUS (no async variant exists on
+    // v0.5.1); the caller owns the dispatcher (ADR 0007).
+    @JvmStatic external fun nativeCreateIndex(
+        handle: Long,
+        field: String,
+        indexKind: Int,
+        indexM: IntArray,
+        indexEfConstruction: IntArray,
+        indexNList: IntArray,
+        indexNIters: IntArray,
+        indexMetric: IntArray,
+        indexEnableRangeOpt: BooleanArray,
+        ftsTokenizer: Array<String>,
+        ftsExtraParams: Array<String>,
+        ftsFilterNames: Array<String>,
+        ftsFilterFieldIndices: IntArray,
+    )
+
+    @JvmStatic external fun nativeDropIndex(handle: Long, field: String)
+
+    @JvmStatic external fun nativeOptimize(handle: Long)
+
     // Phase-0 probe: hardcoded two-field schema. Kept for the regression guard
     // (ZvecRoundtripTest); issue 02's nativeSchemaCreateAndOpen generalizes it.
     @JvmStatic external fun nativeCreateAndOpen(path: String, schemaName: String): Long

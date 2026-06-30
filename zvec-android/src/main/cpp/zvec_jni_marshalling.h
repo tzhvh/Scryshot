@@ -227,6 +227,141 @@ struct FtsStringArrayGuard {
     }
 };
 
+// ---- Shared index-params builder (issue 02 + issue 10) ---------------------
+// Index-kind discriminator values (mirror SchemaDescriptor::IndexKind). Pinned
+// explicit so a Kotlin reorder can't silently drift the int the C++ switches on.
+constexpr int INDEX_KIND_NONE = 0;
+constexpr int INDEX_KIND_HNSW = 1;
+constexpr int INDEX_KIND_IVF = 2;
+constexpr int INDEX_KIND_FLAT = 3;
+constexpr int INDEX_KIND_INVERT = 10;
+constexpr int INDEX_KIND_FTS = 11;
+
+// Build one field's index-params handle from the descriptor arrays. Returns null
+// when the field has no index (INDEX_KIND_NONE). On failure the caller's pending
+// exception surfaces (set via zvec_throw by the setters); the returned handle,
+// if any, is guard-owned by the caller (IndexParamsGuard). fts_filter_names is
+// the flat-packed filter list; fts_base is this field's offset into it (the
+// cumulative count of filters from prior FTS fields — 0 for the single-field DDL
+// path, which has exactly one field).
+//
+// SHARED by schema construction (zvec_jni_schema.cc's per-field loop) and the
+// runtime DDL surface (zvec_jni_collection.cc's nativeCreateIndex): both build
+// the SAME one-field index-params handle, so the per-arm switch + its exact
+// byte-size setter contract (metric for vector indexes; m/ef for HNSW;
+// n_list/n_iters for IVF; the zvec_string_array filter build for FTS) lives in
+// exactly one place. `inline` so each TU that includes this header gets its own
+// definition without ODR violation; the body is pure (no statics).
+inline zvec_index_params_t* build_index_params(
+    JNIEnv* env,
+    int index_kind,
+    jintArray jindexM, jintArray jindexEfConstruction,
+    jintArray jindexNList, jintArray jindexNIters,
+    jintArray jindexMetric,
+    jbooleanArray jindexEnableRangeOpt,
+    jobjectArray jftsTokenizer, jobjectArray jftsExtraParams,
+    jobjectArray jftsFilterNames, jintArray jftsFilterFieldIndices,
+    int field_index, int fts_base) {
+
+    if (index_kind == INDEX_KIND_NONE) return nullptr;
+
+    jint buf_m = 0, buf_ef = 0, buf_nl = 0, buf_ni = 0, buf_metric = 0;
+    jboolean buf_range = JNI_FALSE;
+    env->GetIntArrayRegion(jindexM, field_index, 1, &buf_m);
+    env->GetIntArrayRegion(jindexEfConstruction, field_index, 1, &buf_ef);
+    env->GetIntArrayRegion(jindexNList, field_index, 1, &buf_nl);
+    env->GetIntArrayRegion(jindexNIters, field_index, 1, &buf_ni);
+    env->GetIntArrayRegion(jindexMetric, field_index, 1, &buf_metric);
+    env->GetBooleanArrayRegion(jindexEnableRangeOpt, field_index, 1, &buf_range);
+    if (env->ExceptionCheck()) return nullptr;
+
+    zvec_index_type_t ctype;
+    switch (index_kind) {
+        case INDEX_KIND_HNSW:   ctype = ZVEC_INDEX_TYPE_HNSW;   break;
+        case INDEX_KIND_IVF:    ctype = ZVEC_INDEX_TYPE_IVF;    break;
+        case INDEX_KIND_FLAT:   ctype = ZVEC_INDEX_TYPE_FLAT;   break;
+        case INDEX_KIND_INVERT: ctype = ZVEC_INDEX_TYPE_INVERT; break;
+        case INDEX_KIND_FTS:    ctype = ZVEC_INDEX_TYPE_FTS;    break;
+        default: return nullptr;
+    }
+
+    zvec_index_params_t* params = zvec_index_params_create(ctype);
+    ZVEC_CHECK_PTR(env, params, "index_params_create");
+
+    switch (index_kind) {
+        case INDEX_KIND_HNSW:
+        case INDEX_KIND_IVF:
+        case INDEX_KIND_FLAT:
+            // Vector indexes carry a metric; HNSW/IVF add their own scalars.
+            {
+                zvec_error_code_t c = zvec_index_params_set_metric_type(
+                    params, static_cast<zvec_metric_type_t>(buf_metric));
+                if (c != ZVEC_OK) { zvec_index_params_destroy(params); ZVEC_CHECK_JNI_JLONG(env, c); }
+            }
+            if (index_kind == INDEX_KIND_HNSW) {
+                zvec_error_code_t c = zvec_index_params_set_hnsw_params(params, buf_m, buf_ef);
+                if (c != ZVEC_OK) { zvec_index_params_destroy(params); ZVEC_CHECK_JNI_JLONG(env, c); }
+            } else if (index_kind == INDEX_KIND_IVF) {
+                zvec_error_code_t c = zvec_index_params_set_ivf_params(params, buf_nl, buf_ni, /*use_soar=*/false);
+                if (c != ZVEC_OK) { zvec_index_params_destroy(params); ZVEC_CHECK_JNI_JLONG(env, c); }
+            }
+            break;
+        case INDEX_KIND_INVERT: {
+            zvec_error_code_t c = zvec_index_params_set_invert_params(
+                params, buf_range == JNI_TRUE, /*enable_wildcard=*/false);
+            if (c != ZVEC_OK) { zvec_index_params_destroy(params); ZVEC_CHECK_JNI_JLONG(env, c); }
+            break;
+        }
+        case INDEX_KIND_FTS: {
+            // Eagerly copy the per-field strings before touching zvec (Rule 1).
+            jstring jtok = static_cast<jstring>(env->GetObjectArrayElement(jftsTokenizer, field_index));
+            if (env->ExceptionCheck()) { zvec_index_params_destroy(params); return nullptr; }
+            std::string tokenizer = jstring_to_std(env, jtok);
+            env->DeleteLocalRef(jtok);
+            if (env->ExceptionCheck()) { zvec_index_params_destroy(params); return nullptr; }
+
+            jstring jextra = static_cast<jstring>(env->GetObjectArrayElement(jftsExtraParams, field_index));
+            if (env->ExceptionCheck()) { zvec_index_params_destroy(params); return nullptr; }
+            std::string extra = jstring_to_std(env, jextra);
+            env->DeleteLocalRef(jextra);
+            if (env->ExceptionCheck()) { zvec_index_params_destroy(params); return nullptr; }
+
+            // This field's filters: fts_base consecutive entries in ftsFilterNames.
+            jint this_filter_count = 0;
+            env->GetIntArrayRegion(jftsFilterFieldIndices, field_index, 1, &this_filter_count);
+            if (env->ExceptionCheck()) { zvec_index_params_destroy(params); return nullptr; }
+
+            zvec_string_array_t* filter_arr = nullptr;
+            if (this_filter_count > 0) {
+                filter_arr = zvec_string_array_create(static_cast<size_t>(this_filter_count));
+                ZVEC_CHECK_PTR(env, filter_arr, "string_array_create");
+            }
+            FtsStringArrayGuard filter_guard{filter_arr};
+
+            for (jint k = 0; k < this_filter_count; k++) {
+                jstring jf = static_cast<jstring>(
+                    env->GetObjectArrayElement(jftsFilterNames, fts_base + k));
+                if (env->ExceptionCheck()) return nullptr;
+                std::string f = jstring_to_std(env, jf);
+                env->DeleteLocalRef(jf);
+                if (env->ExceptionCheck()) return nullptr;
+                zvec_string_array_add(filter_arr, static_cast<size_t>(k), f.c_str());
+            }
+
+            // Empty strings = "keep C default" → pass NULL (matches the Rust oracle's
+            // Option<&str> → null mapping).
+            const char* tok_c = tokenizer.empty() ? nullptr : tokenizer.c_str();
+            const char* extra_c = extra.empty() ? nullptr : extra.c_str();
+            zvec_error_code_t c = zvec_index_params_set_fts_params(
+                params, tok_c, filter_arr, extra_c);
+            if (c != ZVEC_OK) { zvec_index_params_destroy(params); ZVEC_CHECK_JNI_JLONG(env, c); }
+            // set_fts_params copies; filter_guard frees the array regardless of outcome.
+            break;
+        }
+    }
+    return params;
+}
+
 // Issue 05 (fetch/projection): wraps the collection schema returned by
 // zvec_collection_get_schema (c_api.h:3026). The schema handle is owned by the
 // caller and must be destroyed; the per-field handles it exposes

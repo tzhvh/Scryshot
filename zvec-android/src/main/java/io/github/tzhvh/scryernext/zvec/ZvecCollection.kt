@@ -694,6 +694,92 @@ class ZvecCollection internal constructor(
         ZvecNative.nativeFlush(nativeHandle())
     }
 
+    // ---- Runtime index DDL (issue 10) ----------------------------------------
+    // createIndex / dropIndex / optimize on an OPEN collection (Q8 runtime-DDL
+    // scope). These share 02's IndexParamsGuard family + the per-arm
+    // build_index_params (moved to zvec_jni_marshalling.h so the DDL path builds
+    // the SAME one-field index-params handle schema construction does). The C
+    // zvec_collection_create_index DEEP-COPIES the params, so the guard frees the
+    // transient handle on any exit path — never adopt-on-success.
+    //
+    // All suspend, no internal dispatcher hop (ADR 0007) — zvec calls are
+    // uncancellable native blocking calls, so the caller owns the dispatcher and
+    // the cancellation boundary, exactly like stats/flush/read/write.
+
+    /**
+     * Create an index on [field] at runtime, after the collection exists. Phase
+     * 2's migration builds the HNSW graph index here once the docs are in.
+     *
+     * [params] is the same [IndexParams] sealed type schema construction takes
+     * (HnswParams / FlatParams / IvfParams / InvertParams / FtsParams); the SDK
+     * flattens it via [SchemaDescriptor.encodeIndexParams] and the JNI layer
+     * builds the C index-params handle through the SAME per-arm switch
+     * `createAndOpen` uses — so a runtime-created HNSW index is byte-for-byte
+     * the params object a schema-declared one would build.
+     *
+     * **Engine behavior (verified against the pinned `v0.5.1` source):** the C
+     * `zvec_collection_create_index` DEEP-COPIES the params (`c_api.cc:6184`
+     * `cpp_params->clone()`); the SDK's handle is freed by the guard regardless.
+     * On a vector field the index builds across existing segments
+     * (`build_create_vector_index_task`, `collection.cc:550`); a second
+     * `createIndex` with equal params is a no-op success (`collection.cc:475`).
+     *
+     * @param field the field to index. Must exist in the collection's schema.
+     * @param params the index type + its per-arm parameters.
+     *
+     * @throws ZvecException on a nonexistent field, an unsupported index type for
+     *   the field, or any engine error.
+     */
+    suspend fun createIndex(field: String, params: IndexParams) {
+        ensureNotClosed()
+        val desc = SchemaDescriptor.encodeIndexParams(params)
+        ZvecNative.nativeCreateIndex(
+            handle = nativeHandle(),
+            field = field,
+            indexKind = desc.indexKind,
+            indexM = desc.indexM,
+            indexEfConstruction = desc.indexEfConstruction,
+            indexNList = desc.indexNList,
+            indexNIters = desc.indexNIters,
+            indexMetric = desc.indexMetric,
+            indexEnableRangeOpt = desc.indexEnableRangeOpt,
+            ftsTokenizer = desc.ftsTokenizer,
+            ftsExtraParams = desc.ftsExtraParams,
+            ftsFilterNames = desc.ftsFilterNames,
+            ftsFilterFieldIndices = desc.ftsFilterFieldIndices,
+        )
+    }
+
+    /**
+     * Drop the index on [field]. On a field with no index the engine returns OK
+     * (`collection.cc:710` — "return ok if not indexed"); on an indexed field it
+     * rebuilds the segments without the index.
+     *
+     * @throws ZvecException on a nonexistent field or any engine error.
+     */
+    suspend fun dropIndex(field: String) {
+        ensureNotClosed()
+        ZvecNative.nativeDropIndex(nativeHandle(), field)
+    }
+
+    /**
+     * Optimize the collection: rebuild indexes and merge segments. Phase 2's
+     * migration calls this after bulk re-ingestion to finish the post-migration
+     * index build (the graph index runs after the docs are in). Synchronous —
+     * there is no async variant on the pinned `v0.5.1` (`zvec_collection_optimize`
+     * blocks until done; `zvec_collection_optimize_async` does not exist).
+     *
+     * The native call blocks until the build/merge finishes; the caller owns the
+     * dispatcher (ADR 0007), so wrap it in `withContext(Dispatchers.IO) { ... }`
+     * if a backgrounded build is wanted.
+     *
+     * @throws ZvecException on any engine error.
+     */
+    suspend fun optimize() {
+        ensureNotClosed()
+        ZvecNative.nativeOptimize(nativeHandle())
+    }
+
     private object WriteOp {
         // Mirror of the OP_* constants in zvec_jni_doc.cc.
         const val OP_INSERT = 0

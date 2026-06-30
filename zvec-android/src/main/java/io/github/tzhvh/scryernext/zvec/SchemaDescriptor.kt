@@ -79,6 +79,73 @@ internal class SchemaDescriptor private constructor(
 
     internal companion object {
         /**
+         * Flatten one [IndexParams] into the JNI-friendly per-field slot shape.
+         * The single source of truth for the per-arm encoding — used by both
+         * [encode] (a schema's per-field loop) and [encodeIndexParams] (a single
+         * field, for runtime `createIndex`). Pure: no JNI, no `.so`.
+         *
+         * Writes exactly the slots the C-side `build_index_params` reads for one
+         * field: the [IndexKind] discriminator + the per-arm scalar(s) + (for FTS)
+         * the flat-packed filter list. Non-applicable slots stay at their defaults
+         * (0 / empty), matching the zero-fill the multi-field [encode] uses.
+         */
+        internal fun flattenIndexParams(params: IndexParams): SingleIndexSlot {
+            return when (params) {
+                is IndexParams.HnswParams -> SingleIndexSlot(
+                    indexKind = IndexKind.HNSW,
+                    m = params.m,
+                    efConstruction = params.efConstruction,
+                    metric = params.metric.toNative(),
+                )
+                is IndexParams.FlatParams -> SingleIndexSlot(
+                    indexKind = IndexKind.FLAT,
+                    metric = params.metric.toNative(),
+                )
+                is IndexParams.IvfParams -> SingleIndexSlot(
+                    indexKind = IndexKind.IVF,
+                    nList = params.nList,
+                    nIters = params.nIters,
+                    metric = params.metric.toNative(),
+                )
+                is IndexParams.InvertParams -> SingleIndexSlot(
+                    indexKind = IndexKind.INVERT,
+                    enableRangeOpt = params.enableRangeOptimization,
+                )
+                is IndexParams.FtsParams -> SingleIndexSlot(
+                    indexKind = IndexKind.FTS,
+                    ftsTokenizer = params.tokenizer,
+                    ftsExtraParams = params.extraParams ?: "",
+                    ftsFilters = params.filters,
+                )
+            }
+        }
+
+        /**
+         * Flatten ONE [IndexParams] for a runtime `createIndex(field, params)`
+         * call (issue 10). Returns the one-slot descriptor arrays the JNI layer's
+         * `nativeCreateIndex` consumes (single element each, slot [0]). Reuses
+         * [flattenIndexParams] so the per-arm encoding is identical to schema
+         * construction's — a runtime-created HNSW index is byte-for-byte the same
+         * params object a schema-declared one would build.
+         */
+        internal fun encodeIndexParams(params: IndexParams): SingleIndexDescriptor {
+            val slot = flattenIndexParams(params)
+            return SingleIndexDescriptor(
+                indexKind = slot.indexKind,
+                indexM = intArrayOf(slot.m),
+                indexEfConstruction = intArrayOf(slot.efConstruction),
+                indexNList = intArrayOf(slot.nList),
+                indexNIters = intArrayOf(slot.nIters),
+                indexMetric = intArrayOf(slot.metric),
+                indexEnableRangeOpt = booleanArrayOf(slot.enableRangeOpt),
+                ftsTokenizer = arrayOf(slot.ftsTokenizer),
+                ftsExtraParams = arrayOf(slot.ftsExtraParams),
+                ftsFilterNames = slot.ftsFilters.toTypedArray(),
+                ftsFilterFieldIndices = intArrayOf(slot.ftsFilters.size),
+            )
+        }
+
+        /**
          * Flatten [schema] + [options]. Pure: no JNI, no `.so` — so the layout can
          * be JVM-unit-tested. The C-side `zvec_collection_schema_validate` is the
          * real authority on validity; this encoder only lays out the data, and an
@@ -108,34 +175,32 @@ internal class SchemaDescriptor private constructor(
 
             for (i in 0 until n) {
                 val params = schema.fields[i].indexParams ?: continue
+                val slot = flattenIndexParams(params)
+                fieldIndexTypes[i] = slot.indexKind
                 when (params) {
-                    is IndexParams.HnswParams -> {
-                        fieldIndexTypes[i] = IndexKind.HNSW
-                        indexM[i] = params.m
-                        indexEfConstruction[i] = params.efConstruction
-                        indexMetric[i] = params.metric.toNative()
-                    }
-                    is IndexParams.FlatParams -> {
-                        fieldIndexTypes[i] = IndexKind.FLAT
-                        indexMetric[i] = params.metric.toNative()
-                    }
+                    is IndexParams.HnswParams,
+                    is IndexParams.FlatParams,
                     is IndexParams.IvfParams -> {
-                        fieldIndexTypes[i] = IndexKind.IVF
-                        indexNList[i] = params.nList
-                        indexNIters[i] = params.nIters
-                        indexMetric[i] = params.metric.toNative()
+                        // Vector-index scalars are already in `slot`; lay them out by
+                        // kind (HNSW m/ef; IVF n_list/n_iters; all three carry metric).
+                        indexMetric[i] = slot.metric
+                        if (slot.indexKind == IndexKind.HNSW) {
+                            indexM[i] = slot.m
+                            indexEfConstruction[i] = slot.efConstruction
+                        } else if (slot.indexKind == IndexKind.IVF) {
+                            indexNList[i] = slot.nList
+                            indexNIters[i] = slot.nIters
+                        }
                     }
                     is IndexParams.InvertParams -> {
-                        fieldIndexTypes[i] = IndexKind.INVERT
-                        indexEnableRangeOpt[i] = params.enableRangeOptimization
+                        indexEnableRangeOpt[i] = slot.enableRangeOpt
                     }
                     is IndexParams.FtsParams -> {
-                        fieldIndexTypes[i] = IndexKind.FTS
-                        ftsTokenizer[i] = params.tokenizer
-                        ftsExtraParams[i] = params.extraParams ?: ""
+                        ftsTokenizer[i] = slot.ftsTokenizer
+                        ftsExtraParams[i] = slot.ftsExtraParams
                         // Record the count for this field, then append its filters.
-                        ftsFilterFieldIndices[i] = params.filters.size
-                        for (f in params.filters) ftsFilterNames.add(f)
+                        ftsFilterFieldIndices[i] = slot.ftsFilters.size
+                        ftsFilterNames.addAll(slot.ftsFilters)
                     }
                 }
             }
@@ -165,3 +230,56 @@ internal class SchemaDescriptor private constructor(
         }
     }
 }
+
+/**
+ * One field's index-params, decoded into the scalar slots the C-side
+ * `build_index_params` reads. The pure-KVM intermediate [flattenIndexParams]
+ * returns; [encode] lays its slots out across a schema's arrays, and
+ * [encodeIndexParams] packs it into the one-slot [SingleIndexDescriptor]
+ * arrays a runtime `createIndex` hands to the JNI layer. Non-applicable fields
+ * stay at their zero/empty defaults — matching the multi-field zero-fill.
+ *
+ * @param indexKind the [SchemaDescriptor.IndexKind] discriminator.
+ * @param m HNSW connectivity (HNSW only).
+ * @param efConstruction HNSW ef_construction (HNSW only).
+ * @param nList IVF n_list (IVF only).
+ * @param nIters IVF n_iters (IVF only).
+ * @param metric vector-index metric type (HNSW/IVF/FLAT).
+ * @param enableRangeOpt INVERT range-optimization flag (INVERT only).
+ * @param ftsTokenizer FTS tokenizer name; "" = keep C default (FTS only).
+ * @param ftsExtraParams FTS extra params; "" = keep C default (FTS only).
+ * @param ftsFilters FTS token-filter names, flat (FTS only).
+ */
+internal data class SingleIndexSlot(
+    val indexKind: Int,
+    val m: Int = 0,
+    val efConstruction: Int = 0,
+    val nList: Int = 0,
+    val nIters: Int = 0,
+    val metric: Int = 0,
+    val enableRangeOpt: Boolean = false,
+    val ftsTokenizer: String = "",
+    val ftsExtraParams: String = "",
+    val ftsFilters: List<String> = emptyList(),
+)
+
+/**
+ * The one-slot descriptor arrays a runtime `createIndex(field, params)` call
+ * hands to `nativeCreateIndex`. Each array is a SINGLE element (the one field's
+ * slot at [0]), matching the shape `nativeSchemaCreateAndOpen` consumes per
+ * field — so the shared JNI `build_index_params` reads them unchanged.
+ * Built by [SchemaDescriptor.encodeIndexParams] from a [SingleIndexSlot].
+ */
+internal data class SingleIndexDescriptor(
+    val indexKind: Int,
+    val indexM: IntArray,
+    val indexEfConstruction: IntArray,
+    val indexNList: IntArray,
+    val indexNIters: IntArray,
+    val indexMetric: IntArray,
+    val indexEnableRangeOpt: BooleanArray,
+    val ftsTokenizer: Array<String>,
+    val ftsExtraParams: Array<String>,
+    val ftsFilterNames: Array<String>,
+    val ftsFilterFieldIndices: IntArray,
+)
