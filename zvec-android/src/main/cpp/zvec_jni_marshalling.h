@@ -150,6 +150,23 @@ struct DocGuard {
     }
 };
 
+// Issue 04: wraps the per-doc result array the `_with_results` DML variants
+// return (zvec_collection_insert/update/upsert/delete_with_results). The array
+// is calloc'd by build_write_results (c_api.cc:846), with each slot's `message`
+// a separate copy_string allocation; the whole thing is freed in one call to
+// zvec_write_results_free(results, result_count). The guard runs on ANY exit
+// path — including a macro throw-return after the array is populated but before
+// we finish copying the per-doc messages out — so a result array can never leak.
+struct WriteResultsGuard {
+    zvec_write_result_t* results = nullptr;
+    size_t count = 0;
+    ~WriteResultsGuard() {
+        if (results) {
+            zvec_write_results_free(results, count);
+        }
+    }
+};
+
 // OptionsGuard closes the RAII gap that previously left options cleanup scattered
 // across 4 manual destroy-calls in nativeCreateAndOpen's error branches. Like the
 // other guards it runs on any exit path, including a macro throw-return.

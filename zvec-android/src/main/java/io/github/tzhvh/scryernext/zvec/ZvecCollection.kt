@@ -117,6 +117,152 @@ class ZvecCollection internal constructor(
         ZvecNative.nativeDelete(nativeHandle(), pk)
     }
 
+    // ---- Bulk writes (issue 04) -----------------------------------------
+    // The bulk surface always returns a per-doc [WriteResult]; a failed doc in a
+    // 500-file batch reports its index + code + detail instead of aborting the
+    // whole batch (Q10). The single-doc ops above throw; the bulk ops report.
+    //
+    // All suspend, no internal dispatcher hop (ADR 0007) — the caller owns the
+    // dispatcher and the cancellation boundary, exactly like the single-doc path.
+    //
+    // Empty batch short-circuit: an empty input returns
+    // `WriteResult(0, emptyList())` in Kotlin WITHOUT touching native. zvec's
+    // `_with_results` DML variants reject doc_count==0 with INVALID_ARGUMENT
+    // (c_api.cc:6380/6450/6520/6594) — but an empty batch is a no-op success,
+    // not an error, so the SDK must not forward it.
+
+    /**
+     * Bulk insert. Each element of [docs] builds one document via the typed
+     * [ZvecDocBuilder] DSL (same builder as [insert]). Returns a per-doc
+     * [WriteResult]: a doc whose pk already exists lands in [WriteResult.failures]
+     * with [ZvecErrorCode.ALREADY_EXISTS] rather than aborting the batch.
+     *
+     * An empty [docs] list is a no-op success: `WriteResult(0, emptyList())`.
+     *
+     * @throws ZvecException on an engine/argument-level failure (not a per-doc
+     *   one); per-doc failures are reported via the returned [WriteResult].
+     */
+    suspend fun insertAll(docs: List<ZvecDocBuilder.() -> Unit>): WriteResult =
+        writeBulk(docs, WriteOp.OP_INSERT)
+
+    /**
+     * Bulk upsert (insert-or-overwrite). Same shape as [insertAll]; per-doc
+     * failures (if any) land in [WriteResult.failures].
+     */
+    suspend fun upsertAll(docs: List<ZvecDocBuilder.() -> Unit>): WriteResult =
+        writeBulk(docs, WriteOp.OP_UPSERT)
+
+    /**
+     * Bulk update. Unlike [upsertAll], update fails a doc whose pk does NOT
+     * already exist (per-doc [ZvecErrorCode.NOT_FOUND] in [WriteResult.failures]).
+     * Otherwise identical shape.
+     */
+    suspend fun updateAll(docs: List<ZvecDocBuilder.() -> Unit>): WriteResult =
+        writeBulk(docs, WriteOp.OP_UPDATE)
+
+    /**
+     * Bulk delete by pk. A pk that does not exist lands in
+     * [WriteResult.failures] with [ZvecErrorCode.NOT_FOUND] rather than throwing.
+     * An empty [pks] list is a no-op success: `WriteResult(0, emptyList())`.
+     *
+     * @throws ZvecException on an engine/argument-level failure.
+     */
+    suspend fun deleteAll(pks: List<String>): WriteResult {
+        ensureNotClosed()
+        if (pks.isEmpty()) return WriteResult(0, emptyList())
+        val raw = ZvecNative.nativeDeleteAll(nativeHandle(), pks.toTypedArray())
+        return assembleWriteResult(pks.size, raw)
+    }
+
+    /**
+     * Delete every document matching [filter]. The [filter] is a SQL
+     * filter-expression subset (`title = 'x'`, `category = 'receipts'`, …) passed
+     * verbatim to the engine.
+     *
+     * **Returns `Unit`.** The C engine does not report a deleted count —
+     * `zvec_collection_delete_by_filter` (`c_api.h:3284`) has no count out-param
+     * (despite its doc-comment claiming one); `collection.cc:1633` returns only
+     * `Status::OK()`. Both reference bindings (Rust `Result<()>`, Go `error`)
+     * surface only an error. A `stats().docCount` before/after diff was
+     * considered and rejected: `stats()` is collection-global, and a concurrent
+     * SAF-ingestion insert during the diff would corrupt the count — even to
+     * negative. If you need the count, query it yourself around a quiescent
+     * window; the SDK will not pretend the engine provided one.
+     *
+     * **⚠ Injection.** [filter] is raw SQL-ish text. If any part of it is user
+     * input (a tag name, a collection id), it MUST be escaped first via
+     * `ZvecFilters.escapeFilterValue` (issue 08) — never interpolate a raw user
+     * value. Until 08 lands, only pass static, developer-controlled filters.
+     *
+     * @throws ZvecException on a malformed filter or any engine error.
+     */
+    suspend fun deleteByFilter(filter: String) {
+        ensureNotClosed()
+        ZvecNative.nativeDeleteByFilter(nativeHandle(), filter)
+    }
+
+    /**
+     * Build + run a bulk insert/upsert/update. Each builder lambda is materialized
+     * into its [DocDescriptor], the descriptors are re-packed into the per-doc
+     * parallel arrays-of-arrays [ZvecNative.nativeDocWriteBulk] consumes, the
+     * native call returns per-doc `(codes, messages)` parallel arrays, and
+     * [assembleWriteResult] folds them into a [WriteResult]. Empty [docs] is a
+     * no-op success (see class note: the C `_with_results` calls reject count==0).
+     */
+    private fun writeBulk(docs: List<ZvecDocBuilder.() -> Unit>, op: Int): WriteResult {
+        ensureNotClosed()
+        if (docs.isEmpty()) return WriteResult(0, emptyList())
+        val descs = Array(docs.size) { i -> ZvecDocBuilder().apply(docs[i]).build() }
+        val raw = ZvecNative.nativeDocWriteBulk(
+            handle = nativeHandle(),
+            op = op,
+            pks = Array(docs.size) { descs[it].pk },
+            fieldCounts = IntArray(docs.size) { descs[it].fieldCount },
+            fieldNames = Array(docs.size) { descs[it].fieldNames },
+            kinds = Array(docs.size) { descs[it].kinds },
+            scalarIndex = Array(docs.size) { descs[it].scalarIndex },
+            isNull = Array(docs.size) { descs[it].isNull },
+            longs = Array(docs.size) { descs[it].longs },
+            doubles = Array(docs.size) { descs[it].doubles },
+            bools = Array(docs.size) { descs[it].bools },
+            strings = Array(docs.size) { descs[it].strings },
+            f32Vecs = Array(docs.size) { descs[it].f32Vecs },
+            f16Vecs = Array(docs.size) { descs[it].f16Vecs },
+            i8Vecs = Array(docs.size) { descs[it].i8Vecs },
+        )
+        return assembleWriteResult(docs.size, raw)
+    }
+
+    /**
+     * Fold the native per-doc `(codes, messages)` parallel arrays into a
+     * [WriteResult]. `raw` is `Array<Any?>` = `[0]: IntArray codes, [1]:
+     * Array<String?> messages` (index-aligned to the input batch). Each non-OK
+     * code becomes a [DocWriteFailure] at its input index; [WriteResult.successCount]
+     * is the OK count (batch size minus failures). A per-doc code the enum
+     * doesn't know maps to [ZvecErrorCode.UNKNOWN] via [ZvecErrorCode.fromInt].
+     */
+    private fun assembleWriteResult(batchSize: Int, raw: Array<Any?>): WriteResult {
+        @Suppress("UNCHECKED_CAST")
+        val codes = raw[0] as IntArray
+        @Suppress("UNCHECKED_CAST")
+        val messages = raw[1] as Array<String?>
+        val failures = ArrayList<DocWriteFailure>(codes.size)
+        var success = 0
+        for (i in 0 until batchSize) {
+            val code = codes[i]
+            if (code == 0) {
+                success++
+            } else {
+                failures += DocWriteFailure(
+                    index = i,
+                    code = ZvecErrorCode.fromInt(code),
+                    detail = messages[i],
+                )
+            }
+        }
+        return WriteResult(successCount = success, failures = failures)
+    }
+
     /**
      * Minimal typed fetch for issue 03's round-trip test — the "scratch read
      * helper" the issue sanctions when 05 (the projection fetch surface) hasn't
@@ -173,6 +319,7 @@ class ZvecCollection internal constructor(
         // Mirror of the OP_* constants in zvec_jni_doc.cc.
         const val OP_INSERT = 0
         const val OP_UPSERT = 1
+        const val OP_UPDATE = 2
     }
 
     companion object {

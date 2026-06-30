@@ -139,6 +139,65 @@ object ZvecNative {
     // pk). Returns the pk on success; throws ZvecException on a per-doc non-OK code.
     @JvmStatic external fun nativeDelete(handle: Long, pk: String): String
 
+    // ---- Doc writes (issue 04: bulk + per-doc results) -------------------
+    // Bulk insert/upsert/update over a batch of docs, returning PER-DOC results
+    // (Q10) instead of throwing on the first failure. The JNI layer builds each
+    // zvec_doc_t from its DocDescriptor (the same per-field kind-switch as the
+    // single-doc path), packs the whole batch into one `const zvec_doc_t**`
+    // array, and calls the op-selected `_with_results` variant ONCE. It then
+    // walks the full results[] array (result index = input doc index, c_api.h:3144)
+    // under WriteResultsGuard, copying each per-doc code + message into the
+    // returned parallel arrays. An API-level non-OK throws ZvecException; a
+    // per-doc non-OK code is RETURNED (not thrown) so the SDK can assemble
+    // WriteResult.failures.
+    //
+    // CRITICAL: the empty-batch short-circuit happens in Kotlin (ZvecCollection)
+    // — zvec's `_with_results` calls reject doc_count==0 with INVALID_ARGUMENT
+    // (c_api.cc:6380/6450/6520/6594), so an empty batch MUST NOT reach native.
+    //
+    // Returns [0]=int[] per-doc codes (index-aligned to the input docs), [1]=
+    // String[] per-doc messages (nullable elements; null where the engine set
+    // none). The Kotlin side folds these into WriteResult(successCount, failures).
+    // op selects insert/upsert/update (mirrors nativeDocWrite's op).
+    //
+    // The descriptor arrays are PER-DOC parallel arrays-of-arrays (one slot per
+    // doc): pks[doc], fieldCounts[doc], fieldNames[doc] (String[][]), and the
+    // per-type value arrays[doc]. The JNI layer loops docs once, and for each
+    // loops its fields once — the same nested structure as nativeDocWrite, lifted
+    // one level. Not `internal` — same symbol-mangling caveat as nativeFetchTyped.
+    @JvmStatic external fun nativeDocWriteBulk(
+        handle: Long,
+        op: Int,
+        pks: Array<String>,
+        fieldCounts: IntArray,
+        fieldNames: Array<Array<String>>,
+        kinds: Array<IntArray>,
+        scalarIndex: Array<IntArray>,
+        isNull: Array<BooleanArray>,
+        longs: Array<LongArray>,
+        doubles: Array<DoubleArray>,
+        bools: Array<BooleanArray>,
+        strings: Array<Array<String>>,
+        f32Vecs: Array<Array<FloatArray>>,
+        f16Vecs: Array<Array<ShortArray>>,
+        i8Vecs: Array<Array<ByteArray>>,
+    ): Array<Any?>
+
+    // Bulk delete by pk via zvec_collection_delete_with_results. Same per-doc
+    // result discipline as nativeDocWriteBulk (NOT_FOUND per missing pk, returned
+    // not thrown). Returns [0]=int[] codes, [1]=String[] messages. Empty-list
+    // short-circuit happens in Kotlin.
+    @JvmStatic external fun nativeDeleteAll(handle: Long, pks: Array<String>): Array<Any?>
+
+    // Delete by filter via zvec_collection_delete_by_filter. Returns Unit: the C
+    // engine does NOT report a deleted count (c_api.h:3284 has no count out-param
+    // despite its doc-comment; collection.cc:1633 returns only Status::OK(); both
+    // the Rust and Go reference bindings surface only an error). A stats before/
+    // after diff was considered and rejected — it races the concurrent SAF
+    // ingestion worker and yields negative counts. Throws ZvecException on a
+    // non-OK engine code; otherwise returns nothing. See ZvecCollection's KDoc.
+    @JvmStatic external fun nativeDeleteByFilter(handle: Long, filter: String)
+
     // Minimal typed fetch for issue 03's round-trip test — the "scratch read
     // helper" the issue sanctions when 05 (the projection fetch surface) hasn't
     // landed. There is no zvec_doc_get_field_type, so the read getters need a

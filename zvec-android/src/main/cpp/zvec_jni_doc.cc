@@ -6,13 +6,11 @@
 #include <zvec/c_api.h>
 #include "zvec_jni_marshalling.h"
 
-// Issue 03: the single-doc write path (insert / upsert / delete) + a minimal
-// typed fetch read helper for the round-trip test.
-//
-// The builder's typed fields arrive as parallel primitive arrays (DocDescriptor
-// in Kotlin). This layer does ONE linear pass over them, building one zvec_doc_t
-// under DocGuard and dispatching each field to the single type-erased
-// zvec_doc_add_field_by_value call, computing its EXACT per-type byte size.
+// Issue 03 (single-doc write path) + issue 04 (bulk write path + per-doc
+// results). The single-doc and bulk paths share one doc-build routine so the
+// load-bearing per-field kind-switch (and its exact per-type byte-size contract)
+// lives in exactly one place — a new field type added later extends one switch,
+// not two.
 //
 // The byte-size contract is load-bearing: extract_scalar_value<T> (c_api.cc:2762)
 // rejects anything but value_size == sizeof(T), and extract_vector_values<T>
@@ -36,10 +34,11 @@ constexpr int KIND_VEC_F16 = 7;
 constexpr int KIND_VEC_I8 = 8;
 constexpr int KIND_NULL = 9;
 
-// Write op selector (mirror ZvecCollection's call sites). Insert vs. upsert
-// select different C _with_results variants over the same doc-build path.
+// Write op selector (mirror ZvecCollection's call sites). Insert / upsert /
+// update select different C _with_results variants over the same doc-build path.
 constexpr int OP_INSERT = 0;
 constexpr int OP_UPSERT = 1;
+constexpr int OP_UPDATE = 2;
 
 // Run the selected single-doc write via the `_with_results` variant and surface
 // the per-doc code. Returns the C per-doc code (ZVEC_OK on success); on a
@@ -47,6 +46,11 @@ constexpr int OP_UPSERT = 1;
 // zvec_collection_insert/upsert return ZVEC_OK even on per-doc failure (they
 // only bump error_count), so the `_with_results` variant is mandatory to get
 // the real ALREADY_EXISTS / NOT_FOUND / … code the SDK contract promises.
+//
+// Used only by the single-doc path (nativeDocWrite), whose contract is THROW on
+// any per-doc failure. The bulk path (nativeDocWriteBulk) does NOT throw on a
+// per-doc failure — it returns the per-doc results — so it dispatches + collects
+// directly rather than calling this.
 //
 // `message` is an out-param: the per-doc message is allocation-owned (copy_string
 // in build_write_results, c_api.cc:870) and freed with zvec_write_results_free;
@@ -96,53 +100,34 @@ zvec_error_code_t run_with_results(
   return per_doc_code;
 }
 
-struct DocsGuard {
-  zvec_doc_t** docs = nullptr;
-  size_t count = 0;
-  ~DocsGuard() {
-    if (docs) {
-      zvec_docs_free(docs, count);
-    }
-  }
-};
-
-} // namespace
-
-extern "C" {
-
-// Single-doc insert / upsert. Builds the zvec_doc_t from the DocDescriptor
-// arrays, dispatching each field to zvec_doc_add_field_by_value with its exact
-// byte size, then runs the `_with_results` write and surfaces the per-doc code.
-// Returns the written pk (a new jstring) on success; throws on any failure.
-JNIEXPORT jstring JNICALL
-Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeDocWrite(
-    JNIEnv* env, jclass,
-    jlong handle, jint jop, jstring jpk,
-    jint jfieldCount,
+// Build ONE zvec_doc_t from a single doc's descriptor slice (the per-field
+// kind-switch, faithful to the issue-03 single-doc path). Returns an OWNED doc
+// the caller must zvec_doc_destroy; returns null with a pending exception set on
+// any failure (the internal DocGuard frees the partially-built doc first).
+//
+// The eager-copy discipline (Rule 1: copy before touching zvec, no critical-
+// array pinning) and the exact per-type byte-size contract are identical to the
+// single-doc path — this is a mechanical extraction so the bulk path cannot
+// drift from the proven single-doc field handling. The macros
+// (ZVEC_CHECK_JNI_JINT / ZVEC_CHECK_PTR) all `return 0;`, which in a
+// zvec_doc_t*-returning function is `return nullptr;` — the guard then frees the
+// partial doc, so a mid-build failure leaks nothing.
+zvec_doc_t* build_doc(
+    JNIEnv* env,
+    const std::string& pk, jint n,
     jobjectArray jfieldNames, jintArray jkinds, jintArray jscalarIndex,
     jbooleanArray jisNull,
     jlongArray jlongs, jdoubleArray jdoubles, jbooleanArray jbools,
     jobjectArray jstrings,
     jobjectArray jf32Vecs, jobjectArray jf16Vecs, jobjectArray ji8Vecs) {
-
-  zvec_collection_t* col = reinterpret_cast<zvec_collection_t*>(handle);
-  if (!col) {
-    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Collection handle is null");
-    return nullptr;
-  }
-
-  std::string pk = jstring_to_std(env, jpk);
-  if (env->ExceptionCheck()) return nullptr;
-
-  // Bulk-copy the per-type value arrays once (eager copy, Rule 1: copy before
-  // touching zvec, release before the doc build). The fixed scalars use Get*Region
-  // into stack/sized buffers; vectors fetch per-field below.
-  jint n = jfieldCount;
   if (n < 0) {
     zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Negative field count");
     return nullptr;
   }
 
+  // Bulk-copy the per-type value arrays once (eager copy, Rule 1: copy before
+  // touching zvec, release before the doc build). The fixed scalars use
+  // Get*Region into sized buffers; vectors fetch per-field below.
   std::vector<jint> kinds(n), scalarIndex(n);
   std::vector<jboolean> isNull(n);
   if (n > 0) {
@@ -290,9 +275,358 @@ Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeDocWrite(
     }
   }
 
+  // Release ownership: the caller (single-doc path wraps it in a fresh DocGuard;
+  // the bulk path owns it and destroys it after the _with_results call).
+  doc_guard.d = nullptr;
+  return doc;
+}
+
+// Shared per-doc result collection for the bulk DML paths (insert/upsert/update
+// AND delete). Wraps the results array in WriteResultsGuard (freed on every exit
+// path, including a throw-return), throws ZvecException on an API-level non-OK
+// code, and otherwise copies EVERY per-doc (code, message) into the out-vectors.
+//
+// Does NOT throw on a per-doc non-OK — the bulk contract (Q10) returns per-doc
+// results so the SDK can assemble WriteResult.failures. result index == input
+// doc index (c_api.h:3144), so the caller's out-vectors stay index-aligned with
+// the input batch.
+//
+// `results`/`result_count` are the raw outputs of the `_with_results` call; this
+// function takes ownership of freeing them (via the guard).
+zvec_error_code_t collect_results(
+    JNIEnv* env, zvec_error_code_t api_code,
+    zvec_write_result_t* results, size_t result_count,
+    std::vector<int>& out_codes, std::vector<std::string>& out_messages) {
+  WriteResultsGuard guard{results, result_count};
+
+  if (api_code != ZVEC_OK) {
+    char* msg = nullptr;
+    zvec_get_last_error(&msg);
+    std::string s = msg ? msg : zvec_code_label(api_code);
+    if (msg) zvec_free(msg);
+    zvec_throw(env, api_code, s.c_str());
+    return api_code;
+  }
+
+  out_codes.resize(result_count);
+  out_messages.resize(result_count);
+  for (size_t i = 0; i < result_count; i++) {
+    out_codes[i] = static_cast<int>(results[i].code);
+    // An engine-null message is stored as an empty std::string; pack_write_results
+    // maps empty → a null Kotlin slot (DocWriteFailure.detail = null).
+    out_messages[i] = results[i].message ? results[i].message : std::string();
+  }
+  return api_code;
+}
+
+// Pack the per-doc (codes, messages) into the `Array<Any?>` the Kotlin
+// assembleWriteResult expects: [0] = IntArray, [1] = Array<String?>. An empty
+// message maps to a null String slot (engine set none); the index alignment is
+// preserved (result index == input doc index).
+jobjectArray pack_write_results(
+    JNIEnv* env, const std::vector<int>& codes,
+    const std::vector<std::string>& messages) {
+  jsize n = static_cast<jsize>(codes.size());
+
+  jintArray jcodes = env->NewIntArray(n);
+  if (!jcodes) return nullptr;
+  if (n > 0) env->SetIntArrayRegion(jcodes, 0, n, codes.data());
+  if (env->ExceptionCheck()) { env->DeleteLocalRef(jcodes); return nullptr; }
+
+  jclass str_class = env->FindClass("java/lang/String");
+  jobjectArray jmessages = env->NewObjectArray(n, str_class, nullptr);
+  if (!jmessages) { env->DeleteLocalRef(jcodes); return nullptr; }
+  for (jsize i = 0; i < n; i++) {
+    if (!messages[i].empty()) {
+      jstring jm = env->NewStringUTF(messages[i].c_str());
+      env->SetObjectArrayElement(jmessages, i, jm);
+      env->DeleteLocalRef(jm);
+      if (env->ExceptionCheck()) {
+        env->DeleteLocalRef(jcodes);
+        env->DeleteLocalRef(jmessages);
+        return nullptr;
+      }
+    }
+    // Empty message → leave the slot null (Kotlin maps it to detail = null).
+  }
+
+  jclass obj_class = env->FindClass("java/lang/Object");
+  jobjectArray result = env->NewObjectArray(2, obj_class, nullptr);
+  if (!result) { env->DeleteLocalRef(jcodes); env->DeleteLocalRef(jmessages); return nullptr; }
+  env->SetObjectArrayElement(result, 0, jcodes);
+  env->SetObjectArrayElement(result, 1, jmessages);
+  env->DeleteLocalRef(jcodes);
+  env->DeleteLocalRef(jmessages);
+  return result;
+}
+
+struct DocsGuard {
+  zvec_doc_t** docs = nullptr;
+  size_t count = 0;
+  ~DocsGuard() {
+    if (docs) {
+      zvec_docs_free(docs, count);
+    }
+  }
+};
+
+// Bulk input-doc cleanup. The C `_with_results` calls do NOT take ownership of
+// the input docs (the Rust oracle's Doc Drop calls zvec_doc_destroy itself), so
+// the bulk path owns each built doc and must destroy it after the call — on the
+// success path AND the throw-return path. This guard runs on any scope exit.
+struct BuiltDocsGuard {
+  std::vector<zvec_doc_t*> docs;
+  ~BuiltDocsGuard() {
+    for (zvec_doc_t* d : docs) {
+      if (d) zvec_doc_destroy(d);
+    }
+  }
+};
+
+} // namespace
+
+extern "C" {
+
+// Single-doc insert / upsert. Builds the zvec_doc_t via the shared build_doc
+// helper (the per-field kind-switch), then runs the `_with_results` write and
+// surfaces the per-doc code. Returns the written pk (a new jstring) on success;
+// throws on any failure.
+JNIEXPORT jstring JNICALL
+Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeDocWrite(
+    JNIEnv* env, jclass,
+    jlong handle, jint jop, jstring jpk,
+    jint jfieldCount,
+    jobjectArray jfieldNames, jintArray jkinds, jintArray jscalarIndex,
+    jbooleanArray jisNull,
+    jlongArray jlongs, jdoubleArray jdoubles, jbooleanArray jbools,
+    jobjectArray jstrings,
+    jobjectArray jf32Vecs, jobjectArray jf16Vecs, jobjectArray ji8Vecs) {
+
+  zvec_collection_t* col = reinterpret_cast<zvec_collection_t*>(handle);
+  if (!col) {
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Collection handle is null");
+    return nullptr;
+  }
+
+  std::string pk = jstring_to_std(env, jpk);
+  if (env->ExceptionCheck()) return nullptr;
+
+  zvec_doc_t* doc = build_doc(env, pk, jfieldCount, jfieldNames, jkinds,
+                              jscalarIndex, jisNull, jlongs, jdoubles, jbools,
+                              jstrings, jf32Vecs, jf16Vecs, ji8Vecs);
+  if (env->ExceptionCheck() || !doc) return nullptr;
+
+  DocGuard doc_guard{doc};
+
   std::string message;
   ZVEC_CHECK_JNI_JINT(env, run_with_results(env, col, jop, doc, message));
   return env->NewStringUTF(pk.c_str());
+}
+
+// Bulk insert / upsert / update over a batch of docs, returning PER-DOC results
+// (Q10) instead of throwing on the first failure. Each doc's descriptor slice is
+// extracted from the per-doc sub-arrays, built via the shared build_doc, packed
+// into one `const zvec_doc_t**` batch, and the op-selected `_with_results`
+// variant is called ONCE. The per-doc results[] array is then walked (result
+// index == input doc index) and copied into the returned parallel arrays.
+//
+// An API-level non-OK throws ZvecException; a per-doc non-OK code is RETURNED
+// (not thrown) so the SDK can assemble WriteResult.failures. The empty-batch
+// short-circuit lives in Kotlin (zvec rejects doc_count==0 with INVALID_ARGUMENT,
+// c_api.cc:6380/6450/6520) — this native function is never called with 0 docs.
+//
+// Returns `Array<Any?>` = [0]: IntArray per-doc codes, [1]: Array<String?>
+// per-doc messages (null slots where the engine set none). null on a throw.
+JNIEXPORT jobjectArray JNICALL
+Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeDocWriteBulk(
+    JNIEnv* env, jclass,
+    jlong handle, jint jop,
+    jobjectArray jpks,
+    jintArray jfieldCounts,
+    jobjectArray jfieldNames, jobjectArray jkinds, jobjectArray jscalarIndex,
+    jobjectArray jisNull,
+    jobjectArray jlongs, jobjectArray jdoubles, jobjectArray jbools,
+    jobjectArray jstrings,
+    jobjectArray jf32Vecs, jobjectArray jf16Vecs, jobjectArray ji8Vecs) {
+
+  zvec_collection_t* col = reinterpret_cast<zvec_collection_t*>(handle);
+  if (!col) {
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Collection handle is null");
+    return nullptr;
+  }
+
+  jsize doc_count = env->GetArrayLength(jpks);
+  if (env->ExceptionCheck()) return nullptr;
+  // doc_count == 0 is short-circuited in Kotlin; defend in depth anyway.
+  if (doc_count == 0) {
+    std::vector<int> codes;
+    std::vector<std::string> messages;
+    return pack_write_results(env, codes, messages);
+  }
+
+  std::vector<jint> fieldCounts(doc_count);
+  env->GetIntArrayRegion(jfieldCounts, 0, doc_count, fieldCounts.data());
+  if (env->ExceptionCheck()) return nullptr;
+
+  // Build every doc into the batch. BuiltDocsGuard owns them and destroys them
+  // on any exit path (the _with_results call does not take input ownership).
+  BuiltDocsGuard built;
+  built.docs.reserve(doc_count);
+  std::vector<const zvec_doc_t*> doc_ptrs(doc_count);
+
+  for (jsize d = 0; d < doc_count; d++) {
+    // pk for this doc.
+    jstring jpk = static_cast<jstring>(env->GetObjectArrayElement(jpks, d));
+    if (env->ExceptionCheck()) return nullptr;
+    std::string pk = jstring_to_std(env, jpk);
+    env->DeleteLocalRef(jpk);
+    if (env->ExceptionCheck()) return nullptr;
+
+    // Extract this doc's descriptor sub-arrays (each is one row of the
+    // array-of-arrays). Held as local refs, released after build_doc.
+    jobjectArray jfieldNames_d =
+        static_cast<jobjectArray>(env->GetObjectArrayElement(jfieldNames, d));
+    jintArray jkinds_d =
+        static_cast<jintArray>(env->GetObjectArrayElement(jkinds, d));
+    jintArray jscalarIndex_d =
+        static_cast<jintArray>(env->GetObjectArrayElement(jscalarIndex, d));
+    jbooleanArray jisNull_d =
+        static_cast<jbooleanArray>(env->GetObjectArrayElement(jisNull, d));
+    jlongArray jlongs_d =
+        static_cast<jlongArray>(env->GetObjectArrayElement(jlongs, d));
+    jdoubleArray jdoubles_d =
+        static_cast<jdoubleArray>(env->GetObjectArrayElement(jdoubles, d));
+    jbooleanArray jbools_d =
+        static_cast<jbooleanArray>(env->GetObjectArrayElement(jbools, d));
+    jobjectArray jstrings_d =
+        static_cast<jobjectArray>(env->GetObjectArrayElement(jstrings, d));
+    jobjectArray jf32Vecs_d =
+        static_cast<jobjectArray>(env->GetObjectArrayElement(jf32Vecs, d));
+    jobjectArray jf16Vecs_d =
+        static_cast<jobjectArray>(env->GetObjectArrayElement(jf16Vecs, d));
+    jobjectArray ji8Vecs_d =
+        static_cast<jobjectArray>(env->GetObjectArrayElement(ji8Vecs, d));
+    if (env->ExceptionCheck()) return nullptr;
+
+    zvec_doc_t* doc = build_doc(env, pk, fieldCounts[d], jfieldNames_d, jkinds_d,
+                                jscalarIndex_d, jisNull_d, jlongs_d, jdoubles_d,
+                                jbools_d, jstrings_d, jf32Vecs_d, jf16Vecs_d,
+                                ji8Vecs_d);
+
+    env->DeleteLocalRef(jfieldNames_d);
+    env->DeleteLocalRef(jkinds_d);
+    env->DeleteLocalRef(jscalarIndex_d);
+    env->DeleteLocalRef(jisNull_d);
+    env->DeleteLocalRef(jlongs_d);
+    env->DeleteLocalRef(jdoubles_d);
+    env->DeleteLocalRef(jbools_d);
+    env->DeleteLocalRef(jstrings_d);
+    env->DeleteLocalRef(jf32Vecs_d);
+    env->DeleteLocalRef(jf16Vecs_d);
+    env->DeleteLocalRef(ji8Vecs_d);
+    if (env->ExceptionCheck() || !doc) return nullptr;
+
+    built.docs.push_back(doc);
+    doc_ptrs[d] = doc;
+  }
+
+  // Dispatch the op-selected `_with_results` variant over the whole batch at
+  // once (NOT per-doc — the batch is one C call).
+  zvec_write_result_t* results = nullptr;
+  size_t result_count = 0;
+  zvec_error_code_t api_code;
+  switch (jop) {
+    case OP_UPSERT:
+      api_code = zvec_collection_upsert_with_results(
+          col, doc_ptrs.data(), static_cast<size_t>(doc_count), &results, &result_count);
+      break;
+    case OP_UPDATE:
+      api_code = zvec_collection_update_with_results(
+          col, doc_ptrs.data(), static_cast<size_t>(doc_count), &results, &result_count);
+      break;
+    default:  // OP_INSERT
+      api_code = zvec_collection_insert_with_results(
+          col, doc_ptrs.data(), static_cast<size_t>(doc_count), &results, &result_count);
+      break;
+  }
+
+  std::vector<int> codes;
+  std::vector<std::string> messages;
+  ZVEC_CHECK_JNI_JINT(env,
+      collect_results(env, api_code, results, result_count, codes, messages));
+  // BuiltDocsGuard frees the input docs at scope exit (collect_results already
+  // freed the results array via its WriteResultsGuard).
+  return pack_write_results(env, codes, messages);
+}
+
+// Bulk delete by pk via zvec_collection_delete_with_results. Same per-doc result
+// discipline as nativeDocWriteBulk: a missing pk surfaces as a per-doc NOT_FOUND
+// in the returned codes (NOT thrown). Empty-list short-circuit lives in Kotlin.
+// Returns `Array<Any?>` = [0]: IntArray codes, [1]: Array<String?> messages.
+JNIEXPORT jobjectArray JNICALL
+Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeDeleteAll(
+    JNIEnv* env, jclass, jlong handle, jobjectArray jpks) {
+
+  zvec_collection_t* col = reinterpret_cast<zvec_collection_t*>(handle);
+  if (!col) {
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Collection handle is null");
+    return nullptr;
+  }
+
+  jsize n = env->GetArrayLength(jpks);
+  if (env->ExceptionCheck()) return nullptr;
+  if (n == 0) {
+    std::vector<int> codes;
+    std::vector<std::string> messages;
+    return pack_write_results(env, codes, messages);
+  }
+
+  // Copy pks into std::strings (owning) and collect const char* pointers for the
+  // C call. The std::strings must outlive the call.
+  std::vector<std::string> pks(n);
+  std::vector<const char*> pk_ptrs(n);
+  for (jsize i = 0; i < n; i++) {
+    jstring jpk = static_cast<jstring>(env->GetObjectArrayElement(jpks, i));
+    if (env->ExceptionCheck()) return nullptr;
+    pks[i] = jstring_to_std(env, jpk);
+    env->DeleteLocalRef(jpk);
+    if (env->ExceptionCheck()) return nullptr;
+    pk_ptrs[i] = pks[i].c_str();
+  }
+
+  zvec_write_result_t* results = nullptr;
+  size_t result_count = 0;
+  zvec_error_code_t api_code = zvec_collection_delete_with_results(
+      col, pk_ptrs.data(), static_cast<size_t>(n), &results, &result_count);
+
+  std::vector<int> codes;
+  std::vector<std::string> messages;
+  ZVEC_CHECK_JNI_JINT(env,
+      collect_results(env, api_code, results, result_count, codes, messages));
+  return pack_write_results(env, codes, messages);
+}
+
+// Delete by filter via zvec_collection_delete_by_filter. Returns void: the C
+// engine does NOT report a deleted count (c_api.h:3284 has no count out-param
+// despite its doc-comment; collection.cc:1633 returns only Status::OK(); the
+// Rust and Go reference bindings surface only an error). A stats before/after
+// diff was rejected — it races concurrent SAF ingestion and yields negative
+// counts. Throws ZvecException on a non-OK engine code; the KDoc lives on
+// ZvecCollection.deleteByFilter (incl. the injection/escape cross-link).
+JNIEXPORT void JNICALL
+Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeDeleteByFilter(
+    JNIEnv* env, jclass, jlong handle, jstring jfilter) {
+
+  zvec_collection_t* col = reinterpret_cast<zvec_collection_t*>(handle);
+  if (!col) {
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Collection handle is null");
+    return;
+  }
+
+  std::string filter = jstring_to_std(env, jfilter);
+  if (env->ExceptionCheck()) return;
+
+  ZVEC_CHECK_JNI_VOID(env, zvec_collection_delete_by_filter(col, filter.c_str()));
 }
 
 // Single-doc delete via zvec_collection_delete_with_results. The bare
