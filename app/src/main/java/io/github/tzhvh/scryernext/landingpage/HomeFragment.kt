@@ -25,8 +25,6 @@ import androidx.appcompat.widget.SearchView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LiveData
-import androidx.lifecycle.Observer
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
@@ -37,6 +35,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.combine
 import io.github.tzhvh.scryernext.*
 import io.github.tzhvh.scryernext.databinding.FragmentHomeBinding
 import io.github.tzhvh.scryernext.databinding.ViewQuickAccessBinding
@@ -45,6 +44,10 @@ import io.github.tzhvh.scryernext.detailpage.DetailPageActivity
 import io.github.tzhvh.scryernext.detailpage.GraphicOverlay
 import io.github.tzhvh.scryernext.extension.navigateSafely
 import io.github.tzhvh.scryernext.filemonitor.ScreenshotFetcher
+import io.github.tzhvh.scryernext.ingestion.IngestionConfig
+import io.github.tzhvh.scryernext.ingestion.Progress
+import io.github.tzhvh.scryernext.ingestion.triggers.BannerMode
+import io.github.tzhvh.scryernext.ingestion.triggers.bannerMode
 import io.github.tzhvh.scryernext.permission.PermissionFlow
 import io.github.tzhvh.scryernext.permission.PermissionHelper
 import io.github.tzhvh.scryernext.persistence.CollectionModel
@@ -53,7 +56,6 @@ import io.github.tzhvh.scryernext.persistence.SuggestCollectionHelper
 import io.github.tzhvh.scryernext.preference.PreferenceWrapper
 import io.github.tzhvh.scryernext.promote.PromoteRatingHelper
 import io.github.tzhvh.scryernext.promote.PromoteShareHelper
-import io.github.tzhvh.scryernext.scan.ContentScanner
 import io.github.tzhvh.scryernext.setting.SettingsActivity
 import io.github.tzhvh.scryernext.sortingpanel.SortingPanelActivity
 import io.github.tzhvh.scryernext.ui.BottomDialogFactory
@@ -73,6 +75,11 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
 
         private const val PREF_SHOW_NEW_SCREENSHOT_DIALOG = "show_new_screenshot_dialog"
         private const val PREF_SHOW_ENABLE_SERVICE_DIALOG = "show_enable_service_dialog"
+
+        /** Banner SUCCESS dwell: how long the "Indexing complete ✓" state shows before the banner
+         *  re-evaluates against the live backlog. Tuned long enough to read, short enough that the
+         *  "done" claim (only true at the instant of completion) isn't held as a potential lie. */
+        private const val SUCCESS_DWELL_MS = 4000L
     }
 
     private val fragmentJob = Job()
@@ -91,6 +98,26 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
 
     private lateinit var permissionFlow: PermissionFlow
     private var welcomeView: View? = null
+
+    /**
+     * Issue 18: in-memory snooze for the idle-backlog banner nudge (Mode A). Set on "Snooze", reset
+     * only by process death. Deliberately NOT persisted — a persisted snooze is a poison-pill-shaped
+     * footgun (a forgotten snooze hides a growing backlog forever). The system discovery
+     * notification remains the persistent nudge; this flag only respects the attention budget within
+     * one sitting. See [`PHASE3_DESIGN_DECISIONS.md`](file:///.scratch/ingestion/PHASE3_DESIGN_DECISIONS.md) §5.
+     */
+    private var bannerSnoozedForSession: Boolean = false
+
+    /**
+     * Transient "just completed" flag for the banner SUCCESS state. Set when [renderBanner] observes
+     * [Progress.Completed], cleared after a ~4s dwell by a lifecycle-scoped coroutine. The "done"
+     * claim is only true at the instant the job finished — every second after, new files could land
+     * — so SUCCESS is deliberately short; after the dwell the banner re-evaluates against the live
+     * `backlog` (HIDDEN if empty, IDLE_BACKLOG with the new count if not). If the fragment pauses or
+     * destroys mid-dwell, the coroutine is cancelled and this resets — next STARTED recomputes.
+     */
+    private var bannerJustCompleted: Boolean = false
+    private var successDismissJob: kotlinx.coroutines.Job? = null
 
     private var permissionDialog: BottomSheetDialog? = null
 
@@ -145,6 +172,7 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         initQuickAccessList(view.context)
         initCollectionList(view.context)
+        initIngestionBanner()
     }
 
     override fun onActivityCreated(savedInstanceState: Bundle?) {
@@ -176,6 +204,141 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
     override fun onDestroy() {
         fragmentJob.cancel()
         super.onDestroy()
+    }
+
+    // ---------------------------------------------------------------------- Issue 18: in-app banner
+
+    /**
+     * Issue 18: the in-app ingestion banner — the landing-screen mirror of the discovery
+     * notification. Mounts above the grid; one component, two states (Mode A nudge / Mode B status).
+     * Mirrors the existing `repeatOnLifecycle(STARTED)` precedent (initQuickAccessList/initCollectionList);
+     * reads the app-scope store + session via the static accessors (no cast/ViewModel — the
+     * codebase convention). The visibility *decision* is the pure [bannerMode] helper; this is the
+     * view-binding + lifecycle plumbing that can't run on the JVM.
+     *
+     * Observed sources (combined so a single re-emit re-renders atomically):
+     * - `session.isSessionPending()` — the union of in-memory `Indexing` and WorkInfo state.
+     * - `store.backlog` — the unindexed count (drives Mode A).
+     * - `store.progress` — the live state (Mode B reads `Indexing.current/total`, else cosmetic
+     *   continuity via `session.loadCosmetic()`).
+     */
+    private fun initIngestionBanner() {
+        val session = ScryerApplication.getIngestionSession()
+        val store = ScryerApplication.getIngestionProgressStore()
+
+        binding.ingestionBannerActionIndex.setOnClickListener { session.startBulk() }
+        binding.ingestionBannerActionSnooze.setOnClickListener {
+            // In-memory only; reset by process death. Suppresses Mode A, never Mode B.
+            bannerSnoozedForSession = true
+            renderBanner(store.progress.value)
+        }
+        binding.ingestionBannerActionStop.setOnClickListener { session.abort() }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                combine(
+                    session.isSessionPending(),
+                    store.backlog,
+                    store.progress
+                ) { pending, backlog, progress -> Triple(pending, backlog, progress) }
+                    .collect { (pending, backlog, progress) ->
+                        // Arm the SUCCESS dwell when we observe a terminal Completed transition.
+                        // The "done" claim is only true at the instant of completion, so SUCCESS is
+                        // a transient overlay — the 4s coroutine clears bannerJustCompleted and the
+                        // banner re-evaluates against the live backlog. Guarded so a re-emit of an
+                        // already-Completed value (e.g. config change) doesn't re-arm a stale dwell.
+                        if (progress is Progress.Completed && !bannerJustCompleted && successDismissJob == null) {
+                            bannerJustCompleted = true
+                            successDismissJob = viewLifecycleOwner.lifecycleScope.launch {
+                                kotlinx.coroutines.delay(SUCCESS_DWELL_MS)
+                                bannerJustCompleted = false
+                                successDismissJob = null
+                                renderBanner(store.progress.value)
+                            }
+                        }
+                        renderBanner(pending, backlog, progress)
+                    }
+            }
+        }
+    }
+
+    /**
+     * Render the banner for the latest observed state. Overloads resolve to the same logic; the
+     * `(pending, backlog, progress)` form is the combined-collect path, and the `(progress)` form
+     * is the snooze-tap / success-dwell path (re-renders from the current values without
+     * re-collecting).
+     */
+    private fun renderBanner(pending: Boolean, backlog: Int, progress: Progress) {
+        val mode = bannerMode(
+            pending = pending,
+            backlog = backlog,
+            threshold = IngestionConfig.BACKLOG_THRESHOLD,
+            snoozed = bannerSnoozedForSession,
+            justCompleted = bannerJustCompleted
+        )
+        when (mode) {
+            BannerMode.HIDDEN -> {
+                binding.ingestionBanner.visibility = View.GONE
+            }
+            BannerMode.IDLE_BACKLOG -> {
+                binding.ingestionBanner.visibility = View.VISIBLE
+                binding.ingestionBannerTitle.text =
+                    getString(R.string.discovery_notification_text, backlog)
+                binding.ingestionBannerProgress.visibility = View.GONE
+                binding.ingestionBannerActionIndex.visibility = View.VISIBLE
+                binding.ingestionBannerActionSnooze.visibility = View.VISIBLE
+                binding.ingestionBannerActionStop.visibility = View.GONE
+            }
+            BannerMode.ACTIVE -> {
+                binding.ingestionBanner.visibility = View.VISIBLE
+                binding.ingestionBannerTitle.text = getString(R.string.ingestion_notification_title)
+                // Mode B reads current/total from a live Indexing event, or falls back to the
+                // persisted cosmetic numerics for cross-resurrection continuity (issue 14a).
+                val indexing = progress as? Progress.Indexing
+                if (indexing != null && indexing.total > 0) {
+                    binding.ingestionBannerProgress.visibility = View.VISIBLE
+                    binding.ingestionBannerProgress.text =
+                        getString(R.string.ingestion_notification_progress, indexing.current, indexing.total)
+                } else {
+                    val cosmetic = ScryerApplication.getIngestionSession().loadCosmetic()
+                    if (cosmetic != null && cosmetic.sessionStartTotal > 0) {
+                        binding.ingestionBannerProgress.visibility = View.VISIBLE
+                        binding.ingestionBannerProgress.text = getString(
+                            R.string.ingestion_notification_progress,
+                            cosmetic.doneCount,
+                            cosmetic.sessionStartTotal
+                        )
+                    } else {
+                        binding.ingestionBannerProgress.visibility = View.GONE
+                    }
+                }
+                binding.ingestionBannerActionIndex.visibility = View.GONE
+                binding.ingestionBannerActionSnooze.visibility = View.GONE
+                binding.ingestionBannerActionStop.visibility = View.VISIBLE
+            }
+            BannerMode.SUCCESS -> {
+                // Transient terminal state: no actions (nothing to index/stop), progress line
+                // hidden. Auto-dismissed by the successDismissJob coroutine; if a new backlog
+                // appeared during the dwell, the dwell finishes first then re-evaluates to
+                // IDLE_BACKLOG with the fresh count (deliberate: confirmation then re-prompt).
+                binding.ingestionBanner.visibility = View.VISIBLE
+                binding.ingestionBannerTitle.text = getString(R.string.ingestion_banner_success)
+                binding.ingestionBannerProgress.visibility = View.GONE
+                binding.ingestionBannerActionIndex.visibility = View.GONE
+                binding.ingestionBannerActionSnooze.visibility = View.GONE
+                binding.ingestionBannerActionStop.visibility = View.GONE
+            }
+        }
+    }
+
+    /** Snooze-tap re-render: re-evaluate from the latest store values (no fresh collect needed). */
+    private fun renderBanner(progress: Progress) {
+        val store = ScryerApplication.getIngestionProgressStore()
+        renderBanner(
+            pending = store.progress.value is Progress.Indexing,
+            backlog = store.backlog.value,
+            progress = progress
+        )
     }
 
     override fun onCreateOptionsMenu(menu: Menu, inflater: MenuInflater) {
@@ -468,30 +631,8 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
                 Navigation.findNavController(view!!).navigateSafely(R.id.MainFragment,
                         R.id.action_navigate_to_full_text_search,
                         Bundle())
-
-                ScryerApplication.getContentScanner().getProgressState().observeOnce(
-                        io.github.tzhvh.scryernext.Observer {
-                            val progress: Int = if (it is ContentScanner.ProgressState.Progress) {
-                                if (it.total != 0) {
-                                    (it.current / (it.total.toFloat()) * 100).toInt()
-                                } else {
-                                    100
-                                }
-                            } else {
-                                0
-                            }
-                        })
             }
         }
-    }
-
-    private fun <T> LiveData<T>.observeOnce(observer: Observer<T>) {
-        observeForever(object : Observer<T> {
-            override fun onChanged(t: T) {
-                removeObserver(this)
-                observer.onChanged(t)
-            }
-        })
     }
 
     private fun initQuickAccessList(context: Context) {

@@ -26,12 +26,92 @@
         app:navigationIcon="@null"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <!-- Issue 18: in-app ingestion banner. One container, two states (button-visibility swap,
+         not two containers — sharing a dismiss between the idle nudge and the active session is a
+         footgun). Mode A (idle + backlog > threshold): title + Index now + Snooze. Mode B (session
+         active): title + progress subtitle + Stop. Mounts above the grid; constraintTop is
+         re-chained in HomeFragment.renderBanner(). default visibility=gone. -->
+    <LinearLayout
+        android:id="@+id/ingestion_banner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@color/primaryTeal"
+        android:paddingStart="@dimen/common_padding_16dp"
+        android:paddingEnd="@dimen/common_padding_16dp"
+        android:paddingTop="@dimen/common_padding_12dp"
+        android:paddingBottom="@dimen/common_padding_12dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/toolbar">
+
+        <TextView
+            android:id="@+id/ingestion_banner_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/white"
+            android:textStyle="bold"
+            android:text="@string/ingestion_notification_title"
+            tools:text="Indexing screenshots" />
+
+        <TextView
+            android:id="@+id/ingestion_banner_progress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/common_padding_8dp"
+            android:textColor="@color/white"
+            android:visibility="gone"
+            tools:text="Analyzing 12 of 842" />
+
+        <LinearLayout
+            android:id="@+id/ingestion_banner_actions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/common_padding_8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/ingestion_banner_action_index"
+                style="@android:style/Widget.DeviceDefault.Button.Borderless"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="0dp"
+                android:paddingStart="@dimen/common_padding_8dp"
+                android:paddingEnd="@dimen/common_padding_8dp"
+                android:textColor="@color/white"
+                android:text="@string/notification_action_index" />
+
+            <Button
+                android:id="@+id/ingestion_banner_action_snooze"
+                style="@android:style/Widget.DeviceDefault.Button.Borderless"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/common_padding_8dp"
+                android:minWidth="0dp"
+                android:paddingStart="@dimen/common_padding_8dp"
+                android:paddingEnd="@dimen/common_padding_8dp"
+                android:textColor="@color/white"
+                android:text="@string/notification_action_snooze" />
+
+            <Button
+                android:id="@+id/ingestion_banner_action_stop"
+                style="@android:style/Widget.DeviceDefault.Button.Borderless"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/common_padding_8dp"
+                android:minWidth="0dp"
+                android:paddingStart="@dimen/common_padding_8dp"
+                android:paddingEnd="@dimen/common_padding_8dp"
+                android:textColor="@color/white"
+                android:text="@string/notification_action_stop" />
+        </LinearLayout>
+    </LinearLayout>
+
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/main_list"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:background="@color/home_background"
-        app:layout_constraintTop_toBottomOf="@id/toolbar"
+        app:layout_constraintTop_toBottomOf="@id/ingestion_banner"
         app:layout_constraintBottom_toBottomOf="parent" />
 
     <androidx.recyclerview.widget.RecyclerView
@@ -39,7 +119,7 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:visibility="gone"
-        app:layout_constraintTop_toBottomOf="@id/toolbar"
+        app:layout_constraintTop_toBottomOf="@id/ingestion_banner"
         app:layout_constraintBottom_toBottomOf="parent" />
 
     <ViewStub

@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <!-- Issue 23: notification permission (Android 13+) for ScryerService's capture-result
          notifications. The foreground-service notification itself is exempt by type, but the
@@ -78,8 +79,22 @@
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
 
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
 
-
+        <!-- Issue 13: entry point for DiscoveryWorker's notification actions ("Index now"
+             enqueues the bulk IngestionWorker; "Snooze" dismisses). Fire-and-forget, no UI.
+             Not exported — reachable only via the app's own notification PendingIntents. -->
+        <receiver
+            android:name="io.github.tzhvh.scryernext.ingestion.triggers.DiscoveryActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="io.github.tzhvh.scryernext.ingestion.action.INDEX_NOW" />
+                <action android:name="io.github.tzhvh.scryernext.ingestion.action.SNOOZE" />
+            </intent-filter>
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"

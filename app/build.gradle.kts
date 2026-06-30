@@ -142,4 +142,6 @@ dependencies {
     testImplementation(libs.mockito.core)
     androidTestImplementation(libs.test.runner)
     androidTestImplementation(libs.espresso.core)
+    // WorkManager on-device testing (issue 12/13/14 device smoke).
+    androidTestImplementation(libs.work.testing)
 }

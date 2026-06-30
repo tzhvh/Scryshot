@@ -9,6 +9,8 @@
   <string name="notification_action_capture">Ketuk untuk mengambil cuplikan layar</string>
   <string name="notification_action_open">Buka aplikasi</string>
   <string name="notification_action_stop">Hentikan</string>
+  <string name="notification_action_index">Indeks sekarang</string>
+  <string name="notification_action_snooze">Tunda</string>
   <string name="notification_action_collect_title">Cuplikan layar baru</string>
   <string name="notification_action_collect">Ketuk untuk mengelompokkan cuplikan layar</string>
   <string name="multisorting_action_next">Selanjutnya</string>

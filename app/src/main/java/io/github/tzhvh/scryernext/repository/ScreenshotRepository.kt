@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.Flow
 import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotContentModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
+import io.github.tzhvh.scryernext.ingestion.Candidate
 
 interface ScreenshotRepository {
     companion object Factory {
@@ -42,6 +43,31 @@ interface ScreenshotRepository {
     fun getScreenshotContent(): Flow<List<ScreenshotContentModel>>
     suspend fun updateScreenshotContent(screenshotContent: ScreenshotContentModel)
     suspend fun getContentText(screenshot: ScreenshotModel): String?
+
+    /**
+     * Has this candidate's content already been ingested? (ADR 0004 §3.)
+     *
+     * Identity resolution lives here, on the repository — the engine never resolves identity itself.
+     * - If [Candidate.identity] is non-null (a producer pre-computed it, e.g. the SAF I/O-pool pre-hashed),
+     *   reuse it directly — no re-derivation, no double-I/O.
+     * - If [Candidate.identity] is null, the repository falls back to its own identity model: locator/URI lookup
+     *   under Room; content_hash (computed from [Candidate.byteHandle] if needed) under zvec.
+     *
+     * `suspend` because the zvec-era content-hash computation streams bytes and can throw / be cancelled; a plain
+     * `fun: Boolean` would foreclose that. This signature is the contract that survives the Room→zvec transition.
+     *
+     * "known" means `processed = true` (an indexed record), and the implementation
+     * (`ScreenshotDatabaseRepository.isKnown` + `dbKeysByLocator`) honours the `processed`-aware
+     * query.
+     */
+    suspend fun isKnown(candidate: Candidate): Boolean
+
+    suspend fun getUnprocessedScreenshotList(): List<ScreenshotModel>
+
+    suspend fun getUnprocessedCount(): Int
+
+    /** Issue 11/#4: lookup a screenshot by its `uri` locator (cheap indexed query). */
+    suspend fun getScreenshotByUri(uri: String): ScreenshotModel?
 
     suspend fun setupDefaultContent(context: Context)
 }

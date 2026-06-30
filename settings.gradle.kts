@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Scryshot"
 include(":app")
+include(":zvec-android")

@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import io.github.tzhvh.scryernext.R
 import io.github.tzhvh.scryernext.persistence.*
+import io.github.tzhvh.scryernext.ingestion.Candidate
 
 class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : ScreenshotRepository {
 
@@ -31,7 +32,7 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
             return ScreenshotDatabaseRepository(
                     Room.databaseBuilder(context.applicationContext, ScreenshotDatabase::class.java,
                             "screenshot-db")
-                            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                             .addCallback(callback)
                             .build()
             )
@@ -58,7 +59,7 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
          * scoped storage, so the table is wiped and recreated rather than transformed. This is a
          * personal fork with no users to migrate; zvec treats path/URI as an opaque locator.
          */
-        private val MIGRATION_2_3 = object : Migration(2, 3) {
+         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 // Drop old screenshot artifacts (table, indices, FTS content) and let Room
                 // recreate the v3 schema from the @Entity definitions on first access.
@@ -75,6 +76,15 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
                 )
                 database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_screenshot_uri` ON `screenshot` (`uri`)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS `index_screenshot_collection_id` ON `screenshot` (`collection_id`)")
+            }
+        }
+
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE `screenshot` ADD COLUMN `processed` INTEGER NOT NULL DEFAULT 0")
+                database.execSQL(
+                        "UPDATE `screenshot` SET `processed` = 1 WHERE `id` IN (SELECT `id` FROM `screenshot_content` WHERE `content_text` IS NOT NULL)"
+                )
             }
         }
     }
@@ -215,6 +225,42 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
         return withContext(Dispatchers.IO) {
             database.screenshotDao().getContentText(screenshot.id)?.contentText
         }
+    }
+
+    override suspend fun isKnown(candidate: Candidate): Boolean {
+        return withContext(Dispatchers.IO) {
+            when {
+                // A producer handed us a pre-computed identity. Under Room the locator *is* the identity (uri is
+                // the unique index), so treat a non-null identity as the locator to look up.
+                candidate.identity != null -> candidate.identity in dbKeysByLocator()
+                // No pre-computed identity: fall back to the locator (URI) lookup.
+                candidate.locator != null -> candidate.locator in dbKeysByLocator()
+                // Neither identity nor locator: conservatively unknown (the engine will attempt it).
+                else -> false
+            }
+        }
+    }
+
+    override suspend fun getUnprocessedScreenshotList(): List<ScreenshotModel> {
+        return withContext(Dispatchers.IO) {
+            database.screenshotDao().getUnprocessed()
+        }
+    }
+
+    override suspend fun getUnprocessedCount(): Int {
+        return withContext(Dispatchers.IO) {
+            database.screenshotDao().getUnprocessedCount()
+        }
+    }
+
+    override suspend fun getScreenshotByUri(uri: String): ScreenshotModel? {
+        return withContext(Dispatchers.IO) {
+            database.screenshotDao().getScreenshotByUri(uri)
+        }
+    }
+
+    private fun dbKeysByLocator(): Set<String> {
+        return database.screenshotDao().getIndexedUris().toSet()
     }
 
     private interface SearchStrategy {

@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotContentModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
+import io.github.tzhvh.scryernext.ingestion.Candidate
 
 @Suppress("unused")
 class ScreenshotInMemoryRepository : ScreenshotRepository {
@@ -19,6 +20,7 @@ class ScreenshotInMemoryRepository : ScreenshotRepository {
     private val collectionList = mutableListOf<CollectionModel>()
     private val screenshotData = MutableStateFlow<List<ScreenshotModel>>(emptyList())
     private val screenshotList = mutableListOf<ScreenshotModel>()
+    private val screenshotContentList = mutableListOf<ScreenshotContentModel>()
     private val screenshotContentData = MutableStateFlow<List<ScreenshotContentModel>>(emptyList())
 
     override suspend fun addCollection(collection: CollectionModel) {
@@ -93,10 +95,35 @@ class ScreenshotInMemoryRepository : ScreenshotRepository {
         return screenshotList
     }
 
-    override suspend fun updateScreenshotContent(screenshotContent: ScreenshotContentModel) {}
+    override suspend fun updateScreenshotContent(screenshotContent: ScreenshotContentModel) {
+        screenshotContentList.removeAll { it.id == screenshotContent.id }
+        screenshotContentList.add(screenshotContent)
+        screenshotContentData.value = screenshotContentList.toList()
+        screenshotList.find { it.id == screenshotContent.id }?.let {
+            it.processed = true
+        }
+    }
 
     override suspend fun getContentText(screenshot: ScreenshotModel): String? {
-        return ""
+        return screenshotContentList.find { it.id == screenshot.id }?.contentText
+    }
+
+    override suspend fun isKnown(candidate: Candidate): Boolean {
+        val key = candidate.identity ?: candidate.locator ?: return false
+        val screenshot = screenshotList.find { it.uri == key } ?: return false
+        return screenshot.processed
+    }
+
+    override suspend fun getUnprocessedScreenshotList(): List<ScreenshotModel> {
+        return screenshotList.filter { !it.processed }
+    }
+
+    override suspend fun getUnprocessedCount(): Int {
+        return screenshotList.count { !it.processed }
+    }
+
+    override suspend fun getScreenshotByUri(uri: String): ScreenshotModel? {
+        return screenshotList.firstOrNull { it.uri == uri }
     }
 
     override fun getScreenshotContent(): Flow<List<ScreenshotContentModel>> {

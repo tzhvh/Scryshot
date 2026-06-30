@@ -32,7 +32,8 @@ data class ScreenshotModel constructor (
         @ColumnInfo(name = "display_name") var displayName: String,
         @ColumnInfo(name = "size") var size: Long,
         @ColumnInfo(name = "last_modified") var lastModified: Long,
-        @ColumnInfo(name = "collection_id") var collectionId: String
+        @ColumnInfo(name = "collection_id") var collectionId: String,
+        @ColumnInfo(name = "processed", defaultValue = "0") var processed: Boolean = false
 ) {
     @Ignore
     constructor(

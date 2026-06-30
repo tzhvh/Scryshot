@@ -80,4 +80,17 @@ interface ScreenshotDao {
 
     @Query("SELECT * FROM screenshot_content WHERE id = :screenshotId")
     fun getContentText(screenshotId: String): ScreenshotContentModel?
+
+    @Query("SELECT uri FROM screenshot WHERE processed = 1")
+    fun getIndexedUris(): List<String>
+
+    @Query("SELECT * FROM screenshot WHERE processed = 0")
+    fun getUnprocessed(): List<ScreenshotModel>
+
+    @Query("SELECT COUNT(*) FROM screenshot WHERE processed = 0")
+    fun getUnprocessedCount(): Int
+
+    /** Issue 11/#4: lookup by `uri` (the indexed unique column) without materializing every row. */
+    @Query("SELECT * FROM screenshot WHERE uri = :uri LIMIT 1")
+    fun getScreenshotByUri(uri: String): ScreenshotModel?
 }
