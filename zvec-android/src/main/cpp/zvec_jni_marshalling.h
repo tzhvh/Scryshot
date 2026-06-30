@@ -247,3 +247,39 @@ struct CollectionSchemaGuard {
     }
 };
 
+// Issue 06 (query): the vector-query handle built/configured/run inside one
+// internal block of nativeQuery (Q7 — the caller never sees a query handle, even
+// transiently). zvec_vector_query_create / zvec_vector_query_destroy are paired;
+// the guard runs on any exit path, including a macro throw-return from any of the
+// set_field_name / set_topk / set_output_fields / set_filter / set_query_vector /
+// set_fts setters below the create. (zvec_collection_query takes it as `const`,
+// so it does NOT adopt it — the guard always owns it.)
+//
+// This same handle serves BOTH the pure-vector and pure-FTS query modalities:
+// there is no separate FTS query handle in the C API. The FTS payload is built
+// separately and attached via zvec_vector_query_set_fts (which COPIES the
+// payload), so the FtsGuard below still owns and frees it.
+struct VectorQueryGuard {
+    zvec_vector_query_t* q = nullptr;
+    ~VectorQueryGuard() {
+        if (q) {
+            zvec_vector_query_destroy(q);
+        }
+    }
+};
+
+// Issue 06 (query): the FTS payload (zvec_fts_t) carrying the match string.
+// zvec_vector_query_set_fts COPIES the payload into the query (c_api.h:1876
+// doc-comment: "payload is copied"), so the fts handle is NOT adopted and must
+// be destroyed by the caller — this guard frees it on any exit path, success or
+// failure, exactly like the Rust oracle's Fts Drop (which always calls
+// zvec_fts_destroy).
+struct FtsGuard {
+    zvec_fts_t* f = nullptr;
+    ~FtsGuard() {
+        if (f) {
+            zvec_fts_destroy(f);
+        }
+    }
+};
+

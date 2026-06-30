@@ -1262,4 +1262,124 @@ Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeFetch(
   return collect_docs(env, col, docs, found_count);
 }
 
+// Issue 06: single-vector / pure-FTS query. Builds a vector_query_t, sets
+// field_name + topK + (optional) output_fields + (optional) filter, then either
+// attaches a query vector (vector mode) or an fts_t payload carrying the FTS
+// match string (FTS mode). fts_t is COPIED into the query by
+// zvec_vector_query_set_fts, so FtsGuard always frees it. Then
+// zvec_collection_query runs (c_api.h:3300); the result array is wrapped in
+// DocsGuard (frees the whole array + every doc on any exit path) and the shared
+// collect_docs (issue 05) copies each doc out into the same flat Object[] row
+// fetch uses — including the engine's raw score at slot [1], which the Kotlin
+// query() path keeps (R1: under COSINE score = cosine distance, lower = more
+// similar, engine returns ascending — nearest first).
+//
+// All three handles (VectorQueryGuard / FtsGuard / DocsGuard) run on any exit
+// path, including a macro throw-return mid-build: the caller never sees a query
+// handle (Q7 — the one place in the SDK where a handle is never visible, even
+// transiently). Vector mode = `jvector != null`; FTS mode = `jfts != null`. The
+// Kotlin side validates exactly-one is set before calling.
+//
+// Returns `Array<Any?>` = one Object[] row per result doc (same row shape as
+// nativeFetch). Empty result is a zero-length array.
+JNIEXPORT jobjectArray JNICALL
+Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeQuery(
+    JNIEnv* env, jclass, jlong handle,
+    jstring jfield, jfloatArray jvector, jstring jfts, jstring jfilter,
+    jint jtopk, jobjectArray joutputFields) {
+
+  zvec_collection_t* col = reinterpret_cast<zvec_collection_t*>(handle);
+  if (!col) {
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Collection handle is null");
+    return nullptr;
+  }
+
+  // Copy field eagerly (Rule 1: copy, don't RAII-pin the JVM string across the
+  // zvec setters — the const char* borrows into the std::string's storage).
+  std::string field = jstring_to_std(env, jfield);
+  if (env->ExceptionCheck()) return nullptr;
+
+  // Build the vector query handle; the guard frees it on any exit path.
+  zvec_vector_query_t* query = zvec_vector_query_create();
+  ZVEC_CHECK_PTR(env, query, "vector_query_create");
+  VectorQueryGuard query_guard{query};
+
+  ZVEC_CHECK_JNI_JINT(env,
+      zvec_vector_query_set_field_name(query, field.c_str()));
+  ZVEC_CHECK_JNI_JINT(env,
+      zvec_vector_query_set_topk(query, static_cast<int>(jtopk)));
+
+  // output_fields: null = all fields; otherwise the projection set. Copied out
+  // eagerly so no JNI reference is held across the zvec call (Rule 1).
+  std::vector<std::string> out_fields_storage;
+  std::vector<const char*> out_field_ptrs;
+  if (joutputFields != nullptr) {
+    jsize ofn = env->GetArrayLength(joutputFields);
+    if (env->ExceptionCheck()) return nullptr;
+    out_fields_storage.resize(ofn);
+    out_field_ptrs.resize(ofn);
+    for (jsize i = 0; i < ofn; i++) {
+      jstring jf = static_cast<jstring>(env->GetObjectArrayElement(joutputFields, i));
+      if (env->ExceptionCheck()) return nullptr;
+      out_fields_storage[i] = jstring_to_std(env, jf);
+      env->DeleteLocalRef(jf);
+      if (env->ExceptionCheck()) return nullptr;
+      out_field_ptrs[i] = out_fields_storage[i].c_str();
+    }
+    ZVEC_CHECK_JNI_JINT(env,
+        zvec_vector_query_set_output_fields(
+            query, out_field_ptrs.data(), static_cast<size_t>(ofn)));
+  }
+
+  // Optional filter — raw SQL-ish text (escape user values; see QueryRequest).
+  if (jfilter != nullptr) {
+    std::string filter = jstring_to_std(env, jfilter);
+    if (env->ExceptionCheck()) return nullptr;
+    ZVEC_CHECK_JNI_JINT(env,
+        zvec_vector_query_set_filter(query, filter.c_str()));
+  }
+
+  // Modality: vector mode if a query vector is present, else FTS mode. The Kotlin
+  // side guarantees exactly-one is set; here `jvector != null` wins the branch.
+  if (jvector != nullptr) {
+    jsize len = env->GetArrayLength(jvector);
+    if (env->ExceptionCheck()) return nullptr;
+    // GetFloatArrayElements copies (or pins, then we JNI_ABORT-release — no
+    // writeback); either way we hand zvec a contiguous FP32 buffer of exactly
+    // len*4 bytes. Eager copy, no GetPrimitiveArrayCritical (Phase-0 Rule 1/2).
+    jfloat* vec = env->GetFloatArrayElements(jvector, nullptr);
+    if (!vec) {
+      if (!env->ExceptionCheck()) {
+        zvec_throw(env, ZVEC_ERROR_INTERNAL_ERROR, "GetFloatArrayElements returned null");
+      }
+      return nullptr;
+    }
+    zvec_error_code_t rc = zvec_vector_query_set_query_vector(
+        query, vec, static_cast<size_t>(len) * sizeof(float));
+    env->ReleaseFloatArrayElements(jvector, vec, JNI_ABORT);
+    ZVEC_CHECK_JNI_JINT(env, rc);
+  } else if (jfts != nullptr) {
+    // Pure-FTS: attach an fts_t payload carrying the match string. set_fts
+    // COPIES the payload into the query, so the FtsGuard still owns + frees fts.
+    std::string fts_match = jstring_to_std(env, jfts);
+    if (env->ExceptionCheck()) return nullptr;
+    zvec_fts_t* fts = zvec_fts_create();
+    ZVEC_CHECK_PTR(env, fts, "fts_create");
+    FtsGuard fts_guard{fts};
+    ZVEC_CHECK_JNI_JINT(env,
+        zvec_fts_set_match_string(fts, fts_match.c_str()));
+    ZVEC_CHECK_JNI_JINT(env, zvec_vector_query_set_fts(query, fts));
+  }
+  // else: both null — the Kotlin side rejects this; defending in depth leaves
+  // the query unconfigured, and zvec_collection_query will return an error.
+
+  zvec_doc_t** docs = nullptr;
+  size_t result_count = 0;
+  ZVEC_CHECK_JNI_JINT(env,
+      zvec_collection_query(col, query, &docs, &result_count));
+
+  DocsGuard docs_guard{docs, result_count};
+  return collect_docs(env, col, docs, result_count);
+}
+
 } // extern "C"

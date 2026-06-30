@@ -382,27 +382,28 @@ class ZvecCollection internal constructor(
                 // Each row is a non-null Object[] (collect_docs emits one per
                 // found doc); the Array<Any?> signature is only because JVM
                 // arrays of Object are naturally nullable at the JNI boundary.
-                add(unpackFetchRow(row ?: error("null row from nativeFetch")))
+                add(unpackRow(row ?: error("null row from nativeFetch"), keepScore = false))
             }
         }
     }
 
     /**
-     * Unpack one flat `Object[]` fetch row into a typed [ZvecDoc]. Layout (names
-     * inline, produced by the shared `collect_docs` JNI helper so it's correct
+     * Unpack one flat `Object[]` row (from the shared `collect_docs` JNI helper)
+     * into a typed [ZvecDoc]. Layout (names inline, so the read path is correct
      * under a projection and the engine's nullable-field re-addition — the SDK
      * doesn't have to guess which field each slot is):
      *   [0]     = pk (String)
-     *   [1]     = score (Float — the engine's value; null on a plain fetch)
+     *   [1]     = score (Float — the engine's raw value)
      *   [2]     = present-field count (Int)
      *   [3..]   = interleaved (name: String, value: boxed) pairs, one per field
      *
-     * Fetch has no meaningful score (the engine returns 0.0); null it out so the
-     * read path stays consistent with `ZvecDoc.score = null` (the score is a
-     * query-only concept, set by issue 06's query path).
+     * `collect_docs` emits the same row shape for fetch (issue 05) and query
+     * (issue 06); this single unpacker serves both. The difference is whether
+     * [ZvecDoc.score] is meaningful: a plain fetch returns 0.0 from the engine,
+     * so [unpackRow] nulls it out for fetch and keeps it for query.
      */
     @Suppress("UNCHECKED_CAST")
-    private fun unpackFetchRow(row: Any): ZvecDoc {
+    private fun unpackRow(row: Any, keepScore: Boolean): ZvecDoc {
         val arr = row as Array<Any?>
         val pk = arr[0] as String
         val fieldCount = arr[2] as Int
@@ -414,8 +415,90 @@ class ZvecCollection internal constructor(
             fields[name] = value
             slot += 2
         }
-        // score is query-only; fetch surfaces null (see KDoc).
-        return ZvecDoc(pk = pk, score = null, fields = fields)
+        // score is query-only; fetch surfaces null (see the KDoc above).
+        val score = if (keepScore) arr[1] as? Float else null
+        return ZvecDoc(pk = pk, score = score, fields = fields)
+    }
+
+    // ---- Query (issue 06) -----------------------------------------------
+    // The single-vector / pure-FTS query surface. `vector_query_t` + `fts_t` are
+    // the one place in the SDK where the caller NEVER sees a handle, even
+    // transiently (Q7): the JNI layer builds the query handle, configures it,
+    // runs zvec_collection_query, walks the result array via the shared
+    // `collect_docs` (same as fetch — issue 05), copies each doc out into a flat
+    // Object[] row, then the DocsGuard frees the whole array + every doc and the
+    // VectorQueryGuard/FtsGuard free the query handles. Zero leak surface by
+    // construction; no `use {}` at the call site.
+    //
+    // R1 DISCHARGED (see ## Comments in issue 06, verified against the live
+    // engine): under COSINE the engine returns results ASCENDING by score, where
+    // score = cosine DISTANCE (1 − cos θ), range [0,2]. So lower = more similar,
+    // and ZvecDoc.score is the distance, not the similarity. Other metrics carry
+    // their own direction (L2 distance is also lower=nearer; IP similarity is
+    // higher=nearer) — the SDK surfaces the engine's raw value untouched and does
+    // NOT normalize, because R1's job is to pin the convention, not paper over it.
+    //
+    // All suspend, no internal dispatcher hop (ADR 0007) — zvec calls are
+    // uncancellable native blocking calls, so the caller owns the dispatcher and
+    // the cancellation boundary, exactly like the read/write paths.
+
+    /**
+     * Run a single-vector or pure-FTS query, returning a finite ranked result
+     * list (zvec returns a finite set, NOT an open-ended stream — divergence #1
+     * from the roadmap sketch, so this returns `List`, not `Flow`).
+     *
+     * [QueryRequest.vector] / [QueryRequest.fts] select the modality (see
+     * [QueryRequest]); exactly one must be set. The result is ordered by the
+     * engine — under COSINE (the screenshots schema's metric) results come back
+     * **nearest first** with [ZvecDoc.score] = cosine *distance* (lower = more
+     * similar; range [0,2]). The SDK does not re-order or normalize the score.
+     *
+     * @param request query modality + field + topK + optional filter.
+     * @param outputFields projection — `null` (default) = all fields; otherwise
+     *   only the named fields are returned. Absent non-nullable keys in the
+     *   returned [ZvecDoc.fields] = "not requested" under the projection (same
+     *   semantics as [fetch]).
+     *
+     * @throws ZvecException if both [QueryRequest.vector] and [QueryRequest.fts]
+     *   are null, or on any engine error.
+     */
+    suspend fun query(
+        request: QueryRequest,
+        outputFields: List<String>? = null,
+    ): List<ZvecDoc> {
+        ensureNotClosed()
+        // Exactly one modality must be set (see QueryRequest). Both null is the
+        // invalid case; both set is the "use hybridSearch" case. The JNI layer
+        // treats vector != null as vector mode, so reject before touching native.
+        val vectorMode = request.vector != null
+        val ftsMode = request.fts != null
+        when {
+            !vectorMode && !ftsMode -> throw ZvecException(
+                ZvecErrorCode.INVALID_ARGUMENT,
+                "QueryRequest needs a vector or fts (both were null)",
+            )
+            vectorMode && ftsMode -> throw ZvecException(
+                ZvecErrorCode.INVALID_ARGUMENT,
+                "QueryRequest set both vector and fts; use hybridSearch for fusion",
+            )
+        }
+        val rows = ZvecNative.nativeQuery(
+            handle = nativeHandle(),
+            field = request.field,
+            vector = request.vector?.toFloatArray(),
+            fts = request.fts,
+            filter = request.filter,
+            topK = request.topK,
+            outputFields = outputFields?.toTypedArray(),
+        )
+        return ArrayList<ZvecDoc>(rows.size).apply {
+            for (row in rows) {
+                // collect_docs emits one non-null Object[] per result doc; the
+                // Array<Any?> signature is only because JVM arrays of Object are
+                // naturally nullable at the JNI boundary.
+                add(unpackRow(row ?: error("null row from nativeQuery"), keepScore = true))
+            }
+        }
     }
 
     private object WriteOp {

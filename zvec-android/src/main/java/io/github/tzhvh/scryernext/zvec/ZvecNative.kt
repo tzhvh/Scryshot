@@ -241,5 +241,31 @@ object ZvecNative {
         includeVector: Boolean,
     ): Array<Any?>
 
+    // ---- Query (issue 06) --------------------------------------------------
+    // Single-vector / pure-FTS query. The JNI layer builds a vector_query_t, sets
+    // field + topK + output_fields + (optional) filter, and either attaches a
+    // query vector (vector mode) or an fts_t payload carrying the FTS match string
+    // (FTS mode). fts_t is COPIED into the query by zvec_vector_query_set_fts, so
+    // the FtsGuard always frees it. Then zvec_collection_query runs, the result
+    // array is wrapped in DocsGuard, and the shared collect_docs (issue 05) copies
+    // each doc out into the same flat Object[] row fetch uses — including the
+    // engine's raw score at slot [1], which the Kotlin query() path keeps (unlike
+    // fetch, which nulls it).
+    //
+    // Kotlin validates exactly-one-of(vector, fts) is set before calling; the JNI
+    // layer treats `vector != null` as vector mode and `fts != null` as FTS mode.
+    // Returns the same `Array<Any?>` shape as nativeFetch (one Object[] row per
+    // result doc). All query handles (VectorQueryGuard/FtsGuard/DocsGuard) are
+    // freed on any exit path — the caller never sees a handle (Q7).
+    @JvmStatic external fun nativeQuery(
+        handle: Long,
+        field: String,
+        vector: FloatArray?,
+        fts: String?,
+        filter: String?,
+        topK: Int,
+        outputFields: Array<String>?,
+    ): Array<Any?>
+
     @JvmStatic external fun nativeClose(handle: Long)
 }
