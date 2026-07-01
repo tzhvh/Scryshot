@@ -47,6 +47,7 @@ class OnOpenTriggerTest {
         }
 
         override suspend fun markProcessed(candidate: Candidate) = Unit
+        override suspend fun markContentIndexed(screenshot: ScreenshotModel, contentHash: String) = Unit
 
         // Rest are stubbed/TODO
         override suspend fun addCollection(collection: CollectionModel) = TODO()
@@ -94,7 +95,7 @@ class OnOpenTriggerTest {
         val producer = MediaStoreProducer(repo, contentResolver)
         val ocr = OcrStage { _, _ -> OcrOutcome.Success("text") }
         var writtenCount = 0
-        val write = WriteSink { _, _, _ -> writtenCount++ }
+        val write = WriteSink { _, _, _, _ -> writtenCount++ }
         val engine = IngestionEngine(repo, ocr, write)
 
         val trigger = OnOpenTrigger(repo, producer, engine, store, testScope)
@@ -119,7 +120,7 @@ class OnOpenTriggerTest {
         val contentResolver = mock(android.content.ContentResolver::class.java)
         val producer = MediaStoreProducer(repo, contentResolver)
         val ocr = OcrStage { _, _ -> OcrOutcome.Success("text") }
-        val write = WriteSink { _, _, _ -> }
+        val write = WriteSink { _, _, _, _ -> }
         val engine = IngestionEngine(repo, ocr, write)
 
         val trigger = OnOpenTrigger(repo, producer, engine, store, testScope)
@@ -143,7 +144,7 @@ class OnOpenTriggerTest {
         val contentResolver = mock(android.content.ContentResolver::class.java)
         val producer = MediaStoreProducer(repo, contentResolver)
         val ocr = OcrStage { _, _ -> OcrOutcome.Success("text") }
-        val write = WriteSink { _, _, _ -> }
+        val write = WriteSink { _, _, _, _ -> }
         val engine = IngestionEngine(repo, ocr, write)
 
         val trigger = OnOpenTrigger(repo, producer, engine, store, testScope)
@@ -162,7 +163,7 @@ class OnOpenTriggerTest {
         val contentResolver = mock(android.content.ContentResolver::class.java)
         val producer = MediaStoreProducer(repo, contentResolver)
         val ocr = OcrStage { _, _ -> OcrOutcome.Success("text") }
-        val write = WriteSink { _, _, _ -> }
+        val write = WriteSink { _, _, _, _ -> }
         val engine = IngestionEngine(repo, ocr, write)
 
         val trigger = OnOpenTrigger(repo, producer, engine, store, testScope)
@@ -183,7 +184,7 @@ class OnOpenTriggerTest {
         val contentResolver = mock(android.content.ContentResolver::class.java)
         val producer = MediaStoreProducer(repo, contentResolver)
         val ocr = OcrStage { _, _ -> OcrOutcome.Success("text") }
-        val write = WriteSink { _, _, _ -> }
+        val write = WriteSink { _, _, _, _ -> }
         val engine = IngestionEngine(repo, ocr, write)
 
         // Manually enter store under BULK trigger to lock it
@@ -209,7 +210,7 @@ class OnOpenTriggerTest {
 
         val deferred = kotlinx.coroutines.CompletableDeferred<OcrOutcome>()
         val ocr = OcrStage { _, _ -> deferred.await() }
-        val write = WriteSink { _, _, _ -> }
+        val write = WriteSink { _, _, _, _ -> }
         val engine = IngestionEngine(repo, ocr, write)
 
         val trigger = OnOpenTrigger(repo, producer, engine, store, testScope)

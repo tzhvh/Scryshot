@@ -25,7 +25,8 @@ import io.github.tzhvh.scryernext.ingestion.IngestionProgressStore
 import io.github.tzhvh.scryernext.ingestion.MediaStoreProducer
 import io.github.tzhvh.scryernext.ingestion.MlKitOcrStage
 import io.github.tzhvh.scryernext.ingestion.Progress
-import io.github.tzhvh.scryernext.ingestion.RoomWriteSink
+import io.github.tzhvh.scryernext.ingestion.ZvecWriteSink
+import io.github.tzhvh.scryernext.repository.ScreenshotDatabaseRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
@@ -96,7 +97,20 @@ class IngestionWorker(
         val store = ScryerApplication.getIngestionProgressStore()
         val session = ScryerApplication.getIngestionSession()
         val producer = MediaStoreProducer(repository, ScryerApplication.getContentResolver())
-        val engine = IngestionEngine(repository, MlKitOcrStage(), RoomWriteSink(repository))
+        // zvec Phase 2, issue 03 — the engine's sink is ZvecWriteSink (write-side cutover). The store
+        // + cache-DAO provider come from the app scope, mirroring ScryerApplication.onCreate.
+        val zvecContentStore = ScryerApplication.getZvecContentStore()
+        val engine = IngestionEngine(
+            repository,
+            MlKitOcrStage(),
+            ZvecWriteSink(
+                repository = repository,
+                zvecContentStore = zvecContentStore,
+                metadataCacheDaoProvider = {
+                    (repository as ScreenshotDatabaseRepository).database.contentMetadataCacheDao()
+                },
+            ),
+        )
 
         // 1. Promote to a dataSync foreground service BEFORE any long work (avoids ANR).
         //    Initial notification is indeterminate — total is unknown until the engine's

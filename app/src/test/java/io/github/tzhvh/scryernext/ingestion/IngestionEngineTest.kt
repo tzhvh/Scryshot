@@ -51,6 +51,8 @@ class IngestionEngineTest {
         val isKnownCalls: MutableList<Candidate> = mutableListOf()
         /** Recorded (candidate) for every dedup-skip retirement (the [markProcessed] seam). */
         val markProcessedCalls: MutableList<Candidate> = mutableListOf()
+        /** Recorded (screenshot, contentHash) for every zvec-success retirement (issue 03). */
+        val markContentIndexedCalls: MutableList<Pair<ScreenshotModel, String>> = mutableListOf()
 
         override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): Boolean {
             isKnownCalls += candidate
@@ -60,6 +62,10 @@ class IngestionEngineTest {
 
         override suspend fun markProcessed(candidate: Candidate) {
             markProcessedCalls += candidate
+        }
+
+        override suspend fun markContentIndexed(screenshot: ScreenshotModel, contentHash: String) {
+            markContentIndexedCalls += screenshot to contentHash
         }
 
         override suspend fun addCollection(collection: CollectionModel) = TODO()
@@ -109,7 +115,7 @@ class IngestionEngineTest {
     private class CapturingWriteSink {
         val written: MutableMap<String?, String?> = mutableMapOf()
         val writtenProcessed: MutableMap<String?, Boolean> = mutableMapOf()
-        val write = WriteSink { candidate, text, processed ->
+        val write = WriteSink { candidate, text, processed, _ ->
             written[candidate.locator] = text
             writtenProcessed[candidate.locator] = processed
         }
@@ -184,7 +190,7 @@ class IngestionEngineTest {
     fun early_progress_fires_before_any_ocr() = runBlocking {
         val repo = FakeScreenshotRepository(knownKeys = mutableSetOf())
         val ocr = OcrStage { _, _ -> OcrOutcome.Success("x") }
-        val engine = IngestionEngine(repo, ocr, WriteSink { _, _, _ -> })
+        val engine = IngestionEngine(repo, ocr, WriteSink { _, _, _, _ -> })
 
         val first = engine.process(flowOf(candidate("content://media/1"))).toList().first()
 
@@ -365,7 +371,7 @@ class IngestionEngineTest {
         ))
         // The sink mutates the repo's known set exactly as a processed Room insert would
         // surface in dbKeysByLocator (ScreenshotDao.getIndexedUris selects processed = 1).
-        val write = WriteSink { c, _, processed ->
+        val write = WriteSink { c, _, processed, _ ->
             if (processed) {
                 val key = c.identity ?: c.locator
                 if (key != null) knownKeys += key
@@ -436,7 +442,7 @@ class IngestionEngineTest {
             "content://media/2" to OcrOutcome.Success("after-retry"),
         ))
         val writeSleepMs = 8L
-        val write = WriteSink { _, _, _ -> Thread.sleep(writeSleepMs) }
+        val write = WriteSink { _, _, _, _ -> Thread.sleep(writeSleepMs) }
         val engine = IngestionEngine(repo, ocr, write)
 
         val progress = engine.process(flowOf(
@@ -462,7 +468,7 @@ class IngestionEngineTest {
         val repo = FakeScreenshotRepository(knownKeys = mutableSetOf())
         val ocr = OcrStage { _, _ -> OcrOutcome.Success("ok") }
         val boom = java.io.IOException("disk full")
-        val write = WriteSink { _, _, _ -> throw boom }
+        val write = WriteSink { _, _, _, _ -> throw boom }
         val engine = IngestionEngine(repo, ocr, write)
 
         val progress = engine.process(flowOf(
@@ -497,7 +503,7 @@ class IngestionEngineTest {
             OcrOutcome.Success("slept")
         }
         val writeSleepMs = 3L
-        val write = WriteSink { _, _, _ -> Thread.sleep(writeSleepMs) }
+        val write = WriteSink { _, _, _, _ -> Thread.sleep(writeSleepMs) }
         val engine = IngestionEngine(repo, ocr, write)
 
         val progress = engine.process(flowOf(candidate("content://media/1"))).toList()
@@ -524,7 +530,7 @@ class IngestionEngineTest {
         val ocr = FakeOcrStage(outcomesByLocator = mapOf(
             "content://media/2" to OcrOutcome.Success("ok"),
         ))
-        val engine = IngestionEngine(repo, ocr, WriteSink { _, _, _ -> })
+        val engine = IngestionEngine(repo, ocr, WriteSink { _, _, _, _ -> })
 
         val progress = engine.process(flowOf(
             candidate("content://media/1"),   // unknown→Success (default)

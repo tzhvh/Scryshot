@@ -90,6 +90,22 @@ interface ScreenshotRepository {
      */
     suspend fun markProcessed(candidate: Candidate)
 
+    /**
+     * Record the zvec content_hash on a screenshot row **and** retire it from the producer's queue
+     * (zvec Phase 2, issue 03). The zvec-success peer of [markProcessed]: where [markProcessed] is the
+     * no-OCR dedup-skip retirement, this is the "content just written to zvec" retirement — it records
+     * the bridge [contentHash] (decision D13: the column `getContentText` fetches zvec by, issue 04)
+     * **and** flips `processed = true` in one update.
+     *
+     * **Call order is load-bearing (D13):** the caller (`ZvecWriteSink`) upserts to zvec **first**,
+     * then calls this. A crash between the two leaves the row un-`processed` → the producer re-pulls
+     * it → the engine re-reads, `isKnown` returns `true` (hash already in zvec), the dedup-skip seam
+     * retires the row, and R8 makes the would-be re-upsert a no-op. Self-healing, no orphans. The
+     * reverse order would leave a row marked `processed = 1` pointing at a nonexistent zvec doc: a
+     * silent hole `getContentText` can't fill.
+     */
+    suspend fun markContentIndexed(screenshot: ScreenshotModel, contentHash: String)
+
     suspend fun getUnprocessedScreenshotList(): List<ScreenshotModel>
 
     suspend fun getUnprocessedCount(): Int

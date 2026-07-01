@@ -23,6 +23,7 @@ class IsKnownSeamTest {
         }
 
         override suspend fun markProcessed(candidate: Candidate) = Unit
+        override suspend fun markContentIndexed(screenshot: ScreenshotModel, contentHash: String) = Unit
 
         override suspend fun addCollection(collection: CollectionModel) = TODO()
         override fun getCollections(): Flow<List<CollectionModel>> = TODO()

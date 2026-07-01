@@ -32,8 +32,10 @@ package io.github.tzhvh.scryernext.ingestion
  */
 fun interface WriteSink {
     /**
-     * Persist [text] for [candidate], marking it processed iff [processed].
-     * Throwing here surfaces as [Progress.Error] at the engine boundary.
+     * Persist [text] for [candidate], marking it processed iff [processed]. [bytes] is the file
+     * content the engine already read once (issue 02's READ→DEDUP reorder) — the sink hashes it for
+     * the content_hash PK without re-opening the file. Throwing here surfaces as [Progress.Error] at
+     * the engine boundary.
      */
-    suspend fun commit(candidate: Candidate, text: String?, processed: Boolean)
+    suspend fun commit(candidate: Candidate, text: String?, processed: Boolean, bytes: ByteArray)
 }

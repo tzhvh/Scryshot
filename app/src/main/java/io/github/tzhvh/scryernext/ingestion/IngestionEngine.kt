@@ -191,13 +191,13 @@ class IngestionEngine(
                 when (outcome) {
                     is OcrOutcome.Success -> {
                         val writeStart = System.nanoTime()
-                        write.commit(candidate, outcome.text, processed = true)
+                        write.commit(candidate, outcome.text, processed = true, bytes = bytes)
                         indexed += 1
                         msSince(writeStart)
                     }
                     is OcrOutcome.PermanentContentFailure -> {
                         val writeStart = System.nanoTime()
-                        write.commit(candidate, null, processed = true)
+                        write.commit(candidate, null, processed = true, bytes = bytes)
                         indexed += 1
                         msSince(writeStart)
                     }

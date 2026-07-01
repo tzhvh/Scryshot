@@ -16,7 +16,7 @@ import androidx.room.RoomDatabase
             FtsEntity::class,
             ContentMetadataCache::class
         ],
-        version = 5
+        version = 6
 )
 abstract class ScreenshotDatabase: RoomDatabase() {
     abstract fun screenshotDao(): ScreenshotDao

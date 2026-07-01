@@ -20,7 +20,7 @@ import io.github.tzhvh.scryernext.R
 import io.github.tzhvh.scryernext.persistence.*
 import io.github.tzhvh.scryernext.ingestion.Candidate
 
-class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : ScreenshotRepository {
+class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : ScreenshotRepository {
 
     companion object {
         fun create(context: Context, onCreated: () -> Unit): ScreenshotDatabaseRepository {
@@ -32,7 +32,7 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
             return ScreenshotDatabaseRepository(
                     Room.databaseBuilder(context.applicationContext, ScreenshotDatabase::class.java,
                             "screenshot-db")
-                            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                             .addCallback(callback)
                             .build()
             )
@@ -111,6 +111,20 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
                     "CREATE INDEX IF NOT EXISTS `index_content_metadata_cache_content_hash` " +
                     "ON `content_metadata_cache` (`content_hash`)"
                 )
+            }
+        }
+
+        /**
+         * zvec Phase 2, issue 03: adds the nullable `content_hash` bridge column to `screenshot`
+         * (decision D13 — the read bridge from a UUID-keyed gallery row to a content_hash-keyed zvec
+         * doc). Purely additive (`ALTER TABLE … ADD COLUMN`), nullable so existing rows start "not
+         * yet indexed into zvec" and are populated lazily by `ZvecWriteSink` as the engine ingests.
+         * No backfill under hard cutover (no installed base to migrate); a plain `ADD COLUMN` mirrors
+         * exactly what Room generates from the @Entity so the schema-export stays valid.
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE `screenshot` ADD COLUMN `content_hash` TEXT")
             }
         }
     }
@@ -293,6 +307,16 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
         withContext(Dispatchers.IO) {
             val screenshot = database.screenshotDao().getScreenshotByUri(locator) ?: return@withContext
             database.screenshotDao().updateScreenshot(listOf(screenshot.copy(processed = true)))
+        }
+    }
+
+    override suspend fun markContentIndexed(screenshot: ScreenshotModel, contentHash: String) {
+        // The zvec-success retirement: record the bridge hash (D13) + flip processed = 1 in one
+        // update. Called by ZvecWriteSink AFTER the zvec upsert (zvec-first ordering — see the
+        // interface KDoc). Uses the row's stable `id` (not locator) since the caller already holds
+        // the resolved ScreenshotModel.
+        withContext(Dispatchers.IO) {
+            database.screenshotDao().markContentIndexed(screenshot.id, contentHash)
         }
     }
 

@@ -14,7 +14,7 @@ import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.ingestion.Candidate
 
 @Suppress("unused")
-class ScreenshotInMemoryRepository : ScreenshotRepository {
+open class ScreenshotInMemoryRepository : ScreenshotRepository {
 
     private val collectionData = MutableStateFlow<List<CollectionModel>>(emptyList())
     private val collectionList = mutableListOf<CollectionModel>()
@@ -123,6 +123,15 @@ class ScreenshotInMemoryRepository : ScreenshotRepository {
         // `processed = 0` queue. Mirrors ScreenshotDatabaseRepository.markProcessed.
         val key = candidate.identity ?: candidate.locator ?: return
         screenshotList.find { it.uri == key }?.let { it.processed = true }
+    }
+
+    open override suspend fun markContentIndexed(screenshot: ScreenshotModel, contentHash: String) {
+        // The zvec-success retirement: record the bridge hash + flip processed = true. Mirrors
+        // ScreenshotDatabaseRepository.markContentIndexed.
+        screenshotList.find { it.id == screenshot.id }?.let {
+            it.contentHash = contentHash
+            it.processed = true
+        }
     }
 
     override suspend fun getUnprocessedScreenshotList(): List<ScreenshotModel> {

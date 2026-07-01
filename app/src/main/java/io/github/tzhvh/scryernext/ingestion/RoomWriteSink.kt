@@ -9,12 +9,10 @@ import io.github.tzhvh.scryernext.persistence.ScreenshotContentModel
 import io.github.tzhvh.scryernext.repository.ScreenshotRepository
 
 /**
- * Production implementation of [WriteSink] for the Room database/MediaStore era.
- *
- * For a given [Candidate] (where `locator` is the content URI under Room), it:
- * 1. Locates the matching screenshot row by `uri` (a cheap indexed query — NOT a full-table scan).
- * 2. Writes the OCR text to `screenshot_content` (or empty text for permanent-content failure).
- * 3. Marks the screenshot `processed = true` so it leaves the unprocessed backlog.
+ * The Room-database/MediaStore-era [WriteSink]. **Superseded in production by [ZvecWriteSink] as of
+ * zvec Phase 2 issue 03** (the engine's sink wiring now constructs `ZvecWriteSink`); retained in-tree
+ * because the content tables survive until issue 04 drops them, and `IngestionWorker` still references
+ * it for the WorkManager path. Issue 04 deletes this class with the content tables.
  *
  * ## The missing-row case
  *
@@ -27,7 +25,7 @@ class RoomWriteSink(
     private val repository: ScreenshotRepository
 ) : WriteSink {
 
-    override suspend fun commit(candidate: Candidate, text: String?, processed: Boolean) {
+    override suspend fun commit(candidate: Candidate, text: String?, processed: Boolean, bytes: ByteArray) {
         val locator = candidate.locator ?: return
         val screenshot = repository.getScreenshotByUri(locator)
         if (screenshot == null) {

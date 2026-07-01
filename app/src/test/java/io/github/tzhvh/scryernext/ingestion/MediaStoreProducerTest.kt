@@ -31,6 +31,7 @@ class MediaStoreProducerTest {
         // Rest are stubbed/TODO
         override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): Boolean = TODO()
         override suspend fun markProcessed(candidate: Candidate) = TODO()
+        override suspend fun markContentIndexed(screenshot: ScreenshotModel, contentHash: String) = TODO()
         override suspend fun addCollection(collection: io.github.tzhvh.scryernext.persistence.CollectionModel) = TODO()
         override fun getCollections(): Flow<List<io.github.tzhvh.scryernext.persistence.CollectionModel>> = TODO()
         override suspend fun getCollectionList(): List<io.github.tzhvh.scryernext.persistence.CollectionModel> = TODO()

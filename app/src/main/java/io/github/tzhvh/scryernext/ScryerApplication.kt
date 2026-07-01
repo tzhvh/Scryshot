@@ -10,6 +10,7 @@ import android.util.Log
 
 import io.github.tzhvh.scryernext.ingestion.IngestionLogger
 import io.github.tzhvh.scryernext.ingestion.IngestionProgressStore
+import io.github.tzhvh.scryernext.repository.ScreenshotDatabaseRepository
 import io.github.tzhvh.scryernext.repository.ScreenshotRepository
 import io.github.tzhvh.scryernext.setting.PreferenceSettingsRepository
 import io.github.tzhvh.scryernext.setting.SettingsRepository
@@ -20,7 +21,8 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import io.github.tzhvh.scryernext.ingestion.IngestionEngine
 import io.github.tzhvh.scryernext.ingestion.MediaStoreProducer
 import io.github.tzhvh.scryernext.ingestion.MlKitOcrStage
-import io.github.tzhvh.scryernext.ingestion.RoomWriteSink
+import io.github.tzhvh.scryernext.ingestion.ZvecContentStore
+import io.github.tzhvh.scryernext.ingestion.ZvecWriteSink
 import io.github.tzhvh.scryernext.ingestion.triggers.DiscoveryWorker
 import io.github.tzhvh.scryernext.ingestion.triggers.IngestionSession
 import io.github.tzhvh.scryernext.ingestion.triggers.OnOpenTrigger
@@ -53,6 +55,15 @@ class ScryerApplication : Application() {
         fun getContentResolver(): android.content.ContentResolver {
             return instance.contentResolver
         }
+
+        /**
+         * zvec Phase 2, issue 03: app-scope [ZvecContentStore] — the screenshot-content collection
+         * lifecycle owner. Exposed so [IngestionWorker] (which pulls its deps from these accessors,
+         * mirroring the [OnOpenTrigger] wiring) can construct the same [ZvecWriteSink].
+         */
+        fun getZvecContentStore(): ZvecContentStore {
+            return instance.zvecContentStore
+        }
     }
 
     private object ApplicationHolder {
@@ -61,6 +72,13 @@ class ScryerApplication : Application() {
 
     lateinit var screenshotRepository: ScreenshotRepository
     lateinit var settingsRepository: SettingsRepository
+
+    /**
+     * zvec Phase 2, issue 03 — the screenshot-content collection lifecycle owner. Constructed in
+     * [onCreate] after the repository (it owns a [ZvecCollection] at `filesDir/zvec/screenshots`).
+     * Forwarded [onTrimMemory] flush+close via [ZvecContentStore.onTrimMemoryComplete].
+     */
+    private lateinit var zvecContentStore: ZvecContentStore
 
     /**
      * Issue 10.5: app-scope ingestion progress surface + atomic §7.5 guard.
@@ -108,6 +126,19 @@ class ScryerApplication : Application() {
         }
         settingsRepository = PreferenceSettingsRepository.getInstance(this)
 
+        // zvec Phase 2, issue 03 — the write-side cutover. The collection lifecycle owner, then the
+        // sink that writes OCR content to zvec (replacing RoomWriteSink). The cache-DAO provider
+        // reaches the Room DB through the concrete repo (the factory returns ScreenshotDatabaseRepository,
+        // which exposes its DB as `internal`); the sink stays JVM-testable behind the provider lambda.
+        zvecContentStore = ZvecContentStore(filesDir, debug = isDebuggable)
+        val zvecWriteSink = ZvecWriteSink(
+            repository = screenshotRepository,
+            zvecContentStore = zvecContentStore,
+            metadataCacheDaoProvider = {
+                (screenshotRepository as ScreenshotDatabaseRepository).database.contentMetadataCacheDao()
+            },
+        )
+
         // Issue 14: constructed here (not as a field initializer) so the base Context is attached.
         ingestionSession = IngestionSession(this, ingestionProgressStore)
 
@@ -117,7 +148,7 @@ class ScryerApplication : Application() {
             engine = IngestionEngine(
                 screenshotRepository,
                 MlKitOcrStage(),
-                RoomWriteSink(screenshotRepository)
+                zvecWriteSink
             ),
             store = ingestionProgressStore,
             scope = applicationScope,
@@ -141,4 +172,22 @@ class ScryerApplication : Application() {
         // shared progress store, and notifies (with "Index now" / "Snooze") only past the threshold.
         DiscoveryWorker.enqueuePeriodic(this)
     }
+
+    /**
+     * zvec Phase 2, issue 03 — the memory-pressure close path for the zvec collection. Under
+     * [TRIM_MEMORY_COMPLETE] (and above) flush + close the [ZvecContentStore]'s handle and null it;
+     * the next data-path call re-opens it. The ONLY place `close()` is called outside tear-down — it
+     * trades a re-open latency for reclaimed native memory under pressure (cheap on the Phase-2
+     * corpus; revisit in Phase 3 once the HNSW graph is large).
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE) {
+            zvecContentStore.onTrimMemoryComplete()
+        }
+    }
+
+    /** True for debuggable builds — selects the zvec log level via [ZvecConfig.androidDefaults]. */
+    private val isDebuggable: Boolean
+        get() = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
 }

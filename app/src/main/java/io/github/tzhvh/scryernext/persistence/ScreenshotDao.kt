@@ -84,6 +84,16 @@ interface ScreenshotDao {
     @Query("SELECT uri FROM screenshot WHERE processed = 1")
     fun getIndexedUris(): List<String>
 
+    /**
+     * zvec Phase 2, issue 03: record the [contentHash] bridge column (D13) **and** retire the row
+     * (`processed = 1`) in one update. Called by `ZvecWriteSink` *after* the zvec upsert (zvec-first
+     * ordering — a crash between the two leaves the row un-`processed`, so the producer re-pulls it
+     * and `isKnown` self-heals on the next run; R8 makes the re-upsert a no-op). The hash is the
+     * bridge `getContentText` (issue 04) fetches from zvec by.
+     */
+    @Query("UPDATE screenshot SET content_hash = :contentHash, processed = 1 WHERE id = :id")
+    fun markContentIndexed(id: String, contentHash: String)
+
     @Query("SELECT * FROM screenshot WHERE processed = 0")
     fun getUnprocessed(): List<ScreenshotModel>
 
