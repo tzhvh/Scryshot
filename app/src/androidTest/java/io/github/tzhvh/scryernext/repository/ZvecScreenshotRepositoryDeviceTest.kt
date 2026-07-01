@@ -1,0 +1,156 @@
+/* -*- Mode: Java; c-basic-offset: 4; tab-width: 4; indent-tabs-mode: nil; -*-
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+package io.github.tzhvh.scryernext.repository
+
+import androidx.room.Room
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.AndroidJUnit4
+import io.github.tzhvh.scryernext.ingestion.Candidate
+import io.github.tzhvh.scryernext.ingestion.ZvecContentStore
+import io.github.tzhvh.scryernext.ingestion.ZvecWriteSink
+import io.github.tzhvh.scryernext.persistence.ContentMetadataCacheDaoFake
+import io.github.tzhvh.scryernext.persistence.ScreenshotDatabase
+import io.github.tzhvh.scryernext.persistence.ScreenshotModel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.ByteArrayInputStream
+import java.io.File
+
+/**
+ * zvec Phase 2, issue 04 — the Layer-2 integration test for the read-flip.
+ *
+ * Writes a screenshot doc via [ZvecWriteSink], then reads it back **through the façade**
+ * ([ZvecScreenshotRepository]): both `searchScreenshotList` (FTS → batched gallery-row bridge) and
+ * `getContentText` (fetch by the `content_hash` bridge column). Asserts the OCR text + locator
+ * round-trip end-to-end across the two stores — content in zvec, the gallery row in Room — exactly
+ * the shape the UI consumes.
+ *
+ * Distinct from `ZvecContentStoreDeviceTest.layer2_*` (which reads back via the store directly):
+ * this test exercises the façade's **batched** locator bridge + rank preservation + the D13 column
+ * read path, the issue-04-specific surfaces. Runs on-device because both zvec (native `.so`) and
+ * real SQLite (the Room delegate) are load-bearing — R7 (arm64 runtime correctness) is incidentally
+ * discharged on every assertion.
+ */
+@RunWith(AndroidJUnit4::class)
+class ZvecScreenshotRepositoryDeviceTest {
+
+    private val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+    private lateinit var database: ScreenshotDatabase
+    private lateinit var root: File
+
+    @Before fun setUp() {
+        database = Room.inMemoryDatabaseBuilder(ctx, ScreenshotDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        root = File(ctx.cacheDir, "zvec-issue04-${System.nanoTime()}")
+    }
+
+    @After fun tearDown() {
+        database.close()
+        root.deleteRecursively()
+    }
+
+    private fun newRepo(): Triple<ZvecScreenshotRepository, ZvecWriteSink, ZvecContentStore> {
+        val dbRepo = ScreenshotDatabaseRepository(database)
+        val store = ZvecContentStore(root, debug = false)
+        val repo = ZvecScreenshotRepository(delegate = dbRepo, store = store)
+        val cacheDao = ContentMetadataCacheDaoFake()
+        val sink = ZvecWriteSink(repo, store) { cacheDao }
+        return Triple(repo, sink, store)
+    }
+
+    /**
+     * Write via the sink, read back via the façade: search finds the screenshot (FTS hit on the OCR
+     * text), and getContentText returns the same text. The locator bridge resolves the zvec doc back
+     * to the Room gallery row; rank order is preserved (the single result is the written row).
+     */
+    @Test fun writeViaSink_searchAndContentText_readBackViaFacade() = runBlocking {
+        val (repo, sink, store) = newRepo()
+        val uri = "content://media/external/images/media/issue04-${System.nanoTime()}"
+        val screenshot = ScreenshotModel(
+            "id-1", uri, "shot.png", size = 9L, lastModified = 1L, "col-7",
+        )
+        repo.addScreenshot(listOf(screenshot))
+        val bytes = "png-bytes-issue04".toByteArray()
+
+        sink.commit(
+            Candidate(locator = uri, byteHandle = { ByteArrayInputStream(bytes) }),
+            text = "deploy the new search index tonight",
+            processed = true,
+            bytes = bytes,
+        )
+
+        // searchScreenshotList: zvec FTS → batched gallery-row bridge. The OCR text matches the query.
+        val results = repo.searchScreenshotList("deploy search index")
+        assertEquals("search must return exactly the one matching screenshot", 1, results.size)
+        assertEquals("the bridge resolves the zvec locator back to the Room gallery row", uri, results[0].uri)
+
+        // searchScreenshots (the Flow variant) emits the same result.
+        val flowResults = repo.searchScreenshots("deploy").first()
+        assertEquals("the Flow variant matches the List variant", 1, flowResults.size)
+        assertEquals(uri, flowResults[0].uri)
+
+        // getContentText: fetch by the D13 content_hash bridge column → the same OCR text.
+        val written = repo.getScreenshotByUri(uri)!!
+        val text = repo.getContentText(written)
+        assertEquals("deploy the new search index tonight", text)
+
+        // The row was retired + the bridge hash recorded.
+        assertTrue("row is retired (processed = true)", written.processed)
+        assertTrue("row carries the bridge content_hash", written.contentHash != null)
+    }
+
+    /**
+     * The stale-locator null policy: a zvec doc whose locator has no Room row (the screenshot was
+     * deleted between indexing and search) is filtered silently — it must not surface in search.
+     */
+    @Test fun staleZvecDoc_notInRoom_isFilteredSilently() = runBlocking {
+        val (repo, sink, store) = newRepo()
+        val liveUri = "content://media/live-${System.nanoTime()}"
+        val ghostUri = "content://media/ghost-${System.nanoTime()}"
+
+        // Insert + index the live row.
+        val live = ScreenshotModel("id-live", liveUri, "live.png", 1L, 1L, "col")
+        repo.addScreenshot(listOf(live))
+        val liveBytes = "live-content".toByteArray()
+        sink.commit(
+            Candidate(locator = liveUri, byteHandle = { ByteArrayInputStream(liveBytes) }),
+            text = "shared keyword matchme",
+            processed = true,
+            bytes = liveBytes,
+        )
+
+        // Index a "ghost" doc whose locator matches a query but has NO Room row — upsert directly to
+        // the SAME store (a second store against the path would contend on zvec's LOCK; the single
+        // long-lived handle is the production discipline the store enforces). This simulates a
+        // screenshot deleted from Room after indexing.
+        val ghostBytes = "ghost-content".toByteArray()
+        val ghostHash = sha256Hex(ghostBytes)
+        store.upsert(ghostHash, ghostUri, "shared keyword matchme", "col")
+        store.flush()
+
+        // Both docs match the FTS query, but only the live (Room-backed) one surfaces.
+        val results = repo.searchScreenshotList("matchme")
+        assertEquals("the stale ghost doc must be filtered; only the live row surfaces", 1, results.size)
+        assertEquals(liveUri, results[0].uri)
+    }
+
+    private fun sha256Hex(bytes: ByteArray): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        val sb = StringBuilder(digest.size * 2)
+        for (b in digest) {
+            val v = b.toInt() and 0xff
+            sb.append("0123456789abcdef"[v ushr 4]).append("0123456789abcdef"[v and 0x0f])
+        }
+        return sb.toString()
+    }
+}

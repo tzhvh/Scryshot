@@ -26,7 +26,7 @@ import io.github.tzhvh.scryernext.ingestion.MediaStoreProducer
 import io.github.tzhvh.scryernext.ingestion.MlKitOcrStage
 import io.github.tzhvh.scryernext.ingestion.Progress
 import io.github.tzhvh.scryernext.ingestion.ZvecWriteSink
-import io.github.tzhvh.scryernext.repository.ScreenshotDatabaseRepository
+import io.github.tzhvh.scryernext.repository.ZvecScreenshotRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
@@ -98,7 +98,9 @@ class IngestionWorker(
         val session = ScryerApplication.getIngestionSession()
         val producer = MediaStoreProducer(repository, ScryerApplication.getContentResolver())
         // zvec Phase 2, issue 03 — the engine's sink is ZvecWriteSink (write-side cutover). The store
-        // + cache-DAO provider come from the app scope, mirroring ScryerApplication.onCreate.
+        // + cache-DAO provider come from the app scope, mirroring ScryerApplication.onCreate. Issue 04:
+        // the repository is now the ZvecScreenshotRepository façade, which exposes the cache DAO on its
+        // Room delegate directly (no cast to the concrete DB repo).
         val zvecContentStore = ScryerApplication.getZvecContentStore()
         val engine = IngestionEngine(
             repository,
@@ -107,7 +109,7 @@ class IngestionWorker(
                 repository = repository,
                 zvecContentStore = zvecContentStore,
                 metadataCacheDaoProvider = {
-                    (repository as ScreenshotDatabaseRepository).database.contentMetadataCacheDao()
+                    (repository as ZvecScreenshotRepository).metadataCacheDao()
                 },
             ),
         )

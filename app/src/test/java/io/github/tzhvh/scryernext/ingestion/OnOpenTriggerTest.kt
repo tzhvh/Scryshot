@@ -68,8 +68,6 @@ class OnOpenTriggerTest {
         override suspend fun deleteScreenshot(screenshot: ScreenshotModel) = TODO()
         override fun searchScreenshots(queryText: String): Flow<List<ScreenshotModel>> = TODO()
         override suspend fun searchScreenshotList(queryText: String): List<ScreenshotModel> = TODO()
-        override fun getScreenshotContent(): Flow<List<io.github.tzhvh.scryernext.persistence.ScreenshotContentModel>> = TODO()
-        override suspend fun updateScreenshotContent(screenshotContent: io.github.tzhvh.scryernext.persistence.ScreenshotContentModel) = TODO()
         override suspend fun getContentText(screenshot: ScreenshotModel): String? = TODO()
         override suspend fun setupDefaultContent(context: android.content.Context) = TODO()
     }

@@ -8,7 +8,6 @@ package io.github.tzhvh.scryernext.persistence
 import androidx.lifecycle.LiveData
 import androidx.room.*
 import androidx.room.OnConflictStrategy.Companion.REPLACE
-import androidx.sqlite.db.SimpleSQLiteQuery
 
 @Dao
 interface ScreenshotDao {
@@ -35,54 +34,8 @@ interface ScreenshotDao {
     @Delete
     fun deleteScreenshot(screenshot: ScreenshotModel)
 
-//    @Query("SELECT screenshot.* FROM screenshot JOIN fts ON " +
-//            "screenshot.rowid = fts.docid WHERE fts.content_text MATCH :queryText")
-//    fun searchScreenshots(queryText: String): LiveData<List<ScreenshotModel>>
-
-    /**
-     *  SELECT
-     *      s.*
-     *  FROM
-     *      screenshot s
-     *  INNER JOIN
-     *      (SELECT
-     *          content.*
-     *      FROM
-     *          screenshot_content content
-     *      INNER JOIN
-     *          fts
-     *      ON
-     *          content.`rowid` = fts.`rowid`
-     *      WHERE
-     *          fts.content_text
-     *      MATCH
-     *          :queryText) result
-     *  ON
-     *      s.id = result.id
-     */
-    @Query("SELECT s.* FROM screenshot s INNER JOIN (SELECT content.* FROM screenshot_content content INNER JOIN fts ON content.`rowid` = fts.`rowid` WHERE fts.content_text MATCH :queryText) result ON s.id = result.id")
-    fun searchScreenshots(queryText: String): LiveData<List<ScreenshotModel>>
-
-    @Query("SELECT s.* FROM screenshot s INNER JOIN (SELECT content.* FROM screenshot_content content INNER JOIN fts ON content.`rowid` = fts.`rowid` WHERE fts.content_text MATCH :queryText) result ON s.id = result.id")
-    fun searchScreenshotList(queryText: String): List<ScreenshotModel>
-
-    @RawQuery
-    fun searchScreenshotsRaw(query: SimpleSQLiteQuery) : List<ScreenshotModel>
-
     @Query("SELECT screenshot.* FROM (SELECT id, max(last_modified) AS max_date FROM screenshot GROUP BY collection_id) AS latest INNER JOIN screenshot ON latest.id = screenshot.id AND screenshot.last_modified = latest.max_date")
     fun getCollectionCovers(): LiveData<List<ScreenshotModel>>
-
-    @Query("SELECT * FROM screenshot_content")
-    fun getScreenshotContent(): LiveData<List<ScreenshotContentModel>>
-
-    @Insert(onConflict = REPLACE)
-    fun updateContentText(contentModel: ScreenshotContentModel)
-
-    @Query("SELECT * FROM screenshot_content WHERE id = :screenshotId")
-    fun getContentText(screenshotId: String): ScreenshotContentModel?
-
-    @Query("SELECT uri FROM screenshot WHERE processed = 1")
-    fun getIndexedUris(): List<String>
 
     /**
      * zvec Phase 2, issue 03: record the [contentHash] bridge column (D13) **and** retire the row
@@ -103,4 +56,17 @@ interface ScreenshotDao {
     /** Issue 11/#4: lookup by `uri` (the indexed unique column) without materializing every row. */
     @Query("SELECT * FROM screenshot WHERE uri = :uri LIMIT 1")
     fun getScreenshotByUri(uri: String): ScreenshotModel?
+
+    /**
+     * zvec Phase 2, issue 04: the **batched** search-result → gallery-row bridge. zvec FTS search
+     * returns content docs carrying `locator` (=uri); the UI needs the [ScreenshotModel] gallery row.
+     * Resolving each result with [getScreenshotByUri] would N+1 (40 results = 40 Room queries); this
+     * resolves the whole result set in one `WHERE uri IN (...)` query.
+     *
+     * Callers preserve zvec rank order by indexing the returned rows by `uri` (not by the Room result
+     * order) when mapping back. A row deleted from Room between the zvec FTS query and this lookup is
+     * simply absent here — the façade filters those nulls silently (a stale zvec doc must not surface).
+     */
+    @Query("SELECT * FROM screenshot WHERE uri IN (:uris)")
+    fun getScreenshotsByUri(uris: List<String>): List<ScreenshotModel>
 }

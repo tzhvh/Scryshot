@@ -2,7 +2,6 @@ package io.github.tzhvh.scryernext.ingestion
 
 import android.content.Context
 import io.github.tzhvh.scryernext.persistence.CollectionModel
-import io.github.tzhvh.scryernext.persistence.ScreenshotContentModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.repository.ScreenshotRepository
 import kotlinx.coroutines.flow.Flow
@@ -86,8 +85,6 @@ class IngestionEngineTest {
         override suspend fun deleteScreenshot(screenshot: ScreenshotModel) = TODO()
         override fun searchScreenshots(queryText: String): Flow<List<ScreenshotModel>> = TODO()
         override suspend fun searchScreenshotList(queryText: String): List<ScreenshotModel> = TODO()
-        override fun getScreenshotContent(): Flow<List<ScreenshotContentModel>> = TODO()
-        override suspend fun updateScreenshotContent(screenshotContent: ScreenshotContentModel) = TODO()
         override suspend fun getContentText(screenshot: ScreenshotModel): String? = TODO()
         override suspend fun getUnprocessedScreenshotList(): List<ScreenshotModel> = TODO()
         override suspend fun getUnprocessedCount(): Int = TODO()

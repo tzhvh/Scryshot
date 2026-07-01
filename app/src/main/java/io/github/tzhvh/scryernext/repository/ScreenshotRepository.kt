@@ -8,7 +8,6 @@ package io.github.tzhvh.scryernext.repository
 import android.content.Context
 import kotlinx.coroutines.flow.Flow
 import io.github.tzhvh.scryernext.persistence.CollectionModel
-import io.github.tzhvh.scryernext.persistence.ScreenshotContentModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.ingestion.Candidate
 
@@ -40,8 +39,12 @@ interface ScreenshotRepository {
     fun searchScreenshots(queryText: String): Flow<List<ScreenshotModel>>
     suspend fun searchScreenshotList(queryText: String): List<ScreenshotModel>
 
-    fun getScreenshotContent(): Flow<List<ScreenshotContentModel>>
-    suspend fun updateScreenshotContent(screenshotContent: ScreenshotContentModel)
+    /**
+     * Fetch a screenshot's OCR content text from zvec (decision D14: kept, impl → zvec). Signature
+     * unchanged from the Room era; the impl swaps to `zvecContentStore.fetch(screenshot.contentHash)`.
+     * Returns null for a row whose [ScreenshotModel.contentHash] is null (not yet indexed into zvec)
+     * or whose zvec doc is absent.
+     */
     suspend fun getContentText(screenshot: ScreenshotModel): String?
 
     /**

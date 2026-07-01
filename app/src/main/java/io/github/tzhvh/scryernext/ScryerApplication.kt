@@ -12,6 +12,7 @@ import io.github.tzhvh.scryernext.ingestion.IngestionLogger
 import io.github.tzhvh.scryernext.ingestion.IngestionProgressStore
 import io.github.tzhvh.scryernext.repository.ScreenshotDatabaseRepository
 import io.github.tzhvh.scryernext.repository.ScreenshotRepository
+import io.github.tzhvh.scryernext.repository.ZvecScreenshotRepository
 import io.github.tzhvh.scryernext.setting.PreferenceSettingsRepository
 import io.github.tzhvh.scryernext.setting.SettingsRepository
 import io.github.tzhvh.scryernext.util.launchIO
@@ -119,24 +120,31 @@ class ScryerApplication : Application() {
         ApplicationHolder.instance = this
 
 
-        screenshotRepository = ScreenshotRepository.createRepository(this) {
+        // zvec Phase 2, issue 04 — the read-flip. The gallery + collections stay on Room
+        // (ScreenshotDatabaseRepository, unchanged); content search + content-text route to zvec via
+        // the ZvecScreenshotRepository façade. The store is constructed first (issue 03 owns the
+        // collection lifecycle); the façade wraps the Room repo + the store. The UI never knows
+        // content moved — every Flow<List<ScreenshotModel>> keeps its shape.
+        zvecContentStore = ZvecContentStore(filesDir, debug = isDebuggable)
+        val dbRepository = ScreenshotDatabaseRepository.create(this) {
             launchIO {
                 screenshotRepository.setupDefaultContent(this@ScryerApplication)
             }
         }
+        screenshotRepository = ZvecScreenshotRepository(
+            delegate = dbRepository,
+            store = zvecContentStore,
+        )
         settingsRepository = PreferenceSettingsRepository.getInstance(this)
 
-        // zvec Phase 2, issue 03 — the write-side cutover. The collection lifecycle owner, then the
-        // sink that writes OCR content to zvec (replacing RoomWriteSink). The cache-DAO provider
-        // reaches the Room DB through the concrete repo (the factory returns ScreenshotDatabaseRepository,
-        // which exposes its DB as `internal`); the sink stays JVM-testable behind the provider lambda.
-        zvecContentStore = ZvecContentStore(filesDir, debug = isDebuggable)
+        // zvec Phase 2, issue 03 — the write-side cutover. The sink writes OCR content to zvec
+        // (replacing the deleted RoomWriteSink). The cache-DAO provider reaches the Room DB through
+        // the concrete DB repo (the façade exposes its DB via the delegate); the sink stays
+        // JVM-testable behind the provider lambda.
         val zvecWriteSink = ZvecWriteSink(
             repository = screenshotRepository,
             zvecContentStore = zvecContentStore,
-            metadataCacheDaoProvider = {
-                (screenshotRepository as ScreenshotDatabaseRepository).database.contentMetadataCacheDao()
-            },
+            metadataCacheDaoProvider = { dbRepository.database.contentMetadataCacheDao() },
         )
 
         // Issue 14: constructed here (not as a field initializer) so the base Context is attached.

@@ -32,8 +32,8 @@ import io.github.tzhvh.scryernext.collectionview.showScreenshotInfoDialog
 import io.github.tzhvh.scryernext.collectionview.showShareScreenshotDialog
 import io.github.tzhvh.scryernext.databinding.ActivityDetailPageBinding
 import io.github.tzhvh.scryernext.ingestion.MlKitOcrStage
+import io.github.tzhvh.scryernext.ScryerApplication
 import io.github.tzhvh.scryernext.persistence.CollectionModel
-import io.github.tzhvh.scryernext.persistence.ScreenshotContentModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.preference.PreferenceWrapper
 import io.github.tzhvh.scryernext.promote.Promoter
@@ -50,6 +50,9 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         private const val EXTRA_SCREENSHOT_ID = "screenshot_id"
         private const val EXTRA_COLLECTION_ID = "collection_id"
         private const val EXTRA_SEARCH_KEYWORD = "search_keyword"
+
+        /** SHA-256 hex lookup — mirrors `ZvecWriteSink` / the repo's shared helper. */
+        val HEX = "0123456789abcdef".toCharArray()
 
         private const val SUPPORT_SLIDE = true
 
@@ -377,7 +380,7 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
                 // §7.2 (issue 15): a success (incl. WeiredImageSize success-with-warning)
                 // writes the recognized text + processed=true. Write runs on Default so the
                 // isRecognizing gate below still sees the right state regardless of write timing.
-                writeOcrResultToDb(screenshot, result.value.text)
+                writeOcrResultToDb(screenshot, result.value.text, result.bytes)
 
                 if (isRecognizing) {
                     isTextMode = true
@@ -398,7 +401,10 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
                 // files processed=false, so issue 13's DiscoveryWorker re-counted them forever
                 // (the backlog notification that never clears — ADR 0004 §7.2). Unavailable is a
                 // transient failure (re-attemptable) and still writes nothing, by contrast.
-                writeOcrResultToDb(screenshot, "")
+                // zvec Phase 2 issue 04: the bytes (if any) upsert as processed-but-empty content —
+                // the same shape the engine's ZvecWriteSink writes. A decode failure (no bytes)
+                // only flips the Room row.
+                writeOcrResultToDb(screenshot, "", result.bytes)
                 ScryerToast.makeText(this@DetailPageActivity,
                         getString(R.string.detail_ocr_error_failed),
                         Toast.LENGTH_SHORT).show()
@@ -410,16 +416,54 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
     }
 
     /**
-     * DetailPage's single-file write (issue 15). Mirrors the engine's [RoomWriteSink] two-step
-     * — content row + `processed=true` on the screenshot row — against the repository exposed by
-     * [viewModel] (which delegates [ScreenshotRepository]). Uses [ScreenshotContentModel] for the
-     * text row and copies the in-hand [ScreenshotModel] with `processed=true`, exactly as
-     * `RoomWriteSink.commit` does for the bulk path. Transient (Unavailable) outcomes do NOT call
-     * this — they leave the row unprocessed so the next run re-attempts.
+     * DetailPage's single-file write (issue 15) — zvec Phase 2 issue 04: re-pointed to the **same
+     * zvec-upsert-then-[markContentIndexed] two-step** the engine's [io.github.tzhvh.scryernext.ingestion.ZvecWriteSink]
+     * performs. The old path wrote a `ScreenshotContentModel` Room row + flipped `processed`; the Room
+     * content table is gone (issue 04), so content goes to zvec and Room just records the bridge hash
+     * + retires the row.
+     *
+     * **Call order is load-bearing (D13): zvec-first, then Room.** A crash between the two leaves the
+     * row un-`processed` → the producer re-pulls it → the engine re-reads, `isKnown` returns `true`
+     * (hash already in zvec), the dedup-skip seam retires the row, and R8 makes the would-be re-upsert
+     * a no-op. Self-healing, no orphans. Never reverse — Room-first would leave a row marked
+     * `processed = 1` pointing at a nonexistent zvec doc.
+     *
+     * [bytes] is the file content [runTextRecognition] read once (issue 15 owns the READ); the hash is
+     * computed from it with no re-open (single-open, matching the engine sink). A null [bytes] (a
+     * decode failure that never read the file) skips the zvec upsert and only retires the Room row —
+     * there's no content to index. Transient (Unavailable) outcomes never call this.
      */
-    private suspend fun writeOcrResultToDb(screenshot: ScreenshotModel, contentText: String) {
-        viewModel.updateScreenshotContent(ScreenshotContentModel(screenshot.id, contentText))
-        viewModel.updateScreenshots(listOf(screenshot.copy(processed = true)))
+    private suspend fun writeOcrResultToDb(screenshot: ScreenshotModel, contentText: String, bytes: ByteArray?) {
+        val store = ScryerApplication.getZvecContentStore()
+        // ── zvec-first (D13) ──────────────────────────────────────────────────────────────
+        // Upsert content to zvec on the content_hash PK (R8: idempotent), then flush for durability.
+        // Empty `contentText` is the processed-but-empty case (§7.2 permanent-content failure).
+        if (bytes != null) {
+            val contentHash = sha256Hex(bytes)
+            store.upsert(
+                contentHash = contentHash,
+                locator = screenshot.uri,
+                content = contentText,
+                collectionId = screenshot.collectionId,
+            )
+            store.flush()
+            // ── then Room: record the bridge hash + retire the row (one update). ──────────────
+            viewModel.markContentIndexed(screenshot, contentHash)
+        } else {
+            // Decode failure — no bytes to hash/index; just retire the row so it leaves the queue.
+            viewModel.updateScreenshots(listOf(screenshot.copy(processed = true)))
+        }
+    }
+
+    /** SHA-256 hex — the zvec content_hash PK. Mirrors `ZvecWriteSink` / the repo's shared helper. */
+    private fun sha256Hex(bytes: ByteArray): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        val sb = StringBuilder(digest.size * 2)
+        for (b in digest) {
+            val v = b.toInt() and 0xff
+            sb.append(HEX[v ushr 4]).append(HEX[v and 0x0f])
+        }
+        return sb.toString()
     }
 
     private fun showConnectPromptSnackbar() {
@@ -454,14 +498,14 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         } catch (e: Throwable) {
             return Result.Failed("decode failed: " + e.message)
         }
-
         return when (val outcome = ocrStage.recognize(bytes)) {
             is OcrTextResult.Success -> {
                 if (isValidSize(size.width, size.height)) {
-                    Result.Success(outcome.text)
+                    Result.Success(outcome.text, bytes)
                 } else {
                     Result.WeiredImageSize(
                             outcome.text,
+                            bytes,
                             "weird image size: ${size.width}x${size.height}"
                     )
                 }
@@ -469,7 +513,10 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
             is OcrTextResult.TransientFailure ->
                 Result.Unavailable("recognize failed: " + outcome.cause.message)
             OcrTextResult.PermanentContentFailure ->
-                Result.Failed("recognize failed: permanent content failure")
+                // §7.2 permanent-content failure: the bytes were read but the image is illegible.
+                // Carry them so writeOcrResultToDb can upsert processed-but-empty content to zvec
+                // (the same hash the engine sink would write), keeping the two write paths identical.
+                Result.Failed("recognize failed: permanent content failure", bytes)
         }
     }
 
@@ -779,13 +826,21 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         }
     }
 
+    /**
+     * The OCR outcome taxonomy. The `Success` / `Failed` arms carry [bytes] — the file content
+     * [runTextRecognition] read **once** (issue 15 owns the READ) — so the zvec write
+     * ([writeOcrResultToDb]) can compute the content_hash from the same bytes with no re-open
+     * (D13's single-open rule, applied to this UI path the same way it applies to the engine sink).
+     * `Unavailable` (transient) carries no bytes — it writes nothing.
+     */
     sealed class Result {
-        open class Success(val value: Text) : Result()
+        open class Success(val value: Text, val bytes: ByteArray) : Result()
         class WeiredImageSize(
                 value: Text,
+                bytes: ByteArray,
                 @Suppress("unused") val msg: String
-        ) : Success(value)
-        open class Failed(@Suppress("unused") val msg: String) : Result()
+        ) : Success(value, bytes)
+        open class Failed(@Suppress("unused") val msg: String, val bytes: ByteArray? = null) : Result()
         class Unavailable(msg: String) : Failed(msg)
     }
 

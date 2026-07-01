@@ -19,10 +19,14 @@ import kotlinx.coroutines.withContext
 import io.github.tzhvh.scryernext.R
 import io.github.tzhvh.scryernext.persistence.*
 import io.github.tzhvh.scryernext.ingestion.Candidate
+import java.security.MessageDigest
 
 class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : ScreenshotRepository {
 
     companion object {
+        /** SHA-256 hex lookup — shared with `ZvecWriteSink` + the façade's read path. */
+        val HEX = "0123456789abcdef".toCharArray()
+
         fun create(context: Context, onCreated: () -> Unit): ScreenshotDatabaseRepository {
             val callback = object : RoomDatabase.Callback() {
                 override fun onCreate(db: SupportSQLiteDatabase) {
@@ -32,7 +36,7 @@ class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : 
             return ScreenshotDatabaseRepository(
                     Room.databaseBuilder(context.applicationContext, ScreenshotDatabase::class.java,
                             "screenshot-db")
-                            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                             .addCallback(callback)
                             .build()
             )
@@ -125,6 +129,21 @@ class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : 
         private val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE `screenshot` ADD COLUMN `content_hash` TEXT")
+            }
+        }
+
+        /**
+         * zvec Phase 2, issue 04: drops the Room content tables (`screenshot_content` + its FTS4
+         * shadow `fts`). OCR content now lives in zvec, surfaced through `ZvecScreenshotRepository`'s
+         * search + `getContentText` (FTS over zvec's `content` field). Hard cutover — no installed
+         * base, so nothing to salvage; the tables are simply dropped. `ScreenshotModel` (the gallery
+         * row) + `CollectionModel` + `ContentMetadataCache` all stay (D8 — Room keeps the listing /
+         * enumeration / queue jobs zvec can't do).
+         */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("DROP TABLE IF EXISTS `screenshot_content`")
+                database.execSQL("DROP TABLE IF EXISTS `fts`")
             }
         }
     }
@@ -243,29 +262,25 @@ class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : 
         }
     }
 
-    override fun searchScreenshots(queryText: String): Flow<List<ScreenshotModel>> {
-        return MatchStrategy().search(queryText, database)
-    }
+    /**
+     * zvec Phase 2, issue 04: content search is now served from zvec by [ZvecScreenshotRepository],
+     * which overrides this method. The Room FTS4 search JOIN died with the content tables (issue 04);
+     * there is no Room-side search to delegate to. Reaching this base impl means the façade wasn't
+     * wired — fail loudly rather than return a silent empty result (a "search works" symptom would
+     * hide the wiring regression).
+     */
+    override fun searchScreenshots(queryText: String): Flow<List<ScreenshotModel>> =
+        throw UnsupportedOperationException("searchScreenshots is served by ZvecScreenshotRepository (zvec); wire the façade.")
 
-    override suspend fun searchScreenshotList(queryText: String): List<ScreenshotModel> {
-        return MatchStrategy().searchList(queryText, database)
-    }
+    override suspend fun searchScreenshotList(queryText: String): List<ScreenshotModel> =
+        throw UnsupportedOperationException("searchScreenshotList is served by ZvecScreenshotRepository (zvec); wire the façade.")
 
-    override fun getScreenshotContent(): Flow<List<ScreenshotContentModel>> {
-        return database.screenshotDao().getScreenshotContent().asFlow()
-    }
-
-    override suspend fun updateScreenshotContent(screenshotContent: ScreenshotContentModel) {
-        withContext(Dispatchers.IO) {
-            database.screenshotDao().updateContentText(screenshotContent)
-        }
-    }
-
-    override suspend fun getContentText(screenshot: ScreenshotModel): String? {
-        return withContext(Dispatchers.IO) {
-            database.screenshotDao().getContentText(screenshot.id)?.contentText
-        }
-    }
+    /**
+     * zvec Phase 2, issue 04: content-text reads are served from zvec by [ZvecScreenshotRepository],
+     * which overrides this method. The Room `screenshot_content` row died with the content tables.
+     */
+    override suspend fun getContentText(screenshot: ScreenshotModel): String? =
+        throw UnsupportedOperationException("getContentText is served by ZvecScreenshotRepository (zvec); wire the façade.")
 
     override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): Boolean = withContext(Dispatchers.IO) {
         // ── Phase 2 issue 02 (READ→DEDUP reorder): the engine has already opened+read the file once
@@ -275,14 +290,14 @@ class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : 
         // 1. Cheap path — metadata cache hit on (locator, mtime, size)? → no hash, no open.
         //    Bridge mtime/size from the matching ScreenshotModel row (the producer has already
         //    inserted it — Model B). A hit returns the cached `indexed` flag directly.
-        // 2. Miss → fall back to the locator/URI resolution against the processed set (the Room-era
-        //    identity model). NOTE: the SHA-256 hash of `bytes` is the zvec-era identity, but zvec
-        //    is not yet the store (issue 03 swaps this for zvec PK existence + a cache-hash index).
-        //    The signature carries `bytes` now so issue 03 lands with NO engine change — it only
-        //    edits this method's miss branch.
+        // 2. Miss → hash the bytes (SHA-256, the zvec-era identity) and check the cache's hash index
+        //    (a duplicate file under a different uri warms it earlier in the same run). The cache's
+        //    `indexed` flag is the zvec-PK-existence proxy: `ZvecWriteSink` sets it after the zvec
+        //    upsert (issue 03), so a hit means "content already in zvec." A genuine miss (hash not in
+        //    the cache at all) returns false — the engine proceeds to OCR + write.
         //
-        //    A producer-pre-computed identity still wins: under Room the locator *is* the identity
-        //    (uri is the unique index), so a non-null identity is treated as the locator to look up.
+        //    A producer-pre-computed identity still wins on the cheap path's row lookup; under Room
+        //    the locator *is* the identity (uri is the unique index).
         val screenshot = candidate.locator?.let { database.screenshotDao().getScreenshotByUri(it) }
         if (screenshot != null) {
             // The cache key is the filesystem triple; a change to mtime/size naturally forces a miss
@@ -291,11 +306,10 @@ class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : 
                 .lookup(screenshot.uri, screenshot.lastModified, screenshot.size)
                 ?.let { return@withContext it.indexed }
         }
-        when {
-            candidate.identity != null -> candidate.identity in dbKeysByLocator()
-            candidate.locator != null -> candidate.locator in dbKeysByLocator()
-            else -> false
-        }
+        // Miss path: hash the bytes, consult the cache's hash index. The hash index is the
+        // cross-locator dedup path (same content under a different uri) and the zvec-existence proxy.
+        val hash = sha256(bytes)
+        database.contentMetadataCacheDao().lookupByHash(hash)?.indexed ?: false
     }
 
     override suspend fun markProcessed(candidate: Candidate) {
@@ -338,43 +352,34 @@ class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : 
         }
     }
 
-    private fun dbKeysByLocator(): Set<String> {
-        return database.screenshotDao().getIndexedUris().toSet()
+    /**
+     * zvec Phase 2, issue 04: the **batched** search-result → gallery-row bridge, exposed for
+     * [ZvecScreenshotRepository]'s read-flip. zvec FTS returns content docs carrying `locator`
+     * (=uri); resolving each with [getScreenshotByUri] would N+1. This resolves the whole result set
+     * in one `WHERE uri IN (...)` query. Callers index the result by `uri` to preserve zvec rank
+     * order; a locator absent here means the screenshot was deleted from Room between the zvec FTS
+     * query and this lookup (the façade filters those nulls silently).
+     */
+    suspend fun getScreenshotsByUri(uris: List<String>): List<ScreenshotModel> {
+        if (uris.isEmpty()) return emptyList()
+        return withContext(Dispatchers.IO) {
+            database.screenshotDao().getScreenshotsByUri(uris)
+        }
     }
 
-    private interface SearchStrategy {
-        fun search(
-                queryText: String,
-                database: ScreenshotDatabase
-        ): Flow<List<ScreenshotModel>>
-
-        suspend fun searchList(
-                queryText: String,
-                database: ScreenshotDatabase
-        ): List<ScreenshotModel>
-    }
-
-    private class MatchStrategy : SearchStrategy {
-        override fun search(
-                queryText: String,
-                database: ScreenshotDatabase
-        ): Flow<List<ScreenshotModel>> {
-            return database.screenshotDao().searchScreenshots(processQuery(queryText)).asFlow()
+    /**
+     * SHA-256 hex of [bytes] — the zvec-era content identity. Shared with `ZvecWriteSink` / the
+     * façade's read path so every side computes the same PK. (Issue 04: the base repo's `isKnown`
+     * miss-path hashes here and checks the cache's hash index; the sink hashes here and upserts to
+     * zvec on the result.)
+     */
+    internal fun sha256(bytes: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+        val sb = StringBuilder(digest.size * 2)
+        for (b in digest) {
+            val v = b.toInt() and 0xff
+            sb.append(HEX[v ushr 4]).append(HEX[v and 0x0f])
         }
-
-        override suspend fun searchList(
-                queryText: String,
-                database: ScreenshotDatabase
-        ): List<ScreenshotModel> {
-            return withContext(Dispatchers.IO) {
-                database.screenshotDao().searchScreenshotList(processQuery(queryText))
-            }
-        }
-
-        private fun processQuery(queryText: String): String {
-            return queryText
-                    .split("[ \"\\-*]".toRegex())
-                    .joinToString(" ", "", "*")
-        }
+        return sb.toString()
     }
 }

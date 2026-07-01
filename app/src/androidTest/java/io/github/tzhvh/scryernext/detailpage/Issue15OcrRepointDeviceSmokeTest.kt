@@ -13,8 +13,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.AndroidJUnit4
 import io.github.tzhvh.scryernext.ScryerApplication
 import io.github.tzhvh.scryernext.ingestion.MlKitOcrStage
+import io.github.tzhvh.scryernext.ingestion.ZvecContentStore
 import io.github.tzhvh.scryernext.persistence.CollectionModel
-import io.github.tzhvh.scryernext.persistence.ScreenshotContentModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -114,32 +114,42 @@ class Issue15OcrRepointDeviceSmokeTest {
 
     @Test
     fun write_successAndPermanentFailure_bothMarkProcessed_transientDoesNot() {
-        // §7.2 single-file write contract (DetailPageActivity.writeOcrResultToDb's behaviour).
-        // Mirror its two-step: content row + processed=true on the screenshot row, via the
-        // repository the viewModel delegates. Both Success and PermanentContentFailure flip
-        // processed true; TransientFailure does not write.
+        // §7.2 single-file write contract (DetailPageActivity.writeOcrResultToDb's behaviour) —
+        // zvec Phase 2 issue 04: the write is now the zvec-upsert + markContentIndexed two-step
+        // (the same shape the engine's ZvecWriteSink performs). Both Success and PermanentContentFailure
+        // upsert to zvec (real / empty text) then markContentIndexed (records the bridge hash + flips
+        // processed=true); TransientFailure does not write.
         val repo = ScryerApplication.getScreenshotRepository()
+        val store = ScryerApplication.getZvecContentStore()
 
         // --- success path ---
         val okRow = unprocessedRow()
         runBlocking { repo.addScreenshot(listOf(okRow)) }
         insertedIds += okRow.id
+        val okBytes = "recognized".toByteArray()
+        val okHash = sha256Hex(okBytes)
         runBlocking {
-            // writeOcrResultToDb(screenshot, text) — the success branch
-            repo.updateScreenshotContent(ScreenshotContentModel(okRow.id, "recognized text"))
-            repo.updateScreenshots(listOf(okRow.copy(processed = true)))
+            // writeOcrResultToDb(screenshot, text, bytes) — the success branch: zvec-first (D13),
+            // then markContentIndexed (records the bridge hash + retires the row).
+            store.upsert(okHash, okRow.uri, "recognized text", okRow.collectionId)
+            store.flush()
+            repo.markContentIndexed(okRow, okHash)
         }
         val afterOk = runBlocking { repo.getScreenshot(okRow.id) }
         assertTrue("success write must set processed=true", afterOk!!.processed)
+        assertEquals("success write must record the bridge content_hash", okHash, afterOk.contentHash)
 
         // --- permanent-content failure path (§7.2 fix: empty + processed=true) ---
         val badRow = unprocessedRow()
         runBlocking { repo.addScreenshot(listOf(badRow)) }
         insertedIds += badRow.id
+        val badBytes = ByteArray(8) { 0xFF.toByte() }
+        val badHash = sha256Hex(badBytes)
         runBlocking {
-            // writeOcrResultToDb(screenshot, "") — the Failed branch (empty text + processed=true)
-            repo.updateScreenshotContent(ScreenshotContentModel(badRow.id, ""))
-            repo.updateScreenshots(listOf(badRow.copy(processed = true)))
+            // writeOcrResultToDb(screenshot, "", bytes) — the Failed branch (empty text + processed=true).
+            store.upsert(badHash, badRow.uri, "", badRow.collectionId)
+            store.flush()
+            repo.markContentIndexed(badRow, badHash)
         }
         val afterBad = runBlocking { repo.getScreenshot(badRow.id) }
         assertTrue(
@@ -149,7 +159,7 @@ class Issue15OcrRepointDeviceSmokeTest {
         )
         val contentOfBad = runBlocking { repo.getContentText(afterBad) }
         assertEquals(
-            "permanent-content failure writes empty text (processed-but-empty, §7.2)",
+            "permanent-content failure writes empty text to zvec (processed-but-empty, §7.2)",
             "", contentOfBad
         )
 
@@ -194,4 +204,15 @@ class Issue15OcrRepointDeviceSmokeTest {
         collectionId = CollectionModel.UNCATEGORIZED,
         processed = false
     )
+
+    /** SHA-256 hex — mirrors DetailPageActivity.writeOcrResultToDb's hash + the engine's ZvecWriteSink. */
+    private fun sha256Hex(bytes: ByteArray): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        val sb = StringBuilder(digest.size * 2)
+        for (b in digest) {
+            val v = b.toInt() and 0xff
+            sb.append("0123456789abcdef"[v ushr 4]).append("0123456789abcdef"[v and 0x0f])
+        }
+        return sb.toString()
+    }
 }

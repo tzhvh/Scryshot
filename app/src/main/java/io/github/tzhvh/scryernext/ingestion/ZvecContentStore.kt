@@ -11,6 +11,7 @@ import io.github.tzhvh.scryernext.zvec.CollectionSchema
 import io.github.tzhvh.scryernext.zvec.FieldSchema
 import io.github.tzhvh.scryernext.zvec.FieldType
 import io.github.tzhvh.scryernext.zvec.IndexParams
+import io.github.tzhvh.scryernext.zvec.QueryRequest
 import io.github.tzhvh.scryernext.zvec.Zvec
 import io.github.tzhvh.scryernext.zvec.ZvecCollection
 import io.github.tzhvh.scryernext.zvec.ZvecConfig
@@ -186,6 +187,35 @@ open class ZvecContentStore(
         return withContext(Dispatchers.IO) { collection!!.stats().docCount }
     }
 
+    /**
+     * Issue 04 — the read-flip search path. Runs a pure-FTS query against the `content` field and
+     * returns the matched docs in zvec's rank order (the engine returns ranked results; the SDK
+     * surfaces the order untouched). The façade projects `locator` (the gallery-row bridge) + `content`
+     * (so [getContentText] callers see text without a second round-trip), then resolves the gallery
+     * rows in one batched Room query.
+     *
+     * [matchString] is the natural-language FTS payload (zvec's "match string" recall path), NOT the
+     * boolean `query_string`. A live-engine probe (2026-07-01) confirmed: multi-term match strings
+     * work, case is normalized by the `lowercase` filter, and a no-match query returns an empty list
+     * (not an error). The old Room-era `processQuery` trailing-`*` wildcard ("wifi* bluetooth*") also
+     * matches fine, so the existing UI query shape carries over unchanged.
+     *
+     * `open` so a JVM test can record the call without the `.so`.
+     */
+    open suspend fun search(matchString: String, topK: Int = DEFAULT_SEARCH_TOPK): List<ZvecDoc> {
+        ensureOpen()
+        return withContext(Dispatchers.IO) {
+            collection!!.query(
+                QueryRequest(
+                    field = FIELD_CONTENT,
+                    fts = matchString,
+                    topK = topK,
+                ),
+                outputFields = listOf(FIELD_LOCATOR, FIELD_CONTENT),
+            )
+        }
+    }
+
     /** Flush in-memory writes to disk (the engine's durability flush). No-op if not yet opened. */
     open suspend fun flush() {
         val col = collection ?: return
@@ -218,6 +248,13 @@ open class ZvecContentStore(
         private const val TAG = "ZvecContentStore"
         private const val LOCK_FILE = "LOCK"
         private const val COLLECTION_NAME = "screenshots"
+
+        /**
+         * The search topK. The old Room FTS query returned all matches (no LIMIT); zvec needs a
+         * finite topK. 200 is comfortably above any realistic per-query match count on a personal
+         * screenshot corpus while keeping the result set bounded. Tunable.
+         */
+        const val DEFAULT_SEARCH_TOPK = 200
 
         const val FIELD_CONTENT_HASH = "content_hash"
         const val FIELD_LOCATOR = "locator"
