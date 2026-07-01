@@ -69,6 +69,13 @@ android {
         viewBinding = true
         buildConfig = true
     }
+
+    testOptions {
+        // JVM unit tests touch production code that calls android.util.Log (e.g. ZvecWriteSink's
+        // missing-row warning). Without this, unmocked android.jar stubs throw; with it they return
+        // defaults, so the Log call is a no-op on the JVM and the behaviour under test stays visible.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 // The preview flavor ships release-only — drop its debug variants.
@@ -88,6 +95,9 @@ ksp {
 }
 
 dependencies {
+    // zvec SDK (zvec Phase 2, issue 03 — the write-side cutover writes OCR content to zvec).
+    implementation(project(":zvec-android"))
+
     // AndroidX
     implementation(libs.appcompat)
     implementation(libs.material)
