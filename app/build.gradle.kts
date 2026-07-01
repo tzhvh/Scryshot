@@ -144,4 +144,6 @@ dependencies {
     androidTestImplementation(libs.espresso.core)
     // WorkManager on-device testing (issue 12/13/14 device smoke).
     androidTestImplementation(libs.work.testing)
+    // Room on-device DAO/migration testing (zvec phase 2 issue 01).
+    androidTestImplementation(libs.room.testing)
 }

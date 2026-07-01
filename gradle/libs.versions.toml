@@ -77,6 +77,9 @@ navigation-fragment-ktx = { module = "androidx.navigation:navigation-fragment-kt
 # Room (issue 16: kapt→KSP)
 room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+# On-device Room DAO/migration testing (zvec phase 2 issue 01: ContentMetadataCacheDaoTest uses
+# Room.inMemoryDatabaseBuilder; also enables MigrationTestHelper for the v4→v5 schema).
+room-testing = { module = "androidx.room:room-testing", version.ref = "room" }
 
 # WorkManager (issue 15: moved to androidx group with -ktx variant)
 work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }

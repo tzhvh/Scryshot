@@ -32,7 +32,7 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
             return ScreenshotDatabaseRepository(
                     Room.databaseBuilder(context.applicationContext, ScreenshotDatabase::class.java,
                             "screenshot-db")
-                            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                             .addCallback(callback)
                             .build()
             )
@@ -83,7 +83,33 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE `screenshot` ADD COLUMN `processed` INTEGER NOT NULL DEFAULT 0")
                 database.execSQL(
-                        "UPDATE `screenshot` SET `processed` = 1 WHERE `id` IN (SELECT `id` FROM `screenshot_content` WHERE `content_text` IS NOT NULL)"
+                    "UPDATE `screenshot` SET `processed` = 1 WHERE `id` IN (SELECT `id` FROM `screenshot_content` WHERE `content_text` IS NOT NULL)"
+                )
+            }
+        }
+
+        /**
+         * zvec Phase 2, issue 01: adds the [ContentMetadataCache] table — the dedup fast path for
+         * content_hash identity. Purely additive (no existing column/table changes), starts empty,
+         * and warms lazily as the engine ingests. There is no installed base to backfill, so no
+         * `processed`-flip or content migration is needed here (hard cutover — see ZVEC_PHASE2.md).
+         * DDL must mirror exactly what Room generates from the @Entity (composite PK + the
+         * content_hash index + the `indexed` default) so the schema-export stays valid.
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `content_metadata_cache` (" +
+                    "`locator` TEXT NOT NULL, " +
+                    "`mtime` INTEGER NOT NULL, " +
+                    "`size` INTEGER NOT NULL, " +
+                    "`content_hash` TEXT NOT NULL, " +
+                    "`indexed` INTEGER NOT NULL DEFAULT 0, " +
+                    "PRIMARY KEY(`locator`, `mtime`, `size`))"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_content_metadata_cache_content_hash` " +
+                    "ON `content_metadata_cache` (`content_hash`)"
                 )
             }
         }
