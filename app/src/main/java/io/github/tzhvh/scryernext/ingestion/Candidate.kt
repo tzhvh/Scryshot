@@ -23,7 +23,7 @@ import java.io.InputStream
  *   "identity is never on the Candidate" to permit a producer that has already
  *   hashed (e.g. the SAF I/O-pool) to pass it through, avoiding re-derivation.
  *   The engine **never** resolves identity itself; it delegates to
- *   `repository.isKnown(candidate)`, which honours [identity] when present and
+ *   `repository.isKnown(candidate, bytes)`, which honours [identity] when present and
  *   otherwise falls back to its own identity model.
  *
  * See: [ADR 0004 §3](../../../../../docs/adr/0004-ingestion-engine-and-trigger-architecture-v2.md)

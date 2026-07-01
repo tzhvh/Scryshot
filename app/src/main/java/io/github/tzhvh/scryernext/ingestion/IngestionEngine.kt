@@ -30,8 +30,11 @@ import kotlinx.coroutines.flow.toList
  *   ([OcrStage]). This is what makes it JVM-unit-testable without Robolectric
  *   (Phase 0 issues `03`/`04` established ML Kit can't run on the JVM).
  *
- * Per candidate, the loop (ADR 0004 §3, §5, §7.2, §7.4):
- * 1. [ScreenshotRepository.isKnown] → skip (no OCR, no write). Dedup *is* the
+ * Per candidate, the loop (ADR 0004 §3, §5, §7.2, §7.4; Amendment 2 [G1] — READ→DEDUP order):
+ * 0. READ [Candidate.byteHandle] **once** (the engine owns the single open — honouring
+ *    Candidate's "at most once" contract and avoiding SAF's double-`open()` tax).
+ * 1. [ScreenshotRepository.isKnown] on the read bytes → [ScreenshotRepository.markProcessed]
+ *    (retire the row from the producer's queue) + skip (no OCR, no write). Dedup *is* the
  *    resumption checkpoint (§5): completed candidates leave the unindexed set.
  * 2. else [OcrStage.attempt] → branch on [OcrOutcome] per the three-class failure
  *    taxonomy (ADR 0004 §7.2, issue `07`):
@@ -107,25 +110,41 @@ class IngestionEngine(
         emit(Progress.Indexing(current = 0, total = total, failedCount = 0, stageTimings = timings.snapshot()))
 
         for (candidate in collected) {
-            if (repository.isKnown(candidate)) {
-                // Dedup-as-skip (ADR 0004 §3, §5). Still emit so a UI sees the bar move past
-                // already-indexed candidates; the run's completion fraction advances.
-                // No timing recorded — dedup-skipped candidates did no OCR work this run.
+            // ── READ→DEDUP reorder (ADR 0004 Amendment 2 [G1]; zvec Phase 2 issue 02) ──────────
+            // The engine opens [Candidate.byteHandle] exactly once and reads the bytes *before*
+            // dedup, then hands the same `bytes` to OCR. This is mandated by SAF's FUSE/Binder
+            // cost model (a producer-side pre-hash would open→hash→close, then the engine would
+            // re-open for OCR — paying the open() tax twice per new file), and the loop shape is
+            // identical whether the source is MediaStore or SAF, so doing it now (against MediaStore,
+            // while content is still Room) rather than deferring to the SAF phase is strictly better.
+            // Dedup is delegated to [repository.isKnown], which resolves the hash from these `bytes`
+            // (with a no-open metadata-cache fast path first) — the engine never resolves identity.
+            val readStart = System.nanoTime()
+            val bytes = candidate.byteHandle().use { it.readBytes() }
+            val readMs = msSince(readStart)
+
+            if (repository.isKnown(candidate, bytes)) {
+                // Dedup-as-skip (ADR 0004 §3, §5). Retire the row from the producer's
+                // `processed = 0` queue so it isn't re-pulled/re-read/re-hashed every run — this is
+                // the `processed`-vs-`isKnown` seam (the sink is NOT called on the skip path, so
+                // without [ScreenshotRepository.markProcessed] the row would stay unprocessed).
+                // Still emit so a UI sees the bar move past already-indexed candidates; the run's
+                // completion fraction advances. No timing recorded for OCR/write — dedup-skipped
+                // candidates did no OCR work this run (the read was still real and timed above, but
+                // it isn't folded into the rolling average because the skip branch's per-file cost
+                // profile — a cheap cache hit in steady state — would depress the read EMA toward
+                // the cache-hit latency, misrepresenting the first-ingest cost Phase 5 budgets on).
+                repository.markProcessed(candidate)
                 emit(Progress.Indexing(current = indexed + failed, total = total,
                                        failedCount = failed, stageTimings = timings.snapshot()))
                 continue
             }
 
             // ----- stage timing boundaries (issue 07; see class KDoc) -----
-            // The engine owns the READ (byteHandle, called exactly once — honouring
-            // Candidate's "at most once" contract and avoiding double-I/O); the injected
-            // OcrStage owns DECODE+OCR over the already-read bytes (collapsing into ocrMs
-            // until issue 08 may split decode out inside the stage); WRITE is the sink.
+            // The engine owns the READ (above, called exactly once); the injected OcrStage owns
+            // DECODE+OCR over the already-read bytes (collapsing into ocrMs until issue 08 may
+            // split decode out inside the stage); WRITE is the sink.
             // System.nanoTime() is the JVM/Android primitive — no Guava Stopwatch dependency.
-            val readStart = System.nanoTime()
-            val bytes = candidate.byteHandle().use { it.readBytes() }
-            val readMs = msSince(readStart)
-
             val ocrStart = System.nanoTime()
             val outcome = ocr.attempt(candidate, bytes)
             val ocrMs = msSince(ocrStart)

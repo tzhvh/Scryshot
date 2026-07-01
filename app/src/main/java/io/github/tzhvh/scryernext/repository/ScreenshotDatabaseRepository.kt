@@ -253,17 +253,46 @@ class ScreenshotDatabaseRepository(private val database: ScreenshotDatabase) : S
         }
     }
 
-    override suspend fun isKnown(candidate: Candidate): Boolean {
-        return withContext(Dispatchers.IO) {
-            when {
-                // A producer handed us a pre-computed identity. Under Room the locator *is* the identity (uri is
-                // the unique index), so treat a non-null identity as the locator to look up.
-                candidate.identity != null -> candidate.identity in dbKeysByLocator()
-                // No pre-computed identity: fall back to the locator (URI) lookup.
-                candidate.locator != null -> candidate.locator in dbKeysByLocator()
-                // Neither identity nor locator: conservatively unknown (the engine will attempt it).
-                else -> false
-            }
+    override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): Boolean = withContext(Dispatchers.IO) {
+        // ── Phase 2 issue 02 (READ→DEDUP reorder): the engine has already opened+read the file once
+        //    and hands us `bytes`. Dedup runs AFTER the read (ADR 0004 Amendment 2 [G1]) so the same
+        //    bytes flow to OCR with no re-open. Two resolution paths:
+        //
+        // 1. Cheap path — metadata cache hit on (locator, mtime, size)? → no hash, no open.
+        //    Bridge mtime/size from the matching ScreenshotModel row (the producer has already
+        //    inserted it — Model B). A hit returns the cached `indexed` flag directly.
+        // 2. Miss → fall back to the locator/URI resolution against the processed set (the Room-era
+        //    identity model). NOTE: the SHA-256 hash of `bytes` is the zvec-era identity, but zvec
+        //    is not yet the store (issue 03 swaps this for zvec PK existence + a cache-hash index).
+        //    The signature carries `bytes` now so issue 03 lands with NO engine change — it only
+        //    edits this method's miss branch.
+        //
+        //    A producer-pre-computed identity still wins: under Room the locator *is* the identity
+        //    (uri is the unique index), so a non-null identity is treated as the locator to look up.
+        val screenshot = candidate.locator?.let { database.screenshotDao().getScreenshotByUri(it) }
+        if (screenshot != null) {
+            // The cache key is the filesystem triple; a change to mtime/size naturally forces a miss
+            // (composite PK no longer matches) → fall through to the miss path → re-resolve.
+            database.contentMetadataCacheDao()
+                .lookup(screenshot.uri, screenshot.lastModified, screenshot.size)
+                ?.let { return@withContext it.indexed }
+        }
+        when {
+            candidate.identity != null -> candidate.identity in dbKeysByLocator()
+            candidate.locator != null -> candidate.locator in dbKeysByLocator()
+            else -> false
+        }
+    }
+
+    override suspend fun markProcessed(candidate: Candidate) {
+        // The dedup-skip seam: retire a known-content row from the producer's `processed = 0`
+        // queue so it isn't re-pulled/re-read/re-hashed on every run. Resolved by locator (uri is
+        // the unique index) and flipped processed = true. No-ops if there's no row to retire (a
+        // null locator, or the row was deleted mid-run) — matching RoomWriteSink's missing-row policy.
+        val locator = candidate.locator ?: return
+        withContext(Dispatchers.IO) {
+            val screenshot = database.screenshotDao().getScreenshotByUri(locator) ?: return@withContext
+            database.screenshotDao().updateScreenshot(listOf(screenshot.copy(processed = true)))
         }
     }
 

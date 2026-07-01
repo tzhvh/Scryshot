@@ -96,10 +96,10 @@ class DiscoveryWorkerDeviceSmokeTest {
             count, store.backlog.value
         )
 
-        // 2. Notification posted (count > threshold).
+        // 2. Notification retired - should NOT be posted even when count > threshold.
         assertTrue(
-            "discovery notification (id ${DiscoveryWorker_notifId()}) should be posted when count > threshold",
-            isDiscoveryNotificationPosted()
+            "no discovery notification should be posted when count > threshold (notification retired)",
+            !isDiscoveryNotificationPosted()
         )
         Log.i(TAG, "PASS: notification posted + backlog published for count=$count")
     }

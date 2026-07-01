@@ -41,10 +41,12 @@ class OnOpenTriggerTest {
             return unprocessedList
         }
 
-        override suspend fun isKnown(candidate: Candidate): Boolean {
+        override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): Boolean {
             isKnownCalls++
             return false
         }
+
+        override suspend fun markProcessed(candidate: Candidate) = Unit
 
         // Rest are stubbed/TODO
         override suspend fun addCollection(collection: CollectionModel) = TODO()

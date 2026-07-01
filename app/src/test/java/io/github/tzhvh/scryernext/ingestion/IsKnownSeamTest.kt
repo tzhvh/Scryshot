@@ -17,10 +17,12 @@ class IsKnownSeamTest {
     private class FakeScreenshotRepository(
         private val knownKeys: Set<String>
     ) : ScreenshotRepository {
-        override suspend fun isKnown(candidate: Candidate): Boolean {
+        override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): Boolean {
             val key = candidate.identity ?: candidate.locator ?: return false
             return key in knownKeys
         }
+
+        override suspend fun markProcessed(candidate: Candidate) = Unit
 
         override suspend fun addCollection(collection: CollectionModel) = TODO()
         override fun getCollections(): Flow<List<CollectionModel>> = TODO()
@@ -57,7 +59,7 @@ class IsKnownSeamTest {
             byteHandle = { ByteArrayInputStream(byteArrayOf()) },
             identity = "sha256:123"
         )
-        assertTrue(repo.isKnown(candidate))
+        assertTrue(repo.isKnown(candidate, byteArrayOf()))
     }
 
     @Test
@@ -68,7 +70,7 @@ class IsKnownSeamTest {
             byteHandle = { ByteArrayInputStream(byteArrayOf()) },
             identity = null
         )
-        assertTrue(repo.isKnown(candidate))
+        assertTrue(repo.isKnown(candidate, byteArrayOf()))
     }
 
     @Test
@@ -79,7 +81,7 @@ class IsKnownSeamTest {
             byteHandle = { ByteArrayInputStream(byteArrayOf()) },
             identity = "sha256:123"
         )
-        assertFalse(repo.isKnown(candidate))
+        assertFalse(repo.isKnown(candidate, byteArrayOf()))
     }
 
     @Test
@@ -90,6 +92,6 @@ class IsKnownSeamTest {
             byteHandle = { ByteArrayInputStream(byteArrayOf()) },
             identity = null
         )
-        assertFalse(repo.isKnown(candidate))
+        assertFalse(repo.isKnown(candidate, byteArrayOf()))
     }
 }

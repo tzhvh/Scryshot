@@ -49,11 +49,17 @@ class IngestionEngineTest {
         private val knownKeys: MutableSet<String>,
     ) : ScreenshotRepository {
         val isKnownCalls: MutableList<Candidate> = mutableListOf()
+        /** Recorded (candidate) for every dedup-skip retirement (the [markProcessed] seam). */
+        val markProcessedCalls: MutableList<Candidate> = mutableListOf()
 
-        override suspend fun isKnown(candidate: Candidate): Boolean {
+        override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): Boolean {
             isKnownCalls += candidate
             val key = candidate.identity ?: candidate.locator ?: return false
             return key in knownKeys
+        }
+
+        override suspend fun markProcessed(candidate: Candidate) {
+            markProcessedCalls += candidate
         }
 
         override suspend fun addCollection(collection: CollectionModel) = TODO()
@@ -128,11 +134,15 @@ class IngestionEngineTest {
 
         engine.process(flowOf(candidate("content://media/1"))).toList()
 
-        // isKnown was consulted for every candidate...
+        // isKnown was consulted for every candidate (now AFTER the read — the bytes flow through)...
         assertEquals(1, repo.isKnownCalls.size)
         // ...but neither OCR nor write happened for the known one.
         assertTrue(ocr.attempts.isEmpty())
         assertTrue(sink.written.isEmpty())
+        // Phase 2 issue 02 — the dedup-skip seam: a known candidate retires its row from the
+        // producer's `processed = 0` queue (markProcessed), so it is NOT re-pulled on the next run.
+        assertEquals(1, repo.markProcessedCalls.size)
+        assertEquals("content://media/1", repo.markProcessedCalls.single().locator)
     }
 
     // --------------------------------------------------------------------------
@@ -364,10 +374,10 @@ class IngestionEngineTest {
         val engine = IngestionEngine(repo, ocr, write)
 
         // Before the run: unknown.
-        assertFalse(repo.isKnown(candidate("content://media/1")))
+        assertFalse(repo.isKnown(candidate("content://media/1"), byteArrayOf()))
         engine.process(flowOf(candidate("content://media/1"))).toList()
         // After the permanent-content write: known — it left the unindexed set.
-        assertTrue(repo.isKnown(candidate("content://media/1")))
+        assertTrue(repo.isKnown(candidate("content://media/1"), byteArrayOf()))
     }
 
     // --------------------------------------------------------------------------
