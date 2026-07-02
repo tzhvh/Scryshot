@@ -358,6 +358,14 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
                 isVisible = BuildConfig.DEBUG
             }
 
+            menu.findItem(R.id.action_zvec_benchmark).apply {
+                setOnMenuItemClickListener {
+                    startActivity(Intent(safeActivity, ZvecBenchmarkActivity::class.java))
+                    true
+                }
+                isVisible = BuildConfig.DEBUG
+            }
+
             createOptionsMenuSearchView(safeActivity)
         }
     }

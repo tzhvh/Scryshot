@@ -74,6 +74,10 @@
             android:name="io.github.tzhvh.scryernext.SvgViewerActivity"
             android:exported="false" />
 
+        <activity
+            android:name="io.github.tzhvh.scryernext.ZvecBenchmarkActivity"
+            android:exported="false" />
+
         <service
             android:name="io.github.tzhvh.scryernext.ScryerService"
             android:exported="false"
