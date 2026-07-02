@@ -6,6 +6,7 @@
 package io.github.tzhvh.scryernext.ingestion
 
 import android.util.Log
+import io.github.tzhvh.scryernext.ZvecEventRecorder
 import io.github.tzhvh.scryernext.persistence.ContentMetadataCache
 import io.github.tzhvh.scryernext.persistence.ContentMetadataCacheDao
 import io.github.tzhvh.scryernext.repository.ScreenshotRepository
@@ -73,6 +74,7 @@ class ZvecWriteSink(
                 TAG,
                 "commit: no screenshot row for locator=$locator (Model B invariant violated); skipping write."
             )
+            ZvecEventRecorder.record { "Write-path invariant violation: no Room row for $locator; skipping write" }
             return
         }
 
@@ -108,6 +110,7 @@ class ZvecWriteSink(
             )
             dao.markIndexed(contentHash)
         }
+        ZvecEventRecorder.record { "Committed doc with hash: ${contentHash.take(8)}... (locator=$locator)" }
     }
 
     private fun sha256(bytes: ByteArray): String {

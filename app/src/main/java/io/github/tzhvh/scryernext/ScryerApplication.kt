@@ -65,6 +65,14 @@ class ScryerApplication : Application() {
         fun getZvecContentStore(): ZvecContentStore {
             return instance.zvecContentStore
         }
+
+        /**
+         * zvec Runtime Inspector — app-scope [ScreenshotDao] for the drift meter. Exposed so the
+         * debug [ZvecInspectorActivity] reads the production DB (no second Room handle). Unused in
+         * release (the activity is debug-only); exposed regardless for accessor parity.
+         */
+        fun getScreenshotDao(): io.github.tzhvh.scryernext.persistence.ScreenshotDao =
+            instance.screenshotDao
     }
 
     private object ApplicationHolder {
@@ -80,6 +88,12 @@ class ScryerApplication : Application() {
      * Forwarded [onTrimMemory] flush+close via [ZvecContentStore.onTrimMemoryComplete].
      */
     private lateinit var zvecContentStore: ZvecContentStore
+
+    /**
+     * zvec Runtime Inspector — the production Room DAO, held at app scope for the debug
+     * [ZvecInspectorActivity]'s drift meter. Set in [onCreate] after the DB repo is constructed.
+     */
+    private lateinit var screenshotDao: io.github.tzhvh.scryernext.persistence.ScreenshotDao
 
     /**
      * Issue 10.5: app-scope ingestion progress surface + atomic §7.5 guard.
@@ -156,6 +170,13 @@ class ScryerApplication : Application() {
                 screenshotRepository.setupDefaultContent(this@ScryerApplication)
             }
         }
+        // zvec Runtime Inspector — hold the production DAO at app scope so the debug
+        // ZvecInspectorActivity reads the same DB (no second Room handle). Set after dbRepository.
+        screenshotDao = dbRepository.database.screenshotDao()
+        // zvec Runtime Inspector — gate the event recorder to debuggable builds. Called before any
+        // ingestion/store call so the recorder's `enabled` is published before first use. Release
+        // builds leave the recorder disabled → zero overhead at the (inline) call sites.
+        ZvecEventRecorder.init(enabled = isDebuggable)
         screenshotRepository = ZvecScreenshotRepository(
             delegate = dbRepository,
             store = zvecContentStore,

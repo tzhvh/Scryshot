@@ -282,7 +282,7 @@ class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : 
     override suspend fun getContentText(screenshot: ScreenshotModel): String? =
         throw UnsupportedOperationException("getContentText is served by ZvecScreenshotRepository (zvec); wire the façade.")
 
-    override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): DedupResult = withContext(Dispatchers.IO) {
         // ── Phase 2 issue 02 (READ→DEDUP reorder): the engine has already opened+read the file once
         //    and hands us `bytes`. Dedup runs AFTER the read (ADR 0004 Amendment 2 [G1]) so the same
         //    bytes flow to OCR with no re-open. Two resolution paths:
@@ -298,18 +298,24 @@ class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : 
         //
         //    A producer-pre-computed identity still wins on the cheap path's row lookup; under Room
         //    the locator *is* the identity (uri is the unique index).
+        //
+        //    D1: returns DedupResult so the dedup-skip branch can stamp the resolved content_hash onto
+        //    the duplicate's Room row (D2). The hash is threaded only on the miss path (where it was
+        //    computed); the cheap path returns null — a cheap-path duplicate already has its hash set
+        //    by a prior full-pipeline write of the same uri.
         val screenshot = candidate.locator?.let { database.screenshotDao().getScreenshotByUri(it) }
         if (screenshot != null) {
             // The cache key is the filesystem triple; a change to mtime/size naturally forces a miss
             // (composite PK no longer matches) → fall through to the miss path → re-resolve.
             database.contentMetadataCacheDao()
                 .lookup(screenshot.uri, screenshot.lastModified, screenshot.size)
-                ?.let { return@withContext it.indexed }
+                ?.let { return@withContext DedupResult(known = it.indexed) }
         }
         // Miss path: hash the bytes, consult the cache's hash index. The hash index is the
         // cross-locator dedup path (same content under a different uri) and the zvec-existence proxy.
         val hash = sha256(bytes)
-        database.contentMetadataCacheDao().lookupByHash(hash)?.indexed ?: false
+        val known = database.contentMetadataCacheDao().lookupByHash(hash)?.indexed ?: false
+        DedupResult(known = known, resolvedContentHash = if (known) hash else null)
     }
 
     override suspend fun markProcessed(candidate: Candidate) {
@@ -364,6 +370,18 @@ class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : 
         if (uris.isEmpty()) return emptyList()
         return withContext(Dispatchers.IO) {
             database.screenshotDao().getScreenshotsByUri(uris)
+        }
+    }
+
+    /**
+     * zvec Phase 2, D3 — the dedup-correct bridge. Returns ALL Room rows sharing each content_hash,
+     * so a duplicate whose uri isn't zvec's stored locator is still found. Callers group by hash to
+     * expand each zvec hit into its surviving rows.
+     */
+    suspend fun getScreenshotsByContentHash(hashes: List<String>): List<ScreenshotModel> {
+        if (hashes.isEmpty()) return emptyList()
+        return withContext(Dispatchers.IO) {
+            database.screenshotDao().getScreenshotsByContentHash(hashes)
         }
     }
 

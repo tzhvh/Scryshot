@@ -3,6 +3,7 @@ package io.github.tzhvh.scryernext.ingestion
 import android.content.Context
 import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
+import io.github.tzhvh.scryernext.repository.DedupResult
 import io.github.tzhvh.scryernext.repository.ScreenshotRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -53,10 +54,14 @@ class IngestionEngineTest {
         /** Recorded (screenshot, contentHash) for every zvec-success retirement (issue 03). */
         val markContentIndexedCalls: MutableList<Pair<ScreenshotModel, String>> = mutableListOf()
 
-        override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): Boolean {
+        override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): DedupResult {
             isKnownCalls += candidate
-            val key = candidate.identity ?: candidate.locator ?: return false
-            return key in knownKeys
+            val key = candidate.identity ?: candidate.locator ?: return DedupResult.UNKNOWN
+            val known = key in knownKeys
+            // D1: thread a synthetic hash when known so the engine's dedup-skip (D2) exercises the
+            // markContentIndexed path. Tests that care about which retirement fired assert on the
+            // recorded calls below.
+            return if (known) DedupResult(known = true, resolvedContentHash = "hash-$key") else DedupResult.UNKNOWN
         }
 
         override suspend fun markProcessed(candidate: Candidate) {
@@ -88,7 +93,14 @@ class IngestionEngineTest {
         override suspend fun getContentText(screenshot: ScreenshotModel): String? = TODO()
         override suspend fun getUnprocessedScreenshotList(): List<ScreenshotModel> = TODO()
         override suspend fun getUnprocessedCount(): Int = TODO()
-        override suspend fun getScreenshotByUri(uri: String): ScreenshotModel? = TODO()
+        override suspend fun getScreenshotByUri(uri: String): ScreenshotModel? =
+            // D2: the dedup-skip path now resolves the row to stamp the content_hash. Return a real
+            // row keyed by uri so the engine takes the markContentIndexed branch (the correct path);
+            // tests assert on markContentIndexedCalls rather than markProcessedCalls.
+            screenshotRows.find { it.uri == uri }
+
+        /** Rows the dedup-skip resolver can find; populated by tests that exercise D2. */
+        var screenshotRows: List<ScreenshotModel> = emptyList()
         override suspend fun setupDefaultContent(context: Context) = TODO()
     }
 
@@ -124,6 +136,12 @@ class IngestionEngineTest {
         identity = identity,
     )
 
+    /** Minimal ScreenshotModel for the dedup-skip resolver (D2); only `uri` is matched on. */
+    private fun screenshot(uri: String): ScreenshotModel = ScreenshotModel(
+        id = uri, uri = uri, displayName = uri, size = 0L, lastModified = 0L,
+        collectionId = "default", processed = false
+    )
+
     // --------------------------------------------------------------------------
     // (a) known candidates are skipped and not OCR'd/written
     // --------------------------------------------------------------------------
@@ -131,6 +149,9 @@ class IngestionEngineTest {
     @Test
     fun known_candidates_are_skipped_not_ocrd_or_written() = runBlocking {
         val repo = FakeScreenshotRepository(knownKeys = mutableSetOf("content://media/1"))
+        // D2: the dedup-skip now resolves the row (to stamp the content_hash). Provide a matching
+        // row so the engine takes the markContentIndexed branch — the correct retirement path.
+        repo.screenshotRows = listOf(screenshot(uri = "content://media/1"))
         val ocr = FakeOcrStage(outcomesByLocator = mapOf("content://media/1" to OcrOutcome.Success("should-not-happen")))
         val sink = CapturingWriteSink()
         val engine = IngestionEngine(repo, ocr, sink.write)
@@ -142,10 +163,11 @@ class IngestionEngineTest {
         // ...but neither OCR nor write happened for the known one.
         assertTrue(ocr.attempts.isEmpty())
         assertTrue(sink.written.isEmpty())
-        // Phase 2 issue 02 — the dedup-skip seam: a known candidate retires its row from the
-        // producer's `processed = 0` queue (markProcessed), so it is NOT re-pulled on the next run.
-        assertEquals(1, repo.markProcessedCalls.size)
-        assertEquals("content://media/1", repo.markProcessedCalls.single().locator)
+        // D2 — the dedup-skip seam now stamps the resolved content_hash (markContentIndexed), not
+        // just markProcessed, so the row is bridged to zvec and the duplicate is searchable. A known
+        // candidate retires its row AND records the hash, so it is NOT re-pulled on the next run.
+        assertEquals(1, repo.markContentIndexedCalls.size)
+        assertEquals("content://media/1", repo.markContentIndexedCalls.single().first.uri)
     }
 
     // --------------------------------------------------------------------------
@@ -377,10 +399,10 @@ class IngestionEngineTest {
         val engine = IngestionEngine(repo, ocr, write)
 
         // Before the run: unknown.
-        assertFalse(repo.isKnown(candidate("content://media/1"), byteArrayOf()))
+        assertFalse(repo.isKnown(candidate("content://media/1"), byteArrayOf()).known)
         engine.process(flowOf(candidate("content://media/1"))).toList()
         // After the permanent-content write: known — it left the unindexed set.
-        assertTrue(repo.isKnown(candidate("content://media/1"), byteArrayOf()))
+        assertTrue(repo.isKnown(candidate("content://media/1"), byteArrayOf()).known)
     }
 
     // --------------------------------------------------------------------------

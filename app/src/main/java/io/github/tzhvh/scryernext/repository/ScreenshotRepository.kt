@@ -11,6 +11,22 @@ import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.ingestion.Candidate
 
+/**
+ * The result of a dedup check — [isKnown] returns this rather than a bare Boolean so the engine's
+ * dedup-skip branch can stamp the resolved content_hash onto the duplicate's Room row (D2). Without
+ * this, a dedup-skipped duplicate ends up `processed = 1, content_hash = NULL` — unsearchable and
+ * unreadable, because the search bridge and `getContentText` both resolve by content_hash.
+ *
+ * - [known] mirrors the legacy Boolean: is this content already in zvec?
+ * - [resolvedContentHash] is the SHA-256 the miss-path computed (null on the cheap-path cache hit,
+ *   where no hash was computed, and null when [known] is false).
+ */
+data class DedupResult(val known: Boolean, val resolvedContentHash: String? = null) {
+    companion object {
+        val UNKNOWN = DedupResult(known = false)
+    }
+}
+
 interface ScreenshotRepository {
     companion object Factory {
         fun createRepository(context: Context, onCreated: () -> Unit): ScreenshotRepository {
@@ -72,7 +88,7 @@ interface ScreenshotRepository {
      * The dedup-skip branch that calls this must also call [markProcessed] so the row leaves the
      * producer's `processed = 0` queue — otherwise it is re-pulled every run.
      */
-    suspend fun isKnown(candidate: Candidate, bytes: ByteArray): Boolean
+    suspend fun isKnown(candidate: Candidate, bytes: ByteArray): DedupResult
 
     /**
      * Retire a candidate's row from the producer's work queue — the **dedup-skip seam** (the

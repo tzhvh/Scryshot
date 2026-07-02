@@ -6,6 +6,7 @@
 package io.github.tzhvh.scryernext.ingestion
 
 import android.util.Log
+import io.github.tzhvh.scryernext.ZvecEventRecorder
 import io.github.tzhvh.scryernext.zvec.CollectionOptions
 import io.github.tzhvh.scryernext.zvec.CollectionSchema
 import io.github.tzhvh.scryernext.zvec.FieldSchema
@@ -70,10 +71,52 @@ open class ZvecContentStore(
     /**
      * The one long-lived collection handle, or null after [onTrimMemoryComplete] until the next
      * data-path call re-opens it. Guarded by [openMutex] so a concurrent first-access pair (e.g. the
-     * engine + a detail-page write racing on cold start) doesn't double-open.
+     * engine + a detail-page write racing on cold start) doesn't double-open. `@Volatile` so reads
+     * from other threads (e.g. the inspector's [isCollectionOpen] on Dispatchers.Default) safely
+     * observe the null set by [onTrimMemoryComplete] on the main thread.
      */
+    @Volatile
     private var collection: ZvecCollection? = null
     private val openMutex = Mutex()
+
+    @Volatile
+    open var lastOpenOutcome: String = "never_opened"
+
+    @Volatile
+    open var lockRecoveriesCount: Int = 0
+
+    @Volatile
+    open var lastFlushTimestamp: Long = 0L
+
+    @Volatile
+    open var lastCloseTimestamp: Long = 0L
+
+    /**
+     * The last `stats()` failure message, or null if the last read succeeded. Surfaced so the
+     * inspector can distinguish "0 docs (empty corpus)" from "unread (stats threw)" — without this,
+     * a failed read reports a fake "✅ PASS" drift verdict (docCount defaults to 0 → no orphans/holes).
+     */
+    @Volatile
+    open var lastStatsError: String? = null
+
+    open fun isCollectionOpen(): Boolean {
+        val col = collection
+        return col != null && !col.isClosed
+    }
+
+    open suspend fun getCollectionStats(): io.github.tzhvh.scryernext.zvec.CollectionStats? {
+        ensureOpen()
+        return withContext(Dispatchers.IO) {
+            runCatching { collection?.stats() }.getOrElse {
+                // Record the failure so the inspector shows "stats read FAILED" instead of a
+                // misleading docCount=0 → "✅ PASS". A silent null here is the worst failure mode
+                // for a diagnostic tool: it suppresses investigation of a real problem.
+                lastStatsError = it.message
+                ZvecEventRecorder.record { "stats() read failed: ${it.message}" }
+                null
+            }.also { if (it != null) lastStatsError = null }
+        }
+    }
 
     /**
      * Lazily open (or create) the collection if it isn't already held. Idempotent under concurrency
@@ -111,11 +154,29 @@ open class ZvecContentStore(
      */
     private suspend fun openOrCreate(): ZvecCollection = withContext(Dispatchers.IO) {
         try {
-            openOrRetry()
+            val col = openOrRetry()
+            lastOpenOutcome = "success"
+            ZvecEventRecorder.record { "Collection opened successfully" }
+            col
         } catch (e: ZvecException) {
             if (isStaleLock(e) && collectionPath.resolve(LOCK_FILE).delete()) {
-                openOrRetry()
-            } else throw e
+                lockRecoveriesCount++
+                ZvecEventRecorder.record { "LOCK recovery triggered: stale LOCK deleted" }
+                try {
+                    val col = openOrRetry()
+                    lastOpenOutcome = "LOCK-recovered"
+                    ZvecEventRecorder.record { "Collection opened successfully after LOCK recovery" }
+                    col
+                } catch (retryEx: ZvecException) {
+                    lastOpenOutcome = "error: ${retryEx.message}"
+                    ZvecEventRecorder.record { "Collection open failed after LOCK recovery: ${retryEx.message}" }
+                    throw retryEx
+                }
+            } else {
+                lastOpenOutcome = "error: ${e.message}"
+                ZvecEventRecorder.record { "Collection open failed: ${e.message}" }
+                throw e
+            }
         }
     }
 
@@ -216,11 +277,14 @@ open class ZvecContentStore(
         }
     }
 
-    /** Flush in-memory writes to disk (the engine's durability flush). No-op if not yet opened. */
     open suspend fun flush() {
         val col = collection ?: return
         if (col.isClosed) return
-        withContext(Dispatchers.IO) { col.flush() }
+        withContext(Dispatchers.IO) {
+            col.flush()
+            lastFlushTimestamp = System.currentTimeMillis()
+            ZvecEventRecorder.record { "Collection flushed successfully" }
+        }
     }
 
     /**
@@ -250,7 +314,12 @@ open class ZvecContentStore(
         runCatching {
             kotlinx.coroutines.runBlocking { col.flush() }
             col.close()
-        }.onFailure { Log.w(TAG, "onTrimMemoryComplete: flush/close failed", it) }
+            lastCloseTimestamp = System.currentTimeMillis()
+            ZvecEventRecorder.record { "Collection closed under memory pressure" }
+        }.onFailure {
+            Log.w(TAG, "onTrimMemoryComplete: flush/close failed", it)
+            ZvecEventRecorder.record { "trim-close failure: ${it.message}" }
+        }
         collection = null
     }
 

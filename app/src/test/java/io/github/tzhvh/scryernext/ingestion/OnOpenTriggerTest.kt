@@ -8,6 +8,7 @@ package io.github.tzhvh.scryernext.ingestion
 import io.github.tzhvh.scryernext.ingestion.triggers.OnOpenTrigger
 import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
+import io.github.tzhvh.scryernext.repository.DedupResult
 import io.github.tzhvh.scryernext.repository.ScreenshotRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,9 +42,9 @@ class OnOpenTriggerTest {
             return unprocessedList
         }
 
-        override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): Boolean {
+        override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): DedupResult {
             isKnownCalls++
-            return false
+            return DedupResult.UNKNOWN
         }
 
         override suspend fun markProcessed(candidate: Candidate) = Unit
