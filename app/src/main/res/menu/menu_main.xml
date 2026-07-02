@@ -24,6 +24,12 @@
         android:visible="false"
         tools:ignore="HardcodedText" />
 
+    <item
+        android:id="@+id/action_zvec_inspector"
+        android:title="zvec inspector"
+        android:visible="false"
+        tools:ignore="HardcodedText" />
+
     <!--<item-->
         <!--android:id="@+id/action_search"-->
         <!--android:title="@string/menu_search"-->
