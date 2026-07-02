@@ -77,6 +77,17 @@ class ZvecBenchmarkRunnerTest {
         assertEquals(0.0, r.qps, 0.0)
     }
 
+    @Test fun latencyResult_coldMsDefaultsToFirstSample() {
+        val r = ZvecBenchmarkRunner.LatencyResult("x", listOf(9.0, 2.0, 3.0))
+        // The first measured sample is surfaced as the cold-first figure (PROFILING_FRAMEWORK.md C2).
+        assertEquals(9.0, r.coldMs, 1e-9)
+    }
+
+    @Test fun latencyResult_empty_hasZeroCold() {
+        val r = ZvecBenchmarkRunner.LatencyResult("x", emptyList())
+        assertEquals(0.0, r.coldMs, 0.0)
+    }
+
     // ── end-to-end runner against a fake store (canned timings, no .so) ─────────────────────
 
     @Test fun runner_runsAllStages_andReportsDocCount() = runBlocking {
@@ -87,7 +98,7 @@ class ZvecBenchmarkRunnerTest {
         val report = runner.run { stages.add(it) }
 
         assertEquals(1234L, report.docCount)
-        // The suite runs search(topK sweep) + fetch + upsert — at least one stage callback per.
+        // The suite runs search(topK sweep) + fetch + write — at least one stage callback per.
         assertTrue("should emit multiple live stages", stages.size >= 3)
         // The footer caveat is on the final stage.
         assertTrue("final stage carries the Phase-3 caveat", stages.last().contains("Phase 3"))
@@ -96,12 +107,31 @@ class ZvecBenchmarkRunnerTest {
         assertTrue("synthetic docs cleaned up", fake.deletedPks.isNotEmpty())
     }
 
+    @Test fun runner_fw1_splitsBareUpsertAndFlush() = runBlocking {
+        // FW1: the write stage must surface bare upsert (no flush) per doc + a separate single flush.
+        val fake = FakeStore(docCount = 0L)
+        val runner = ZvecBenchmarkRunner(fake)
+
+        val report = runner.run {}
+
+        val write = report.write
+        // The runner's UPSERT_BATCH is 50 (kept private; mirrored here). If the constant changes,
+        // update this literal.
+        assertEquals(50, write.upsertPerDoc.count)
+        assertEquals(50, write.flushedDocCount)
+        assertEquals("flush was called once after the batch", 1, fake.flushCount)
+        assertTrue("flush has a non-negative latency", write.flushMs >= 0.0)
+        // And the report text shows the split, not the old combined line.
+        assertTrue("report shows bare-upsert line", write.upsertPerDoc.label.contains("no flush"))
+    }
+
     /** A fake store that records calls and returns canned data — no native. */
     private class FakeStore(private val docCount: Long) : ZvecContentStore(
         filesDir = java.io.File(System.getProperty("java.io.tmpdir"), "fake-bench-${System.nanoTime()}"),
         debug = false,
     ) {
         var upsertCount = 0
+        var flushCount = 0
         var deletedPks: List<String> = emptyList()
 
         // Bypass the real ensureOpen/native path entirely.
@@ -113,7 +143,7 @@ class ZvecBenchmarkRunnerTest {
         override suspend fun upsert(contentHash: String, locator: String, content: String, collectionId: String) {
             upsertCount++
         }
-        override suspend fun flush() {}
+        override suspend fun flush() { flushCount++ }
         override suspend fun deleteAll(pks: List<String>): WriteResult {
             deletedPks = pks
             return WriteResult(pks.size, emptyList())

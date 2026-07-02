@@ -119,6 +119,31 @@ class ScryerApplication : Application() {
         super.onCreate()
         ApplicationHolder.instance = this
 
+        // PROFILING_FRAMEWORK.md §3.10 — StrictMode guardrail, debug-only. Catches accidental
+        // main-thread disk/network/Room/zvec calls for free — the bug class that would otherwise
+        // send someone down a Perfetto rabbit hole for front D ("tap feels slow"). penaltyLog()
+        // (not penaltyDeath): a crash on the first incidental violation would break dev flows before
+        // we've audited the existing paths; log-to-logcat is loud enough to catch the regression
+        // without halting the session. `isDebuggable` mirrors the zvec log-level gate.
+        if (isDebuggable) {
+            android.os.StrictMode.setThreadPolicy(
+                android.os.StrictMode.ThreadPolicy.Builder()
+                    .detectDiskReads()
+                    .detectDiskWrites()
+                    .detectNetwork()
+                    .penaltyLog()
+                    .build()
+            )
+            android.os.StrictMode.setVmPolicy(
+                android.os.StrictMode.VmPolicy.Builder()
+                    .detectActivityLeaks()
+                    .detectCleartextNetwork()
+                    .detectLeakedClosableObjects()
+                    .detectLeakedSqlLiteObjects()
+                    .penaltyLog()
+                    .build()
+            )
+        }
 
         // zvec Phase 2, issue 04 — the read-flip. The gallery + collections stay on Room
         // (ScreenshotDatabaseRepository, unchanged); content search + content-text route to zvec via

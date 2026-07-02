@@ -147,6 +147,11 @@ dependencies {
     // BetterLinkMovementMethod
     implementation(libs.better.link.movement.method)
 
+    // LeakCanary (PROFILING_FRAMEWORK.md §3.11) — debug-only leak guardrail. Auto-initializes via
+    // its own ContentProvider; no code wiring needed. Catches the Coroutine-Job-leaks-a-Fragment
+    // class that footprint tools (§3.8) never flag. `debugImplementation` keeps it out of release.
+    debugImplementation(libs.leakcanary)
+
     // Test
     testImplementation(libs.junit)
     testImplementation(libs.mockito.core)

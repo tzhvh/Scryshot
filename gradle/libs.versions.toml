@@ -50,6 +50,9 @@ subsamplingImageView = "3.10.0"
 lottie = "6.6.0"
 betterLinkMovementMethod = "2.2.0"
 
+# LeakCanary (PROFILING_FRAMEWORK.md §3.11 — debug-only leak guardrail)
+leakcanary = "2.14"
+
 [libraries]
 # AndroidX
 appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appCompat" }
@@ -105,6 +108,9 @@ lottie = { module = "com.airbnb.android:lottie", version.ref = "lottie" }
 
 # BetterLinkMovementMethod
 better-link-movement-method = { module = "me.saket:better-link-movement-method", version.ref = "betterLinkMovementMethod" }
+
+# LeakCanary (PROFILING_FRAMEWORK.md §3.11 — debug-only; auto-initializes via its ContentProvider)
+leakcanary = { module = "com.squareup.leakcanary:leakcanary-android", version.ref = "leakcanary" }
 
 # Test
 junit = { module = "junit:junit", version.ref = "junit" }

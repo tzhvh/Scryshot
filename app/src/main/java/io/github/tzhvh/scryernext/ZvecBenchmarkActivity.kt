@@ -66,8 +66,19 @@ class ZvecBenchmarkActivity : AppCompatActivity() {
         // default) to touch the TextView.
         lifecycleScope.launch {
             runner.run { partial -> runOnUiThread { reportView.text = partial } }
+            // Also emit the final report to logcat so an adb script can capture it (the TextView is
+            // not script-readable). Tagged + delimited so a `logcat -d | sed` pulls just the report.
+            val finalReport = reportView.text.toString()
+            android.util.Log.i(BENCH_LOG_TAG, "─── zvec benchmark report begin ───")
+            finalReport.lineSequence().forEach { android.util.Log.i(BENCH_LOG_TAG, it) }
+            android.util.Log.i(BENCH_LOG_TAG, "─── zvec benchmark report end ───")
             runButton.isEnabled = true
             progressView.visibility = View.GONE
         }
+    }
+
+    companion object {
+        /** Logcat tag for the report so adb scripts can capture it: `logcat -d BENCH:V *:S`. */
+        const val BENCH_LOG_TAG = "ZvecBench"
     }
 }

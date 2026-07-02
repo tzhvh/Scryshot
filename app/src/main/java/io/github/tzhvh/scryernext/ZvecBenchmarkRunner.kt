@@ -45,6 +45,15 @@ class ZvecBenchmarkRunner(private val store: ZvecContentStore) {
     data class LatencyResult(
         val label: String,
         val samplesMs: List<Double>,
+        /**
+         * The first sample, surfaced separately (PROFILING_FRAMEWORK.md §3.1 sharpened-C2): the runner
+         * warms the page cache before measuring, so [samplesMs] p50/mean are page-cache-*hit* figures.
+         * The very first measured call still pays whatever disk I/O the warmup didn't prime (a full
+         * corpus isn't hot after 10 throwaway queries), so [coldMs] is the honest "user opens the app
+         * after hours" figure. Reported alongside the warm p50 to correct the systematic
+         * under-representation of cold-start cost. Empty sample set → 0.0.
+         */
+        val coldMs: Double = if (samplesMs.isEmpty()) 0.0 else samplesMs.first(),
     ) {
         val count: Int get() = samplesMs.size
         val meanMs: Double get() = if (samplesMs.isEmpty()) 0.0 else samplesMs.sum() / samplesMs.size
@@ -54,12 +63,25 @@ class ZvecBenchmarkRunner(private val store: ZvecContentStore) {
         fun p(percentile: Double): Double = percentiles(samplesMs, percentile)
     }
 
+    /**
+     * The write-throughput stage, split per FW1 (PROFILING_FRAMEWORK.md §3.1 / ZVEC_BENCHMARK.md C1):
+     * [upsertPerDoc] times only the bare `upsert(...)` calls (no flush) — the engine's amortized write
+     * cost — and [flushMs] times a **single** `flush()` of the batch. The old single combined number
+     * was fsync-dominated (50 per-doc flushes ≈ pure I/O) and hid the lever that matters (flush on
+     * batch completion vs per-file). [flushMs] of 0.0 means the flush was skipped (empty corpus / error).
+     */
+    data class WriteResult(
+        val upsertPerDoc: LatencyResult,
+        val flushMs: Double,
+        val flushedDocCount: Int,
+    )
+
     /** The full suite output, formatted for the screen. */
     data class Report(
         val docCount: Long,
         val searchByTopK: List<LatencyResult>,
         val fetch: LatencyResult,
-        val upsert: LatencyResult,
+        val write: WriteResult,
     )
 
     /**
@@ -111,9 +133,14 @@ class ZvecBenchmarkRunner(private val store: ZvecContentStore) {
         stage(sb.toString() + formatLatency(fetchResult) + "\n")
 
         // ── Upsert + flush throughput: synthetic docs, cleaned up in finally ────────────────
+        // FW1 (PROFILING_FRAMEWORK.md §3.1): measure bare upsert (no flush) per doc, then a single
+        // flush of the whole batch. The old combined number was fsync-dominated; this isolates the
+        // engine's amortized write cost from durability cost — the lever the Phase-2 PRD names
+        // ("flush on batch completion" vs per-file).
         val synthPks = (0 until UPSERT_BATCH).map { "bench-synth-%04d".format(it) }
-        val upsertResult = run {
+        val writeResult = run {
             val samples = ArrayList<Double>(UPSERT_BATCH)
+            var flushMs = 0.0
             try {
                 repeat(UPSERT_BATCH) { i ->
                     val ns = measureNs {
@@ -123,19 +150,24 @@ class ZvecBenchmarkRunner(private val store: ZvecContentStore) {
                             content = "benchmark synthetic doc number $i searchable text",
                             collectionId = "bench",
                         )
-                        store.flush()
                     }
                     samples.add(ns / 1_000_000.0)
                 }
+                // One durability flush for the whole batch — this is the fsync cost, now separable.
+                flushMs = measureNs { store.flush() } / 1_000_000.0
             } finally {
                 runCatching { store.deleteAll(synthPks) }
             }
-            LatencyResult("Upsert + flush (batch of $UPSERT_BATCH)", samples)
+            WriteResult(
+                upsertPerDoc = LatencyResult("Bare upsert (batch of $UPSERT_BATCH, no flush)", samples),
+                flushMs = flushMs,
+                flushedDocCount = UPSERT_BATCH,
+            )
         }
-        stage(sb.toString() + formatLatency(upsertResult) + "\n")
+        stage(sb.toString() + formatWrite(writeResult) + "\n")
 
         stage(sb.toString() + FOOTER)
-        Report(docCount, searchResults, fetchResult, upsertResult)
+        Report(docCount, searchResults, fetchResult, writeResult)
     }
 
     // ── formatting helpers (static, JVM-tested) ─────────────────────────────────────────────
@@ -151,8 +183,18 @@ class ZvecBenchmarkRunner(private val store: ZvecContentStore) {
         } else {
             "  ${r.label}\n" +
             "    p50: ${fmt(r.p(0.50))} ms   p99: ${fmt(r.p(0.99))} ms   mean: ${fmt(r.meanMs)} ms\n" +
-            "    QPS: ~${fmt(r.qps)}/s   (n=${r.count}, single-thread, cold)\n"
+            "    cold-first: ${fmt(r.coldMs)} ms   QPS: ~${fmt(r.qps)}/s   (n=${r.count}, single-thread)\n"
         }
+
+    private fun formatWrite(w: WriteResult): String {
+        val upsertLine = formatLatency(w.upsertPerDoc).prependIndent("  ")
+        val flushLine = if (w.flushMs <= 0.0) {
+            "    flush: (skipped)\n"
+        } else {
+            "    flush (one call, ${w.flushedDocCount} docs): ${fmt(w.flushMs)} ms\n"
+        }
+        return "  Write throughput (FW1 split)\n" + upsertLine + flushLine
+    }
 
     private fun fmt(v: Double): String = "%.1f".format(v)
 
