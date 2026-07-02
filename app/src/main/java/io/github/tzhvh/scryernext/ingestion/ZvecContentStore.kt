@@ -224,6 +224,16 @@ open class ZvecContentStore(
     }
 
     /**
+     * Bulk delete by content_hash PK. A pk that does not exist is reported in the result's failures
+     * (NOT_FOUND), not thrown. Used by the benchmark screen to clean up its synthetic upsert docs.
+     * `open` so a JVM test can record calls without the `.so`.
+     */
+    open suspend fun deleteAll(pks: List<String>): io.github.tzhvh.scryernext.zvec.WriteResult {
+        ensureOpen()
+        return withContext(Dispatchers.IO) { collection!!.deleteAll(pks) }
+    }
+
+    /**
      * The memory-pressure close path — the ONLY place `close()` is called outside tear-down. Flushes,
      * closes, and nulls the reference; the next data-path call re-opens via [ensureOpen]. Called from
      * `ScryerApplication.onTrimMemory(TRIM_MEMORY_COMPLETE)`. Trades a re-open latency for reclaimed
