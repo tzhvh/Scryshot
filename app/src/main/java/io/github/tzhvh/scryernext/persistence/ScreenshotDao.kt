@@ -53,6 +53,21 @@ interface ScreenshotDao {
     @Query("SELECT COUNT(*) FROM screenshot WHERE processed = 0")
     fun getUnprocessedCount(): Int
 
+    @Query("SELECT COUNT(*) FROM screenshot WHERE processed = 1")
+    fun getProcessedCount(): Int
+
+    @Query("SELECT COUNT(*) FROM screenshot WHERE content_hash IS NOT NULL")
+    fun getIndexedCount(): Int
+
+    /**
+     * D4 — distinct content_hash count, the dedup-correct peer of [getIndexedCount]. N duplicate
+     * screenshots share one hash; counting raw rows overcounts and produces permanent false-positive
+     * "holes" in the drift meter (N rows vs 1 zvec doc). Counting DISTINCT hashes matches zvec's
+     * one-doc-per-hash model, so the inspector's orphan/holes math is sound under duplicates.
+     */
+    @Query("SELECT COUNT(DISTINCT content_hash) FROM screenshot WHERE content_hash IS NOT NULL")
+    fun getDistinctIndexedCount(): Int
+
     /** Issue 11/#4: lookup by `uri` (the indexed unique column) without materializing every row. */
     @Query("SELECT * FROM screenshot WHERE uri = :uri LIMIT 1")
     fun getScreenshotByUri(uri: String): ScreenshotModel?
@@ -69,4 +84,16 @@ interface ScreenshotDao {
      */
     @Query("SELECT * FROM screenshot WHERE uri IN (:uris)")
     fun getScreenshotsByUri(uris: List<String>): List<ScreenshotModel>
+
+    /**
+     * zvec Phase 2, D3 — the **dedup-correct** search-result → gallery-row bridge. zvec FTS search
+     * returns content docs keyed by `content_hash`; duplicates (same bytes) collapse to one zvec doc
+     * but may have N Room rows sharing that hash. Resolving by `locator` (the old bridge) loses every
+     * duplicate except whichever one zvec's locator points at — a surviving duplicate whose uri isn't
+     * the stored locator is silently invisible to search. Resolving by `content_hash` returns ALL
+     * surviving rows for each matched hash, so deleting one duplicate doesn't make the others
+     * unsearchable.
+     */
+    @Query("SELECT * FROM screenshot WHERE content_hash IN (:hashes)")
+    fun getScreenshotsByContentHash(hashes: List<String>): List<ScreenshotModel>
 }

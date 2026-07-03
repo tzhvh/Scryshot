@@ -123,18 +123,29 @@ class IngestionEngine(
             val bytes = candidate.byteHandle().use { it.readBytes() }
             val readMs = msSince(readStart)
 
-            if (repository.isKnown(candidate, bytes)) {
+            val dedup = repository.isKnown(candidate, bytes)
+            if (dedup.known) {
                 // Dedup-as-skip (ADR 0004 §3, §5). Retire the row from the producer's
                 // `processed = 0` queue so it isn't re-pulled/re-read/re-hashed every run — this is
                 // the `processed`-vs-`isKnown` seam (the sink is NOT called on the skip path, so
-                // without [ScreenshotRepository.markProcessed] the row would stay unprocessed).
-                // Still emit so a UI sees the bar move past already-indexed candidates; the run's
-                // completion fraction advances. No timing recorded for OCR/write — dedup-skipped
-                // candidates did no OCR work this run (the read was still real and timed above, but
-                // it isn't folded into the rolling average because the skip branch's per-file cost
-                // profile — a cheap cache hit in steady state — would depress the read EMA toward
-                // the cache-hit latency, misrepresenting the first-ingest cost Phase 5 budgets on).
-                repository.markProcessed(candidate)
+                // without retirement the row would stay unprocessed).
+                //
+                // D2: stamp the resolved content_hash onto the duplicate's Room row when we have it
+                // (the miss-path case — a cross-locator duplicate detected by hash). Without this, the
+                // duplicate ends up `processed = 1, content_hash = NULL` → unsearchable and unreadable,
+                // because the search bridge (D3) and getContentText resolve by content_hash. The
+                // cheap-path case (cache hit, no hash computed) falls back to markProcessed — that row
+                // already carries its hash from a prior full-pipeline write of the same uri.
+                val row = candidate.locator?.let {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        repository.getScreenshotByUri(it)
+                    }
+                }
+                if (row != null && dedup.resolvedContentHash != null) {
+                    repository.markContentIndexed(row, dedup.resolvedContentHash)
+                } else {
+                    repository.markProcessed(candidate)
+                }
                 emit(Progress.Indexing(current = indexed + failed, total = total,
                                        failedCount = failed, stageTimings = timings.snapshot()))
                 continue

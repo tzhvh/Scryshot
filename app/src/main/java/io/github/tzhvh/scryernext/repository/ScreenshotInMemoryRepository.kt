@@ -99,14 +99,15 @@ open class ScreenshotInMemoryRepository : ScreenshotRepository {
      */
     override suspend fun getContentText(screenshot: ScreenshotModel): String? = null
 
-    override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): Boolean {
+    override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): DedupResult {
         // Phase 2 issue 02: the engine has already read `bytes` (READ→DEDUP reorder, ADR 0004 [G1]).
         // This in-memory repo is unused reference code; its contract is the post-reorder shape so the
         // interface compiles, but it keeps the Room-era locator/identity resolution (no SHA-256 gold-
         // plating — zvec's content_hash identity is issue 03's job, against the real DB repo + cache).
-        val key = candidate.identity ?: candidate.locator ?: return false
-        val screenshot = screenshotList.find { it.uri == key } ?: return false
-        return screenshot.processed
+        // D1: returns DedupResult; this reference impl never resolves a hash (no resolvedContentHash).
+        val key = candidate.identity ?: candidate.locator ?: return DedupResult.UNKNOWN
+        val screenshot = screenshotList.find { it.uri == key } ?: return DedupResult.UNKNOWN
+        return DedupResult(known = screenshot.processed)
     }
 
     override suspend fun markProcessed(candidate: Candidate) {

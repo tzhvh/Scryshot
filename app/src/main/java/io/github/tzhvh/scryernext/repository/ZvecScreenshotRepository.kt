@@ -6,6 +6,7 @@
 package io.github.tzhvh.scryernext.repository
 
 import android.util.Log
+import io.github.tzhvh.scryernext.ZvecEventRecorder
 import io.github.tzhvh.scryernext.ingestion.ZvecContentStore
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.zvec.ZvecValue
@@ -79,7 +80,13 @@ class ZvecScreenshotRepository(
 
     /**
      * The shared zvec-FTS-then-batched-Room-lookup body for both the Flow and the List entry points.
-     * See [searchScreenshots] for the bridge + null policy.
+     *
+     * D3: resolves by **content_hash** (the zvec doc PK), not by locator. zvec dedups identical
+     * content to one doc, so N duplicate screenshots share one zvec doc whose PK is their shared
+     * hash. Bridging by locator (the old path) lost every duplicate except the one zvec's locator
+     * pointed at; bridging by hash returns ALL surviving Room rows for each matched hash, so
+     * deleting one duplicate doesn't make the others unsearchable. Rank order is preserved by
+     * walking the zvec result order and expanding each hash's rows in place.
      */
     private suspend fun searchZvecAndBridge(queryText: String): List<ScreenshotModel> {
         val trimmed = queryText.trim()
@@ -88,29 +95,36 @@ class ZvecScreenshotRepository(
         val docs = store.search(processQuery(trimmed))
         if (docs.isEmpty()) return emptyList()
 
-        // The locator (uri) is the gallery-row bridge. Collect them preserving zvec rank order.
-        val rankedLocators = ArrayList<String>(docs.size)
+        // The content_hash (zvec doc PK) is the gallery-row bridge. Collect PKs preserving zvec
+        // rank order; de-dup the PK list (a multi-term match can return the same doc twice).
+        val rankedHashes = ArrayList<String>(docs.size)
+        val seen = HashSet<String>()
         for (doc in docs) {
-            val locator = (doc.fields[ZvecContentStore.FIELD_LOCATOR] as? ZvecValue.Str)?.value
-            if (locator != null) rankedLocators.add(locator)
+            if (doc.pk.isNotEmpty() && seen.add(doc.pk)) rankedHashes.add(doc.pk)
         }
-        if (rankedLocators.isEmpty()) return emptyList()
+        if (rankedHashes.isEmpty()) return emptyList()
 
-        // One batched Room query (WHERE uri IN (...)) — NOT N+1 per-result lookups. Index by uri so
-        // the walk-back preserves zvec rank, not the arbitrary Room result order.
-        val rows = delegate.getScreenshotsByUri(rankedLocators)
-        val byUri = HashMap<String, ScreenshotModel>(rows.size).apply {
-            for (row in rows) put(row.uri, row)
+        // One batched Room query (WHERE content_hash IN (...)) — NOT N+1. Group by hash so each
+        // zvec hit expands into ALL its surviving Room rows (the dedup-correct behavior).
+        val rows = delegate.getScreenshotsByContentHash(rankedHashes)
+        val byHash = HashMap<String, MutableList<ScreenshotModel>>().apply {
+            for (row in rows) {
+                val h = row.contentHash
+                if (h != null) getOrPut(h) { ArrayList() }.add(row)
+            }
         }
-        val result = ArrayList<ScreenshotModel>(rankedLocators.size)
-        for (locator in rankedLocators) {
-            val row = byUri[locator]
-            if (row != null) {
-                result.add(row)
-            } else if (DEBUG_STALENESS) {
-                // A stale zvec doc: the screenshot was deleted from Room after indexing. Filtered
-                // silently (debug-logged) — a normal delete-during-search race, not an error.
-                Log.d(TAG, "search: stale zvec locator not in Room (deleted); filtered: $locator")
+        val result = ArrayList<ScreenshotModel>(rows.size)
+        for (hash in rankedHashes) {
+            val hashRows = byHash[hash]
+            if (hashRows.isNullOrEmpty()) {
+                // Stale: zvec matched a hash with no surviving Room row (all duplicates deleted
+                // since the zvec doc was written). Filter silently; debug-log the hash.
+                if (DEBUG_STALENESS) {
+                    Log.d(TAG, "search: stale zvec hash not in Room (deleted); filtered: $hash")
+                }
+                ZvecEventRecorder.record { "Staleness drop: hash ${hash.take(8)}... filtered (no Room row)" }
+            } else {
+                result.addAll(hashRows)
             }
         }
         return result
@@ -129,18 +143,29 @@ class ZvecScreenshotRepository(
     }
 
     /**
-     * The query pre-shape from the Room era (`processQuery`), preserved verbatim so the UI's existing
-     * search semantics carry over. Splits on whitespace / quotes / dashes / asterisks and rejoins as
-     * space-separated terms with a trailing `*` wildcard each (prefix-match per term). A live-engine
-     * probe (2026-07-01) confirmed zvec's FTS match-string accepts this shape.
+     * The query pre-shape applied to user input before hitting zvec FTS. Delegates to the top-level
+     * [processFtsQuery] (single source of truth) so the debug ZvecInspectorRunner can apply the
+     * identical transform without reaching the concrete repository class.
      */
-    private fun processQuery(queryText: String): String =
-        queryText.split("[ \"\\-*]".toRegex())
-            .filter { it.isNotEmpty() }
-            .joinToString(" ", "", "*")
+    internal fun processQuery(queryText: String): String = processFtsQuery(queryText)
 
     private companion object {
         const val TAG = "ZvecScreenshotRepository"
         const val DEBUG_STALENESS = true
     }
 }
+
+/**
+ * The query pre-shape from the Room era, preserved verbatim so the UI's existing search semantics
+ * carry over. Splits on whitespace / quotes / dashes / asterisks and rejoins as space-separated
+ * terms with a trailing `*` wildcard each (prefix-match per term). A live-engine probe (2026-07-01)
+ * confirmed zvec's FTS match-string accepts this shape.
+ *
+ * Top-level (not a member of [ZvecScreenshotRepository]) so the debug ZvecInspectorRunner can apply
+ * the identical transform — the inspector's Query Inspector must see what production sees, not a
+ * divergent raw view that would misdiagnose a prefix-match result as a recall failure (O3).
+ */
+internal fun processFtsQuery(queryText: String): String =
+    queryText.split("[ \"\\-*]".toRegex())
+        .filter { it.isNotEmpty() }
+        .joinToString(" ", "", "*")

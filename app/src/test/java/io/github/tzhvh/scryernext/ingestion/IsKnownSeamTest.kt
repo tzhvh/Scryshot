@@ -3,6 +3,7 @@ package io.github.tzhvh.scryernext.ingestion
 import android.content.Context
 import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
+import io.github.tzhvh.scryernext.repository.DedupResult
 import io.github.tzhvh.scryernext.repository.ScreenshotRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.runBlocking
@@ -16,9 +17,9 @@ class IsKnownSeamTest {
     private class FakeScreenshotRepository(
         private val knownKeys: Set<String>
     ) : ScreenshotRepository {
-        override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): Boolean {
-            val key = candidate.identity ?: candidate.locator ?: return false
-            return key in knownKeys
+        override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): DedupResult {
+            val key = candidate.identity ?: candidate.locator ?: return DedupResult.UNKNOWN
+            return DedupResult(known = key in knownKeys)
         }
 
         override suspend fun markProcessed(candidate: Candidate) = Unit
@@ -57,7 +58,7 @@ class IsKnownSeamTest {
             byteHandle = { ByteArrayInputStream(byteArrayOf()) },
             identity = "sha256:123"
         )
-        assertTrue(repo.isKnown(candidate, byteArrayOf()))
+        assertTrue(repo.isKnown(candidate, byteArrayOf()).known)
     }
 
     @Test
@@ -68,7 +69,7 @@ class IsKnownSeamTest {
             byteHandle = { ByteArrayInputStream(byteArrayOf()) },
             identity = null
         )
-        assertTrue(repo.isKnown(candidate, byteArrayOf()))
+        assertTrue(repo.isKnown(candidate, byteArrayOf()).known)
     }
 
     @Test
@@ -79,7 +80,7 @@ class IsKnownSeamTest {
             byteHandle = { ByteArrayInputStream(byteArrayOf()) },
             identity = "sha256:123"
         )
-        assertFalse(repo.isKnown(candidate, byteArrayOf()))
+        assertFalse(repo.isKnown(candidate, byteArrayOf()).known)
     }
 
     @Test
@@ -90,6 +91,6 @@ class IsKnownSeamTest {
             byteHandle = { ByteArrayInputStream(byteArrayOf()) },
             identity = null
         )
-        assertFalse(repo.isKnown(candidate, byteArrayOf()))
+        assertFalse(repo.isKnown(candidate, byteArrayOf()).known)
     }
 }

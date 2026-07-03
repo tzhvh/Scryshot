@@ -7,6 +7,7 @@ package io.github.tzhvh.scryernext.ingestion
 
 import android.content.ContentResolver
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
+import io.github.tzhvh.scryernext.repository.DedupResult
 import io.github.tzhvh.scryernext.repository.ScreenshotRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.toList
@@ -29,7 +30,7 @@ class MediaStoreProducerTest {
         }
 
         // Rest are stubbed/TODO
-        override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): Boolean = TODO()
+        override suspend fun isKnown(candidate: Candidate, bytes: ByteArray): DedupResult = TODO()
         override suspend fun markProcessed(candidate: Candidate) = TODO()
         override suspend fun markContentIndexed(screenshot: ScreenshotModel, contentHash: String) = TODO()
         override suspend fun addCollection(collection: io.github.tzhvh.scryernext.persistence.CollectionModel) = TODO()
