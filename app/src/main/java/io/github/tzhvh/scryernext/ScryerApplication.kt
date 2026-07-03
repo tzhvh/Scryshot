@@ -67,12 +67,23 @@ class ScryerApplication : Application() {
         }
 
         /**
-         * zvec Runtime Inspector — app-scope [ScreenshotDao] for the drift meter. Exposed so the
-         * debug [ZvecInspectorActivity] reads the production DB (no second Room handle). Unused in
+         * zvec Runtime Inspector — app-scope [ScreenshotDao] for the drift meter. Exposed so the debug
+         * [ZvecInspectorActivity] reads the production DB (no second Room handle). Unused in
          * release (the activity is debug-only); exposed regardless for accessor parity.
          */
         fun getScreenshotDao(): io.github.tzhvh.scryernext.persistence.ScreenshotDao =
             instance.screenshotDao
+
+        /**
+         * zvec Phase 2, issue 03 — app-scope [ContentMetadataCacheDao] for the WorkManager wiring
+         * path. [IngestionWorker] pulls its deps from these accessors (mirroring [OnOpenTrigger]'s
+         * wiring, which captures the Room DB as a local); without this getter the worker had to cast
+         * its app-scope [ScreenshotRepository] down to [ZvecScreenshotRepository] to reach the cache
+         * DAO — a runtime type assertion. Exposing the DAO here makes both `ZvecWriteSink` wiring
+         * sites (this app scope + `onCreate`'s local-scope construction) symmetric and cast-free.
+         */
+        fun getMetadataCacheDao(): io.github.tzhvh.scryernext.persistence.ContentMetadataCacheDao =
+            instance.metadataCacheDao
     }
 
     private object ApplicationHolder {
@@ -94,6 +105,13 @@ class ScryerApplication : Application() {
      * [ZvecInspectorActivity]'s drift meter. Set in [onCreate] after the DB repo is constructed.
      */
     private lateinit var screenshotDao: io.github.tzhvh.scryernext.persistence.ScreenshotDao
+
+    /**
+     * zvec Phase 2, issue 03 — the metadata-cache DAO held at app scope so [IngestionWorker]'s
+     * `ZvecWriteSink` wiring reaches it without a runtime cast to [ZvecScreenshotRepository]. Set
+     * in [onCreate] after the DB repo is constructed (sibling to [screenshotDao]).
+     */
+    private lateinit var metadataCacheDao: io.github.tzhvh.scryernext.persistence.ContentMetadataCacheDao
 
     /**
      * Issue 10.5: app-scope ingestion progress surface + atomic §7.5 guard.
@@ -173,6 +191,10 @@ class ScryerApplication : Application() {
         // zvec Runtime Inspector — hold the production DAO at app scope so the debug
         // ZvecInspectorActivity reads the same DB (no second Room handle). Set after dbRepository.
         screenshotDao = dbRepository.database.screenshotDao()
+        // zvec Phase 2, issue 03 — hold the metadata-cache DAO at app scope so IngestionWorker's
+        // ZvecWriteSink wiring reaches it without casting the app-scope repository (sibling to
+        // screenshotDao above). Set after dbRepository.
+        metadataCacheDao = dbRepository.database.contentMetadataCacheDao()
         // zvec Runtime Inspector — gate the event recorder to debuggable builds. Called before any
         // ingestion/store call so the recorder's `enabled` is published before first use. Release
         // builds leave the recorder disabled → zero overhead at the (inline) call sites.
@@ -184,13 +206,13 @@ class ScryerApplication : Application() {
         settingsRepository = PreferenceSettingsRepository.getInstance(this)
 
         // zvec Phase 2, issue 03 — the write-side cutover. The sink writes OCR content to zvec
-        // (replacing the deleted RoomWriteSink). The cache-DAO provider reaches the Room DB through
-        // the concrete DB repo (the façade exposes its DB via the delegate); the sink stays
-        // JVM-testable behind the provider lambda.
+        // (replacing the deleted RoomWriteSink). The cache-DAO provider reads the app-scope field
+        // (the same one [getMetadataCacheDao] exposes), so this wiring site matches
+        // [IngestionWorker]'s exactly — both cast-free, both reading one app-scope DAO.
         val zvecWriteSink = ZvecWriteSink(
             repository = screenshotRepository,
             zvecContentStore = zvecContentStore,
-            metadataCacheDaoProvider = { dbRepository.database.contentMetadataCacheDao() },
+            metadataCacheDaoProvider = { metadataCacheDao },
         )
 
         // Issue 14: constructed here (not as a field initializer) so the base Context is attached.

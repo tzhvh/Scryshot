@@ -51,12 +51,22 @@ class ZvecScreenshotRepository(
 ) : ScreenshotRepository by delegate {
 
     /**
-     * The metadata-cache DAO on the underlying Room DB — exposed so the WorkManager path
-     * ([io.github.tzhvh.scryernext.ingestion.triggers.IngestionWorker]) can build a `ZvecWriteSink`
-     * with the same cache-DAO provider as `ScryerApplication.onCreate`, without casting the
-     * repository to the concrete [delegate] type (the façade wraps the Room repo; the cache lives on
-     * the Room side, so this delegates straight through).
+     * A thin delegate accessor for the metadata-cache DAO on the underlying Room DB.
+     *
+     * **Deprecated:** this method was added so the WorkManager wiring path
+     * ([io.github.tzhvh.scryernext.ingestion.triggers.IngestionWorker]) could build a `ZvecWriteSink`
+     * without casting the app-scope repository down to the concrete [delegate] type. That path now
+     * reads the DAO from [io.github.tzhvh.scryernext.ScryerApplication.getMetadataCacheDao] instead
+     * (an app-scope field, sibling to the existing `ScreenshotDao` accessor) — making the wiring
+     * cast-free AND symmetric with `ScryerApplication.onCreate`'s local-scope construction. This
+     * method therefore has **no production callers**. Prefer the app-scope getter; this is retained
+     * only to avoid a hard removal in case an untracked caller exists.
      */
+    @Deprecated(
+        "Use ScryerApplication.getMetadataCacheDao() instead — the WorkManager wiring path " +
+            "(the original reason for this accessor) now reads the DAO from the app scope.",
+        ReplaceWith("ScryerApplication.getMetadataCacheDao()"),
+    )
     fun metadataCacheDao(): io.github.tzhvh.scryernext.persistence.ContentMetadataCacheDao =
         delegate.database.contentMetadataCacheDao()
 
