@@ -297,6 +297,22 @@ object ZvecNative {
         includeVector: Boolean,
     ): Array<Any?>
 
+    // ---- DocIterator (issue 02 B6) ------------------------------------------
+    // Full-collection walk over an isolated snapshot. JNI side: create iterator
+    // (options: output fields + include-vector, mirroring nativeFetch) → loop
+    // zvec_doc_iterator_next (out_doc == NULL at EOF) → accumulate each doc into
+    // a per-doc-owning guard → shared collect_docs → zvec_doc_iterator_close.
+    // The iterator never outlives the call, so the header's "close before the
+    // last collection handle" ordering holds by construction. Same row shape as
+    // nativeFetch ([0]=pk, [1]=score (0.0 — snapshot walks are fetch-like, not
+    // ranked), [2]=count, [3..]=(name, value) pairs). Not `internal` — same
+    // symbol-mangling caveat as nativeFetchTyped.
+    @JvmStatic external fun nativeIterDocs(
+        handle: Long,
+        outputFields: Array<String>?,
+        includeVector: Boolean,
+    ): Array<Any?>
+
     // ---- Query (issue 06) --------------------------------------------------
     // Single-vector / pure-FTS query. The JNI layer builds a vector_query_t, sets
     // field + topK + output_fields + (optional) filter, and either attaches a

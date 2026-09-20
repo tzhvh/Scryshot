@@ -385,6 +385,29 @@ struct DocsGuard {
   }
 };
 
+// Issue 02 B6: iterator options handle — zvec_iterator_options_destroy on any exit.
+struct IteratorOptionsGuard {
+  zvec_iterator_options_t* options = nullptr;
+  ~IteratorOptionsGuard() {
+    if (options) {
+      zvec_iterator_options_destroy(options);
+    }
+  }
+};
+
+// Issue 02 B6: the doc iterator itself — zvec_doc_iterator_close on any exit
+// (the header mandates closing before the last collection handle is released;
+// the SDK's iterator never outlives this call, so that ordering holds by
+// construction).
+struct DocIteratorGuard {
+  zvec_doc_iterator_t* iter = nullptr;
+  ~DocIteratorGuard() {
+    if (iter) {
+      zvec_doc_iterator_close(iter);
+    }
+  }
+};
+
 // Bulk input-doc cleanup. The C `_with_results` calls do NOT take ownership of
 // the input docs (the Rust oracle's Doc drop calls zvec_doc_destroy itself), so
 // the bulk path owns each built doc and must destroy it after the call — on the
@@ -1260,6 +1283,89 @@ Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeFetch(
 
   DocsGuard docs_guard{docs, found_count};
   return collect_docs(env, col, docs, found_count);
+}
+
+// Issue 02 B6: full-collection walk via the DocIterator. Creates an iterator
+// (c_api.h:3879) — an ISOLATED SNAPSHOT at call time; writes/deletes after it
+// are invisible, and on a writable collection the create seals the current
+// writing segment (may add a small segment per call) — then walks it with
+// zvec_doc_iterator_next (out_doc == NULL at EOF, same return code) and closes
+// it via the guard. Each next() doc is individually owned by us (the C
+// iterator does NOT retain it), so the loop accumulates into a BuiltDocsGuard
+// (per-doc destroy on any exit path) and the shared collect_docs (issue 05)
+// copies the batch out with the exact same row shape fetch/query use — [0]=pk,
+// [1]=score (0.0 here; the Kotlin side nulls it, snapshot walks are fetch-like,
+// not ranked), [2]=count, [3..]=(name, value) pairs. Output fields +
+// include-vector mirror nativeFetch exactly (null output fields = all fields).
+JNIEXPORT jobjectArray JNICALL
+Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeIterDocs(
+    JNIEnv* env, jclass, jlong handle,
+    jobjectArray joutputFields, jboolean jincludeVector) {
+
+  zvec_collection_t* col = reinterpret_cast<zvec_collection_t*>(handle);
+  if (!col) {
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Collection handle is null");
+    return nullptr;
+  }
+
+  // output_fields: null = all fields; otherwise the projection set. Copied out
+  // eagerly so no JNI reference is held across the zvec call (Rule 1) — same
+  // shape as nativeFetch above.
+  std::vector<std::string> out_fields_storage;
+  std::vector<const char*> out_field_ptrs;
+  const char* const* out_fields_ptr = nullptr;
+  size_t out_field_count = 0;
+  if (joutputFields != nullptr) {
+    jsize ofn = env->GetArrayLength(joutputFields);
+    if (env->ExceptionCheck()) return nullptr;
+    out_fields_storage.resize(ofn);
+    out_field_ptrs.resize(ofn);
+    for (jsize i = 0; i < ofn; i++) {
+      jstring jf = static_cast<jstring>(env->GetObjectArrayElement(joutputFields, i));
+      if (env->ExceptionCheck()) return nullptr;
+      out_fields_storage[i] = jstring_to_std(env, jf);
+      env->DeleteLocalRef(jf);
+      if (env->ExceptionCheck()) return nullptr;
+      out_field_ptrs[i] = out_fields_storage[i].c_str();
+    }
+    out_fields_ptr = out_field_ptrs.data();
+    out_field_count = static_cast<size_t>(ofn);
+  }
+
+  zvec_iterator_options_t* options = zvec_iterator_options_create();
+  if (!options) {
+    zvec_throw(env, ZVEC_ERROR_RESOURCE_EXHAUSTED,
+               "Failed to allocate iterator options");
+    return nullptr;
+  }
+  IteratorOptionsGuard options_guard{options};
+  if (out_fields_ptr) {
+    ZVEC_CHECK_JNI_JINT(env, zvec_iterator_options_set_output_fields(
+                                 options, out_fields_ptr, out_field_count));
+  }
+  ZVEC_CHECK_JNI_JINT(env, zvec_iterator_options_set_include_vector(
+                               options, jincludeVector == JNI_TRUE));
+
+  zvec_doc_iterator_t* iter = nullptr;
+  ZVEC_CHECK_JNI_JINT(env,
+      zvec_collection_create_iterator(col, options, &iter));
+  DocIteratorGuard iter_guard{iter};
+
+  // Walk the snapshot. EOF is out_doc == NULL (still ZVEC_OK, c_api.h:3884);
+  // any non-OK code throws. No JNI local refs are created in this loop.
+  BuiltDocsGuard collected;
+  while (true) {
+    zvec_doc_t* doc = nullptr;
+    zvec_error_code_t rc = zvec_doc_iterator_next(iter, &doc);
+    if (rc != ZVEC_OK) {
+      zvec_throw(env, rc, "DocIterator next failed");
+      return nullptr;
+    }
+    if (!doc) break;  // EOF
+    collected.docs.push_back(doc);
+  }
+
+  return collect_docs(env, col, collected.docs.data(), collected.docs.size());
 }
 
 // Issue 06: single-vector / pure-FTS query. Builds a vector_query_t, sets

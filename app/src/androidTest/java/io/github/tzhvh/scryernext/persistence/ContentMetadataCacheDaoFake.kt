@@ -34,4 +34,8 @@ class ContentMetadataCacheDaoFake : ContentMetadataCacheDao {
         }
         return n
     }
+
+    override fun clearAll() {
+        rows.clear()
+    }
 }

@@ -334,6 +334,16 @@ open class ZvecContentStore(
     }
 
     /**
+     * Issue 02 B6 — full-corpus walk passthrough ([ZvecCollection.iterDocs]). The corpus-audit and
+     * bronze-set harvest path: enumerate every doc's text without FTS probing. Scores are null
+     * (snapshot walk, not ranked); vectors excluded. `open` so a JVM test can record without the `.so`.
+     */
+    open suspend fun iterDocs(outputFields: List<String>? = null): List<ZvecDoc> {
+        ensureOpen()
+        return withContext(Dispatchers.IO) { collection!!.iterDocs(outputFields) }
+    }
+
+    /**
      * The collection's live document count. The R8-idempotency instrumented test asserts this is
      * unchanged after a second upsert of the same PK.
      */

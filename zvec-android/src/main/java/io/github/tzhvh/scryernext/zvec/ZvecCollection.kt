@@ -420,6 +420,42 @@ class ZvecCollection internal constructor(
         return ZvecDoc(pk = pk, score = score, fields = fields)
     }
 
+    /**
+     * Issue 02 B6 — walk every document in the collection via the engine's DocIterator
+     * (`zvec_collection_create_iterator` + `_next` + `_close`, 0.7's first key-enumeration
+     * primitive). The one honest way to answer "what is actually in the collection" — corpus
+     * audits, D9 OCR-quality counts, cache reconciliation — that FTS probing could only sample.
+     *
+     * **Snapshot semantics** (from the header, verified live in 01-A5 assert 8): the iterator takes
+     * an isolated snapshot at call time — writes and deletes after the call are invisible to the
+     * walk. On a writable collection the create seals the current writing segment (each call may
+     * add a small segment); on a read-only collection it scans without writing. The SDK's iterator
+     * never outlives this call (the JNI guard closes it on every exit path), so the header's
+     * "close iterators before the last collection handle" ordering holds by construction, and
+     * callers can never wedge schema DDL or `close()` behind an open walk.
+     *
+     * [outputFields] projects like [fetch] (null = all fields); vectors are excluded
+     * (`includeVector = false`) — a walk is for text/scalar payloads, and the vector-free default
+     * keeps a full-corpus pass cheap. Score is null on every doc (not ranked — engine order only).
+     * The whole snapshot is materialized: at this app's corpus scale (personal screenshots) that
+     * is the honest shape; stream if that ever stops being true.
+     *
+     * ADR 0007: `suspend`, the caller owns the dispatcher; no internal hop.
+     */
+    suspend fun iterDocs(outputFields: List<String>? = null): List<ZvecDoc> {
+        ensureNotClosed()
+        val rows = ZvecNative.nativeIterDocs(
+            handle = nativeHandle(),
+            outputFields = outputFields?.toTypedArray(),
+            includeVector = false,
+        )
+        return ArrayList<ZvecDoc>(rows.size).apply {
+            for (row in rows) {
+                add(unpackRow(row ?: error("null row from nativeIterDocs"), keepScore = false))
+            }
+        }
+    }
+
     // ---- Query (issue 06) -----------------------------------------------
     // The single-vector / pure-FTS query surface. `vector_query_t` + `fts_t` are
     // the one place in the SDK where the caller NEVER sees a handle, even
