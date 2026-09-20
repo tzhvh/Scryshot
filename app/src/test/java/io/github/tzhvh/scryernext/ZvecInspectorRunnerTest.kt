@@ -175,6 +175,7 @@ class ZvecInspectorRunnerTest {
         override fun deleteScreenshot(screenshot: ScreenshotModel): Unit = TODO()
         override fun getCollectionCovers(): androidx.lifecycle.LiveData<List<ScreenshotModel>> = TODO()
         override fun markContentIndexed(id: String, contentHash: String): Unit = TODO()
+        override fun resetProcessedForReingest(): Int = TODO()
         override fun getUnprocessed(): List<ScreenshotModel> = TODO()
         override fun getScreenshotByUri(uri: String): ScreenshotModel? = TODO()
         override fun getScreenshotsByUri(uris: List<String>): List<ScreenshotModel> = TODO()

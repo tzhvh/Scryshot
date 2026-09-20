@@ -179,10 +179,10 @@ class ScryerApplication : Application() {
 
         // zvec Phase 2, issue 04 — the read-flip. The gallery + collections stay on Room
         // (ScreenshotDatabaseRepository, unchanged); content search + content-text route to zvec via
-        // the ZvecScreenshotRepository façade. The store is constructed first (issue 03 owns the
-        // collection lifecycle); the façade wraps the Room repo + the store. The UI never knows
-        // content moved — every Flow<List<ScreenshotModel>> keeps its shape.
-        zvecContentStore = ZvecContentStore(filesDir, debug = isDebuggable)
+        // the ZvecScreenshotRepository façade. The store is constructed after the DAO hold lines
+        // below (issue 02 B0: its schema-wipe callback needs both DAOs); the façade wraps the Room
+        // repo + the store. The UI never knows content moved — every Flow<List<ScreenshotModel>>
+        // keeps its shape.
         val dbRepository = ScreenshotDatabaseRepository.create(this) {
             launchIO {
                 screenshotRepository.setupDefaultContent(this@ScryerApplication)
@@ -195,6 +195,18 @@ class ScryerApplication : Application() {
         // ZvecWriteSink wiring reaches it without casting the app-scope repository (sibling to
         // screenshotDao above). Set after dbRepository.
         metadataCacheDao = dbRepository.database.contentMetadataCacheDao()
+        // zvec Phase B, issue 02 B0 — the schema-wipe callback: the Room half of a wipe, run in the
+        // SAME operation as the zvec dir deletion. Without the queue reset (processed=0) the
+        // producers never re-pull; without the cache clear the dedup fast-path answers "already
+        // indexed" — either alone leaves the fresh collection empty forever.
+        zvecContentStore = ZvecContentStore(
+            filesDir,
+            debug = isDebuggable,
+            onSchemaWipe = {
+                screenshotDao.resetProcessedForReingest()
+                metadataCacheDao.clearAll()
+            },
+        )
         // zvec Runtime Inspector — gate the event recorder to debuggable builds. Called before any
         // ingestion/store call so the recorder's `enabled` is published before first use. Release
         // builds leave the recorder disabled → zero overhead at the (inline) call sites.

@@ -37,11 +37,19 @@ import java.io.File
  * ## Lifecycle
  *
  * - **Open:** lazy on first use via [ensureOpen] — `Zvec.init(androidDefaults)` (idempotent), then
- *   [openOrCreate], which `createAndOpen`s on first launch and `open`s on subsequent launches, with
- *   **stale-LOCK recovery** (pinned Phase-1 contract #1): on an open failure whose
- *   [ZvecException.detail] carries the lock signal, delete `$dbPath/LOCK` and retry **once**. This is
- *   deliberately the caller's policy, not the SDK's — the SDK performs no automatic recovery on
- *   crash-left lock files (`ZvecCollection.open` KDoc).
+ *   [openOrCreate], which decides **open vs wipe-recreate by the schema marker, not path existence**
+ *   (zvec Phase B / issue 02 B0): the sibling `$collectionPath.version` file records the
+ *   [SCHEMA_VERSION] that created the collection. Marker present + equal → `open` (with **stale-LOCK
+ *   recovery**, pinned Phase-1 contract #1: on an open failure whose [ZvecException.detail] carries
+ *   the lock signal, delete `$dbPath/LOCK` and retry **once** — the caller's policy, not the SDK's).
+ *   Marker absent or different → **wipe-and-recreate**: `deleteRecursively($dbPath)` →
+ *   [onSchemaWipe] (the Room ingestion-queue reset — without it the producers' `WHERE processed = 0`
+ *   queue and the metadata cache would both keep saying "done" and the re-ingest would never run) →
+ *   `createAndOpen` → write the marker. The pre-marker legacy case (0.5.x-era dir, no marker file)
+ *   lands in the wipe branch by construction: an unmarked dir cannot prove its schema, and the
+ *   doctrine is hard cutover (H3 — nothing to migrate), so it is recreated exactly once and steady-
+ *   state from then on. The marker is written only *after* `createAndOpen` succeeds, so a crash
+ *   mid-sequence leaves no marker and the next launch re-runs the (idempotent, self-healing) wipe.
  * - **Close:** [onTrimMemoryComplete] flushes + closes + nulls the reference; the next data-path call
  *   re-opens via [openOrCreate].
  *
@@ -61,12 +69,33 @@ import java.io.File
  * Issue 04's `ZvecScreenshotRepository` façade absorbs this store for the read-flip (search +
  * `getContentText` route to [fetch]; the gallery + collections stay on Room).
  */
+/**
+ * The [markerState] verdicts. `Wipe` covers fresh-create (nothing to delete is a no-op).
+ */
+internal enum class SchemaMarkerState { Open, Wipe }
+
 open class ZvecContentStore(
     private val filesDir: File,
     private val debug: Boolean,
+    /**
+     * The ingestion-queue reset invoked **inside the wipe branch** — after the collection dir is
+     * deleted, before `createAndOpen`. Production wiring (ScryerApplication) passes the Room reset
+     * (`UPDATE screenshot SET processed = 0` + `DELETE FROM content_metadata_cache`); without it a
+     * wipe leaves both saying "done" and nothing re-ingests. Null (JVM tests) = no reset to run.
+     * A throw here propagates: the dir is already gone, the marker is not yet written, so the next
+     * launch re-runs the whole (idempotent) wipe-and-reset — failing loudly beats a half-reset.
+     */
+    private val onSchemaWipe: (suspend () -> Unit)? = null,
 ) {
     /** Fixed app-private path for the screenshot-content collection directory. */
     private val collectionPath: File = File(filesDir, "zvec/screenshots").also { it.parentFile?.mkdirs() }
+
+    /**
+     * The schema marker — sibling of [collectionPath] (outside it, so the wipe's
+     * `deleteRecursively` can't take the marker down mid-operation). Written only after a
+     * successful `createAndOpen`; its absence means "this dir proves nothing" (→ wipe).
+     */
+    private val schemaMarkerFile: File = File("${collectionPath.path}.version")
 
     /**
      * The one long-lived collection handle, or null after [onTrimMemoryComplete] until the next
@@ -84,6 +113,14 @@ open class ZvecContentStore(
 
     @Volatile
     open var lockRecoveriesCount: Int = 0
+
+    /**
+     * How many times the wipe branch ran **with a pre-existing dir** (i.e. a real wipe of previously
+     * indexed data, not a first-launch create). A number > 0 on a device that hasn't changed
+     * [SCHEMA_VERSION] between launches means the marker isn't surviving — investigate, don't ship.
+     */
+    @Volatile
+    open var schemaWipesCount: Int = 0
 
     @Volatile
     open var lastFlushTimestamp: Long = 0L
@@ -150,12 +187,13 @@ open class ZvecContentStore(
      * not codify the signal) and isolated here.
      *
      * `open` and `createAndOpen` are split into protected hooks ([openExisting]/[createNew]) so a JVM
-     * test can subclass and fake the lock exception without the `.so` (see `ZvecContentStoreTest`).
+     * test can subclass and fake the lock exception without the `.so` (the class KDoc's test-seam
+     * pattern); [openOrCreate] itself is `protected` (not `private`) so the marker-machinery test can
+     * drive a real open decision end-to-end the same way.
      */
-    private suspend fun openOrCreate(): ZvecCollection = withContext(Dispatchers.IO) {
+    protected open suspend fun openOrCreate(): ZvecCollection = withContext(Dispatchers.IO) {
         try {
             val col = openOrRetry()
-            lastOpenOutcome = "success"
             ZvecEventRecorder.record { "Collection opened successfully" }
             col
         } catch (e: ZvecException) {
@@ -180,10 +218,66 @@ open class ZvecContentStore(
         }
     }
 
-    /** The first-or-retry attempt — picks `open` vs `createAndOpen` on path existence. */
-    private suspend fun openOrRetry(): ZvecCollection =
-        if (collectionPath.exists()) openExisting(collectionPath, options())
-        else createNew(collectionPath, screenshotContentSchema(), options())
+    /**
+     * The first-or-retry attempt — decides **open vs wipe-recreate by the schema marker** (issue 02
+     * B0), not by path existence alone:
+     *
+     * - Marker equal to [SCHEMA_VERSION] **and** the dir present → [openExisting]. (A matched marker
+     *   with a missing dir is external tampering or partial deletion — the wipe branch recreates
+     *   rather than erroring on an `open` of nothing.)
+     * - Anything else (marker absent, unreadable, different version, or dir gone) → the wipe branch:
+     *   `deleteRecursively` → [runQueueReset] → [createNew] → [writeSchemaMarker], in that order.
+     *   The queue reset runs on EVERY recreate — including a fresh install, where it's a no-op on an
+     *   empty Room DB — because "marker matches but dir missing" is precisely the ghost-index state
+     *   (engine empty, queue believes everything is done) the reset exists to undo. The marker is
+     *   written last: a crash anywhere earlier leaves no marker, and the next launch re-runs the
+     *   idempotent wipe. [schemaWipesCount] / the outcome string count only real wipes (a dir that
+     *   held data), not fresh creates.
+     */
+    protected open suspend fun openOrRetry(): ZvecCollection {
+        val markerMatches = markerState(readSchemaMarker(), SCHEMA_VERSION) == SchemaMarkerState.Open
+        if (markerMatches && collectionPath.exists()) {
+            lastOpenOutcome = "success"
+            return openExisting(collectionPath, options())
+        }
+        val wipedExistingData = collectionPath.exists()
+        if (wipedExistingData) {
+            val deleted = collectionPath.deleteRecursively()
+            ZvecEventRecorder.record { "Schema wipe: removed $collectionPath (deleted=$deleted)" }
+        }
+        runQueueReset()
+        val col = createNew(collectionPath, screenshotContentSchema(), options())
+        writeSchemaMarker()
+        if (wipedExistingData) {
+            schemaWipesCount++
+            lastOpenOutcome = "wipe-recreated (schema v$SCHEMA_VERSION)"
+        }
+        return col
+    }
+
+    /**
+     * The Room ingestion-queue reset — the other half of a wipe. Runs inside the wipe branch after
+     * the dir deletion; without it `MediaStoreProducer`'s `WHERE processed = 0` queue stays empty
+     * and the metadata cache keeps answering "already indexed", so a wiped engine re-ingests
+     * nothing. Failure propagates (loud) — see [onSchemaWipe].
+     */
+    protected open suspend fun runQueueReset() {
+        onSchemaWipe?.invoke()
+        ZvecEventRecorder.record { "Schema wipe: ingestion queue reset (processed=0, cache cleared)" }
+    }
+
+    /** Raw marker content (trimmed), or null when absent/unreadable — null deliberately means wipe. */
+    protected open fun readSchemaMarker(): String? =
+        runCatching { schemaMarkerFile.takeIf { it.exists() }?.readText()?.trim() }.getOrNull()
+
+    /**
+     * Persist [SCHEMA_VERSION]. Called only after `createAndOpen` succeeded; a write failure is
+     * logged and swallowed — the cost is one self-healing re-wipe next launch, not a failed open.
+     */
+    protected open fun writeSchemaMarker() {
+        runCatching { schemaMarkerFile.writeText(SCHEMA_VERSION.toString()) }
+            .onFailure { ZvecEventRecorder.record { "Schema marker write failed: ${it.message}" } }
+    }
 
     /** The stale-LOCK heuristic: the lock signal in [ZvecException.detail] (case-insensitive). */
     private fun isStaleLock(e: ZvecException): Boolean =
@@ -327,6 +421,30 @@ open class ZvecContentStore(
         private const val TAG = "ZvecContentStore"
         private const val LOCK_FILE = "LOCK"
         private const val COLLECTION_NAME = "screenshots"
+
+        /**
+         * The schema-generation const the marker file is checked against (issue 02 B0). **Bump this
+         * exactly when [screenshotContentSchema] changes** — FTS params/filters/tokenizer are fixed
+         * at collection creation (DDL rejects non-numeric changes; one tokenizer per FTS field,
+         * forever) — and the next launch wipes + queue-resets + re-ingests from scratch (full
+         * re-OCR, the doctrine's accepted cost; no back-fill, no migration: H3).
+         *
+         * Current value `1` describes the schema as of the marker mechanism's introduction
+         * (`standard` + `lowercase` on `content`). The Phase-B FTS decision (B3/B4 — filters +
+         * stemmer, maybe `content_ngram`) is expected to ship the first *production* bump.
+         */
+        const val SCHEMA_VERSION = 1
+
+        /**
+         * The pure wipe decision — total, disk-free, JVM-tested. [markerContent] is the raw marker
+         * file content (null = absent or unreadable). `Open` only when the marker is exactly
+         * [currentVersion] as written (decimal string, trimmed). Everything else — absent, garbage,
+         * stale version — is `Wipe`: an unmarked or mismatched dir cannot prove its schema, and the
+         * doctrine is hard cutover (H3), never migrate.
+         */
+        internal fun markerState(markerContent: String?, currentVersion: Int): SchemaMarkerState =
+            if (markerContent?.trim() == currentVersion.toString()) SchemaMarkerState.Open
+            else SchemaMarkerState.Wipe
 
         /**
          * The search topK. The old Room FTS query returned all matches (no LIMIT); zvec needs a

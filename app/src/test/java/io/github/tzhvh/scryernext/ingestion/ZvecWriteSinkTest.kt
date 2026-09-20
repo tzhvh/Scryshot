@@ -55,6 +55,7 @@ class ZvecWriteSinkTest {
             markIndexedHashes += contentHash
             return upserts.count { it.contentHash == contentHash }
         }
+        override fun clearAll() { upserts.clear() }
     }
 
     @Test

@@ -47,6 +47,21 @@ interface ScreenshotDao {
     @Query("UPDATE screenshot SET content_hash = :contentHash, processed = 1 WHERE id = :id")
     fun markContentIndexed(id: String, contentHash: String)
 
+    /**
+     * zvec Phase B, issue 02 B0 — the wipe side of the schema-marker operation. Puts every row back
+     * in the producers' work queue (`MediaStoreProducer` pulls `WHERE processed = 0` via
+     * [getUnprocessed]), so the post-wipe empty zvec collection actually re-ingests instead of the
+     * engine skipping everything as "done". `content_hash` is deliberately left in place: re-ingest
+     * recomputes it (deterministic) and the write-path update overwrites it; the row-level "what was
+     * indexed" bookkeeping lives in the metadata cache, which the same wipe clears.
+     *
+     * Must run in the SAME operation as the zvec dir wipe (wired via `ZvecContentStore`'s
+     * `onSchemaWipe` callback) — a wipe without this leaves the queue empty; this without a wipe
+     * double-ingests. Returns the number of rows re-queued.
+     */
+    @Query("UPDATE screenshot SET processed = 0")
+    fun resetProcessedForReingest(): Int
+
     @Query("SELECT * FROM screenshot WHERE processed = 0")
     fun getUnprocessed(): List<ScreenshotModel>
 

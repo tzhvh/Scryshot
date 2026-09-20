@@ -55,4 +55,15 @@ interface ContentMetadataCacheDao {
      */
     @Query("UPDATE content_metadata_cache SET `indexed` = 1 WHERE content_hash = :contentHash")
     fun markIndexed(contentHash: String): Int
+
+    /**
+     * zvec Phase B, issue 02 B0 — the cache half of the schema-marker wipe. The cache answers
+     * "already indexed" without touching zvec ([lookup] → `indexed` flag; [lookupByHash] the same
+     * post-hash), so after the zvec dir is wiped it MUST be cleared too — otherwise the dedup
+     * fast-path skips everything and the fresh, empty collection stays empty. Same operation as the
+     * wipe and the [ScreenshotDao.resetProcessedForReingest] queue reset, via the same
+     * `onSchemaWipe` callback.
+     */
+    @Query("DELETE FROM content_metadata_cache")
+    fun clearAll()
 }
