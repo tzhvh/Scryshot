@@ -34,7 +34,7 @@ constexpr int KIND_VEC_F16 = 7;
 constexpr int KIND_VEC_I8 = 8;
 constexpr int KIND_NULL = 9;
 
-// zvec_data_type_t (c_api.h:788) values the read path dispatches on. Pinned
+// zvec_data_type_t (c_api.h:837) values the read path dispatches on. Pinned
 // explicit (not the enum) so a header reorder can never silently drift the int
 // the per-field type-switch keys on. Mirrors FieldType.toNative() in Kotlin.
 constexpr zvec_data_type_t DT_BOOL = 3;

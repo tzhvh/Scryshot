@@ -15,21 +15,24 @@ import org.junit.Test
  * renumbers any of these values fails loudly here, on the JVM, before reaching a
  * device.
  *
- * Values are pinned against the v0.6.0 header (`c_api.h` at tag `v0.6.0`):
- * - `ZVEC_DATA_TYPE_*` — `c_api.h:833-861`
- * - `ZVEC_INDEX_TYPE_*` — `c_api.h:870-878`
- * - `ZVEC_METRIC_TYPE_*` — `c_api.h:888-892`
+ * Values are pinned against the v0.7.0 header (`c_api.h` at tag `v0.7.0`):
+ * - `ZVEC_DATA_TYPE_*` — `c_api.h:838-866`
+ * - `ZVEC_INDEX_TYPE_*` — `c_api.h:875-884`
+ * - `ZVEC_METRIC_TYPE_*` — `c_api.h:894-898`
  *
  * The v0.6.0 bump (issue 01) added `ZVEC_INDEX_TYPE_HNSW_RABITQ 4` and
  * `ZVEC_INDEX_TYPE_DISKANN 5` but **renumbered nothing** this app pins — this
- * test recorded "no drift" and now guards against the next bump. The cpp half of
- * the index-type guard is symbolic (`INDEX_KIND_*` → `ZVEC_INDEX_TYPE_*` in
- * `zvec_jni_marshalling.h`), so the [SchemaDescriptor.IndexKind] ints here are
- * the only place a stale mirror could hide on the JVM side.
+ * test recorded "no drift" and now guards against the next bump. The v0.7.0
+ * bump (issue 01 retarget) likewise added `ZVEC_INDEX_TYPE_VAMANA 6` and
+ * `ZVEC_INDEX_TYPE_IVF_RABITQ 7` — again renumbering nothing pinned; "no
+ * drift" recorded 2026-09-20. The cpp half of the index-type guard is symbolic
+ * (`INDEX_KIND_*` → `ZVEC_INDEX_TYPE_*` in `zvec_jni_marshalling.h`), so the
+ * [SchemaDescriptor.IndexKind] ints here are the only place a stale mirror
+ * could hide on the JVM side.
  */
 class SchemaEnumMappingTest {
 
-    /** `FieldType.toNative()` mirrors `ZVEC_DATA_TYPE_*` (`c_api.h:833-861`). */
+    /** `FieldType.toNative()` mirrors `ZVEC_DATA_TYPE_*` (`c_api.h:838-866`). */
     @Test fun fieldTypeMapsToCDataTypeValues() {
         assertEquals(2, FieldType.STRING.toNative())
         assertEquals(3, FieldType.BOOL.toNative())
@@ -44,7 +47,7 @@ class SchemaEnumMappingTest {
         assertEquals(26, FieldType.VECTOR_INT8.toNative())
     }
 
-    /** `MetricType.toNative()` mirrors `ZVEC_METRIC_TYPE_*` (`c_api.h:888-892`). */
+    /** `MetricType.toNative()` mirrors `ZVEC_METRIC_TYPE_*` (`c_api.h:894-898`). */
     @Test fun metricTypeMapsToCMetricTypeValues() {
         assertEquals(1, MetricType.L2.toNative())
         assertEquals(2, MetricType.IP.toNative())
@@ -53,8 +56,9 @@ class SchemaEnumMappingTest {
 
     /**
      * [SchemaDescriptor.IndexKind] mirrors `ZVEC_INDEX_TYPE_*`
-     * (`c_api.h:870-878`). Only the index kinds the SDK exposes are pinned;
-     * `HNSW_RABITQ` (4) and `DISKANN` (5) exist in v6 but have no Kotlin arm yet.
+     * (`c_api.h:875-884`). Only the index kinds the SDK exposes are pinned;
+     * `HNSW_RABITQ` (4), `DISKANN` (5), `VAMANA` (6) and `IVF_RABITQ` (7)
+     * exist in the C header but have no Kotlin arm yet.
      */
     @Test fun indexKindMirrorsCIndexTypeValues() {
         assertEquals(0, SchemaDescriptor.IndexKind.NONE)

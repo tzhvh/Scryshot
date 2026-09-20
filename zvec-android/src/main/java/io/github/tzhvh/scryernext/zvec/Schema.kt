@@ -1,7 +1,7 @@
 package io.github.tzhvh.scryernext.zvec
 
 /**
- * Typed mirror of zvec's `zvec_data_type_t` (`c_api.h:787`). The values handed to
+ * Typed mirror of zvec's `zvec_data_type_t` (`c_api.h:837`). The values handed to
  * zvec are a stability surface, so [toNative] uses an explicit map (not `ordinal`)
  * — a reorder here can never silently drift the int the engine receives.
  *
@@ -47,7 +47,7 @@ enum class FieldType {
 }
 
 /**
- * Typed mirror of zvec's `zvec_metric_type_t` (`c_api.h:840`). Used by the vector
+ * Typed mirror of zvec's `zvec_metric_type_t` (`c_api.h:893`). Used by the vector
  * index-param arms ([HnswParams] / [FlatParams] / [IvfParams]).
  *
  * `MIPSL2` exists in C (`ZVEC_METRIC_TYPE_MIPSL2`, 4) but is intentionally not

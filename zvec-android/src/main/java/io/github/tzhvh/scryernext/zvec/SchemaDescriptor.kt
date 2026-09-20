@@ -65,7 +65,7 @@ internal class SchemaDescriptor private constructor(
 ) {
     /**
      * The index-kind discriminator the JNI layer switches on. Pinned explicit
-     * values (mirroring `zvec_index_type_t`, `c_api.h:824`) so an enum reorder in
+     * values (mirroring `zvec_index_type_t`, `c_api.h:874`) so an enum reorder in
      * Kotlin can never drift the int handed to `zvec_index_params_create`.
      */
     internal object IndexKind {
