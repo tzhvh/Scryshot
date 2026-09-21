@@ -72,7 +72,7 @@ class OnboardingPrefs private constructor(context: Context) {
 
         /**
          * Legacy `PermissionFlow` page-state key that doubled as "the old flow
-         * finished" ([PermissionFlow.OverlayState.Granted]'s issue-25 gate).
+         * finished" (its OverlayState.Granted issue-25 gate).
          * Read exactly once, by [applyLegacyMigration]; never written again.
          * `welcome_page_shown` / `overlay_page_shown` are dead by the same
          * cutover — not read, not deleted.

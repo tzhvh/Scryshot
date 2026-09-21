@@ -10,7 +10,6 @@
     <!-- Label used when no content -->
     <string name="title_noshots">No screenshots yet!</string>
     <!-- Label used for buttons to skip the current action -->
-    <string name="action_later">Later</string>
 
     <!-- Notification: strings displayed on the notification to perform various actions -->
     <string name="notification_action_capture">Tap to take screenshot</string>
@@ -141,9 +140,7 @@
     <string name="sheet_enable_content_enable">You won’t be able to take screenshots with one tap unless this is enabled.</string>
     <!-- String displayed to allow users to enable the screenshot service -->
     <string name="sheet_enable_action_enable">Enable</string>
-    <string name="sheet_unsorted_title_unsorted">Unsorted screenshots</string>
     <!-- Parameter %1$d is the quantity of screenshot files, i.e. 100 unsorted screenshots. Sort them now? -->
-    <string name="sheet_unsorted_content_shots">%1$d unsorted screenshots. Sort them now?</string>
     <string name="sheet_box_ask">Don’t ask again</string>
     <string name="sheet_unsorted_action_sort">Sort</string>
     <string name="sheet_action_no">No thanks</string>
@@ -188,17 +185,9 @@
     <string name="about_list_privacy">Privacy Notice</string>
 
     <!-- Onboarding: first-run welcome screen. Parameter %1$s is the app name. -->
-    <string name="onboarding_storage_title_welcome">Welcome to %1$s</string>
-    <string name="onboarding_welcome_content">%1$s helps you organize and find your screenshots better.</string>
-    <string name="onboarding_storage_action_confirm" translatable="false">Let’s GO</string>
-    <string name="onboarding_transition_loading">Loading</string>
     <!-- Overlay permission prompt: strings to onboard users to grant permissions, and the placeholder %1$s is "GO" from the product name -->
-    <string name="onboarding_fab_title_fab">Get the %1$s button</string>
     <!-- The placeholder %1$s is "GO" from the product name -->
-    <string name="onboarding_fab_content_permission">The %1$s button lets you take and organize your screenshots anytime, anywhere. We’ll need your permission to enable it.</string>
     <!-- Auto-grant overlay permission prompt. The placeholder %1$s is "GO" from the product name -->
-    <string name="onboarding_autogrant_overlay_title">Use the %1$s button to take and organize screenshots anytime, anywhere.</string>
-    <string name="onboarding_autogrant_overlay_gotit">Got it</string>
     <!-- Onboarding: strings to inform users that the search feature is WIP,
     Refer to UX spec 7.3 (legacy): Other Onboarding -->
     <string name="onboarding_search_title_soon">Search is coming soon!</string>

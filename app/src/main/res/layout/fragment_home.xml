@@ -122,16 +122,6 @@
         app:layout_constraintTop_toBottomOf="@id/ingestion_banner"
         app:layout_constraintBottom_toBottomOf="parent" />
 
-    <ViewStub
-        android:id="@+id/welcome_stub"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout="@layout/view_welcome"
-        app:layout_constraintLeft_toLeftOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintRight_toRightOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent" />
-
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/onboarding_view"
         android:layout_width="match_parent"

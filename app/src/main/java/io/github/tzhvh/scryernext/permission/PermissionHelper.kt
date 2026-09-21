@@ -43,20 +43,6 @@ class PermissionHelper {
         }
 
         /**
-         * READ_MEDIA_IMAGES gate (Android 13+) / READ_EXTERNAL_STORAGE (API 29–32).
-         * With minSdk 29, never falls below. Returns true when the runtime permission
-         * needed to query foreign MediaStore rows is already granted.
-         */
-        fun hasReadMediaPermission(context: Context): Boolean {
-            val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                android.Manifest.permission.READ_MEDIA_IMAGES
-            } else {
-                android.Manifest.permission.READ_EXTERNAL_STORAGE
-            }
-            return ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
-        }
-
-        /**
          * The manifest-declared permission string to request at runtime, based on API level.
          */
         fun getReadMediaPermissionString(): String {

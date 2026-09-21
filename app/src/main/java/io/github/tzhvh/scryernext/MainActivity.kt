@@ -22,7 +22,6 @@ import io.github.tzhvh.scryernext.databinding.ActivityMainBinding
 import io.github.tzhvh.scryernext.ingestion.Progress
 import io.github.tzhvh.scryernext.onboarding.OnboardingActivity
 import io.github.tzhvh.scryernext.onboarding.OnboardingPrefs
-import io.github.tzhvh.scryernext.preference.PreferenceWrapper
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -32,20 +31,10 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
 
-    private val prefs: PreferenceWrapper by lazy {
-        PreferenceWrapper(this)
-    }
-
-    var isFirstTimeLaunched: Boolean = true
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        isFirstTimeLaunched = prefs.isFirstTimeLaunch()
-        if (isFirstTimeLaunched) {
-            prefs.setFirstTimeLaunched()
-        }
 
         window?.let {
             it.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)

@@ -9,15 +9,10 @@ import android.app.Activity
 import android.app.SearchManager
 import android.content.*
 import android.graphics.*
-import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.view.*
 import android.widget.TextView
 import android.widget.Toast
-import androidx.annotation.RequiresApi
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.ActionBar
 import androidx.appcompat.app.AppCompatDialog
 import androidx.appcompat.widget.AppCompatCheckBox
@@ -27,13 +22,11 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.navigation.Navigation
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.combine
 import io.github.tzhvh.scryernext.*
@@ -51,7 +44,6 @@ import io.github.tzhvh.scryernext.ingestion.triggers.bannerMode
 import io.github.tzhvh.scryernext.onboarding.OnboardingPrefs
 import io.github.tzhvh.scryernext.onboarding.SetupHubActivity
 import io.github.tzhvh.scryernext.permission.MediaAccess
-import io.github.tzhvh.scryernext.permission.PermissionFlow
 import io.github.tzhvh.scryernext.permission.PermissionHelper
 import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
@@ -60,15 +52,12 @@ import io.github.tzhvh.scryernext.preference.PreferenceWrapper
 import io.github.tzhvh.scryernext.promote.PromoteRatingHelper
 import io.github.tzhvh.scryernext.promote.PromoteShareHelper
 import io.github.tzhvh.scryernext.setting.SettingsActivity
-import io.github.tzhvh.scryernext.sortingpanel.SortingPanelActivity
 import io.github.tzhvh.scryernext.ui.BottomDialogFactory
-import io.github.tzhvh.scryernext.util.launchIO
 import io.github.tzhvh.scryernext.viewmodel.ScreenshotViewModel
-import java.io.File
 import java.util.*
 import kotlin.coroutines.CoroutineContext
 
-class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
+class HomeFragment : Fragment(), CoroutineScope {
 
     companion object {
         private const val LOG_TAG = "HomeFragment"
@@ -76,7 +65,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         const val COLLECTION_COLUMN_COUNT = 2
         const val QUICK_ACCESS_ITEM_COUNT = 5
 
-        private const val PREF_SHOW_NEW_SCREENSHOT_DIALOG = "show_new_screenshot_dialog"
         private const val PREF_SHOW_ENABLE_SERVICE_DIALOG = "show_enable_service_dialog"
 
         /** Banner SUCCESS dwell: how long the "Indexing complete ✓" state shows before the banner
@@ -99,8 +87,14 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
 
     private var mainAdapter: MainAdapter? = null
 
-    private lateinit var permissionFlow: PermissionFlow
-    private var welcomeView: View? = null
+    /**
+     * Transient state for the search-spotlight onboarding (ADR 0008): tracks
+     * whether the spotlight (and its status-bar tint) is on screen, so
+     * `onDestroyView` can restore the tint even if the overlay is never
+     * tapped — the old flow leaked the tint when the fragment's view was
+     * recreated before dismissal.
+     */
+    private var searchSpotlightShowing: Boolean = false
 
     /**
      * Issue 18: in-memory snooze for the idle-backlog banner nudge (Mode A). Set on "Snooze", reset
@@ -122,8 +116,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
     private var bannerJustCompleted: Boolean = false
     private var successDismissJob: kotlinx.coroutines.Job? = null
 
-    private var permissionDialog: BottomSheetDialog? = null
-
     private val viewModel: ScreenshotViewModel by lazy {
         ScreenshotViewModel.get(this)
     }
@@ -132,30 +124,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         context?.let {
             PreferenceWrapper(it)
         }
-    }
-
-    /** Launcher for the system overlay-permission settings screen. */
-    private val overlayPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { _ ->
-        // Re-evaluate the permission flow — the result code from Settings is unreliable.
-        permissionFlow.start()
-    }
-
-    /** Launcher for the POST_NOTIFICATIONS runtime permission dialog (Android 13+). */
-    private val postNotificationsLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { _ ->
-        // Whether granted or denied, advance to CaptureState.
-        permissionFlow.onPostNotificationsResult()
-    }
-
-    /** Launcher for the READ_MEDIA_IMAGES / READ_EXTERNAL_STORAGE permission dialog. */
-    private val readMediaLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { _ ->
-        // Whether granted or denied, advance to PostNotificationsState.
-        permissionFlow.onReadMediaResult()
     }
 
     override fun onCreateView(
@@ -182,13 +150,22 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         super.onActivityCreated(savedInstanceState)
 
         initActionBar()
-        initPermissionFlow()
     }
 
     override fun onResume() {
         super.onResume()
-        permissionFlow.start()
+        // ADR 0008: the wizard + hub own setup; Home owns the per-resume side
+        // effects that used to fire incidentally off the old flow's terminal
+        // states. The backfill sync is the ONLY writer of foreign-screenshot
+        // DB rows, so it must run on every foregrounded resume (gated on the
+        // media grant — a denied grant degrades to a no-op fetch anyway).
+        syncExternalScreenshotsIfPermitted()
         routeToSetupHubIfNeeded()
+        promptEnableServiceIfNeeded()
+        if (shouldShowSearchOnboarding()) {
+            // Once ever, after setup — re-anchored from onPermissionFlowFinish.
+            showSearchOnboarding()
+        }
     }
 
     override fun onStart() {
@@ -197,6 +174,12 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
     }
 
     override fun onDestroyView() {
+        // Restore the status-bar tint if the search spotlight is still up —
+        // its dismiss-tap may never come (view recreation, navigation away).
+        if (searchSpotlightShowing) {
+            searchSpotlightShowing = false
+            activity?.window?.statusBarColor = Color.TRANSPARENT
+        }
         mainAdapter = null
         quickAccessAdapter = null
         quickAccessContainer = null
@@ -382,226 +365,94 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         }
     }
 
-    override fun showWelcomePage(action: Runnable) {
-        welcomeView = welcomeView?.let {
-            it.visibility = View.VISIBLE
-            it
-
-        }?: run {
-            val stub = view!!.findViewById<ViewStub>(R.id.welcome_stub)
-            stub.inflate()
+    /**
+     * ADR 0008 — the search spotlight, re-anchored: it used to fire only from
+     * the old flow's `onPermissionFlowFinish`; it now fires on the first Home
+     * resume after setup (the `search_onboarding_shown` flag keeps the
+     * once-ever semantics). Two latent bugs fixed while re-anchoring: the
+     * flag is consumed only when the spotlight actually renders, and the
+     * status-bar tint is restored if the view dies before dismissal.
+     */
+    private fun showSearchOnboarding() {
+        val b = _binding ?: return
+        val context = context ?: return
+        activity?.window?.let {
+            it.statusBarColor = ContextCompat.getColor(context, R.color.detail_onboarding_overlay)
         }
+        searchSpotlightShowing = true
 
-        welcomeView?.apply {
-            findViewById<TextView>(R.id.title).text = getString(R.string.onboarding_storage_title_welcome,
-                    getString(R.string.app_full_name))
-
-            findViewById<TextView>(R.id.description).text = getString(
-                    R.string.onboarding_welcome_content,
-                    getString(R.string.app_full_name))
-
-            findViewById<View>(R.id.action_button)?.setOnClickListener {
-                action.run()
+        b.onboardingView.visibility = View.VISIBLE
+        b.onboardingView.setOnClickListener {
+            searchSpotlightShowing = false
+            activity?.window?.let {
+                it.statusBarColor = Color.TRANSPARENT
             }
-        }
-    }
-
-    private val dialogQueue = DialogQueue()
-
-    @RequiresApi(Build.VERSION_CODES.M)
-    override fun showOverlayPermissionView(action: Runnable, negativeAction: Runnable) {
-        val context = context?: return
-
-        val dialog = BottomDialogFactory.create(context, R.layout.dialog_bottom)
-        val appNameGo = getString(R.string.app_name_go)
-        dialog.findViewById<View>(R.id.image)?.visibility = View.VISIBLE
-        dialog.findViewById<TextView>(R.id.title)?.text = getString(R.string.onboarding_fab_title_fab, appNameGo)
-        dialog.findViewById<TextView>(R.id.subtitle)?.text = getString(
-                R.string.onboarding_fab_content_permission,
-                appNameGo
-        )
-        dialog.findViewById<View>(R.id.dont_ask_again_checkbox)?.visibility = View.GONE
-
-        dialog.findViewById<TextView>(R.id.positive_button)?.setOnClickListener {
-            action.run()
-            dialog.dismiss()
+            (b.onboardingView.parent as ViewGroup).removeView(b.onboardingView)
         }
 
-        dialog.findViewById<TextView>(R.id.negative_button)?.apply {
-            setText(R.string.action_later)
-            setOnClickListener {
-                negativeAction.run()
-                dialog.dismiss()
+        b.onboardingOverlay.overlayMode = GraphicOverlay.MODE_HIGHLIGHT
+        b.onboardingOverlay.overlayColor = ContextCompat.getColor(context, R.color.detail_onboarding_overlay)
+        b.onboardingOverlay.add(object : GraphicOverlay.Graphic(b.onboardingOverlay) {
+            private val spotlightPaint: Paint = Paint().apply {
+                xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
             }
-        }
 
-        dialog.setOnCancelListener {
-            negativeAction.run()
-        }
+            override fun draw(canvas: Canvas) {
+                val radius = b.toolbar.height + resources.getDimensionPixelSize(R.dimen.common_padding_12dp)
 
-        permissionDialog = dialog
-        dialogQueue.show(dialog, null)
-
-    }
-
-    override fun showCapturePermissionView(action: Runnable, negativeAction: Runnable) {
-        val context = context?: return
-
-        val dialog = BottomDialogFactory.create(context, R.layout.dialog_bottom)
-        dialog.findViewById<View>(R.id.image)?.visibility = View.VISIBLE
-        dialog.findViewById<TextView>(R.id.title)?.visibility = View.GONE
-        dialog.findViewById<TextView>(R.id.subtitle)?.text = getString(
-                R.string.onboarding_autogrant_overlay_title,
-                getString(R.string.app_name_go)
-        )
-        dialog.findViewById<View>(R.id.dont_ask_again_checkbox)?.visibility = View.GONE
-        dialog.findViewById<View>(R.id.positive_button)?.setOnClickListener {
-            action.run()
-            dialog.dismiss()
-        }
-        dialog.findViewById<View>(R.id.negative_button)?.visibility = View.GONE
-        dialog.setOnCancelListener {
-            negativeAction.run()
-        }
-
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                LocalBroadcastManager.getInstance(context).unregisterReceiver(this)
-
-                val activity = activity ?: return
-                if (activity.isFinishing || activity.isDestroyed) {
-                    return
-                }
-
-                if (dialog.isShowing) {
-                    dialog.dismiss()
-                }
+                canvas.drawCircle(0f,
+                        0f,
+                        radius.toFloat(),
+                        spotlightPaint)
             }
-        }
-
-        LocalBroadcastManager.getInstance(context).registerReceiver(receiver,
-                IntentFilter(ScryerService.EVENT_TAKE_SCREENSHOT))
-
-        permissionDialog = dialog
-        dialogQueue.show(dialog, DialogInterface.OnDismissListener {
-            LocalBroadcastManager.getInstance(context).unregisterReceiver(receiver)
         })
+
+        // Consumed only when the spotlight is actually on screen — the old
+        // flow set this unconditionally, even when nothing rendered.
+        pref?.setSearchOnboardingShown()
     }
-
-    override fun onWelcomeDone() {
-        log(LOG_TAG, "onWelcomeDone")
-        welcomeView?.visibility = View.GONE
-
-        launch(Dispatchers.Main) {
-            checkNewScreenshots()
-            yield() // Skip the following UI work if the fragmentJob is already cancelled
-
-            mainAdapter?.notifyDataSetChanged()
-
-            val showEnableServiceDialog = shouldPromptEnableService()
-                    && isDialogAllowed(PREF_SHOW_ENABLE_SERVICE_DIALOG)
-            if (showEnableServiceDialog) {
-                showEnableServiceDialog()
-            }
-        }
-    }
-
-    override fun onOverlayGranted() {
-        log(LOG_TAG, "onOverlayGranted")
-        dismissPermissionDialog()
-    }
-
-    override fun onOverlayDenied() {
-        log(LOG_TAG, "onOverlayDenied")
-        ScryerApplication.getSettingsRepository().floatingEnable = false
-    }
-
-    override fun onPermissionFlowFinish() {
-        log(LOG_TAG, "onPermissionFlowFinish")
-
-        // Sync external screenshots whenever the flow finishes. This covers two cases the
-        // old welcome-dismiss-only trigger missed:
-        //  1. The fetch races the READ_MEDIA_IMAGES grant: checkNewScreenshots() used to run
-        //     from onWelcomeDone, which fires *before* ReadMediaState has prompted for — let
-        //     alone granted — READ_MEDIA_IMAGES, so the foreign-row query came back empty.
-        //     By the time the flow reaches FinishState the permission has been asked.
-        //  2. Returning users: start() re-runs on every onResume, and a fully-onboarded user
-        //     lands in FinishState each resume, so this also backfills screenshots taken since
-        //     the app was last foregrounded.
-        //
-        // Use the fragment's own scope (Dispatchers.Main + fragmentJob), not launchIO: the
-        // fetch reads `context`/`viewModel` which must be touched on the main thread, and the
-        // job should be cancelled when the fragment is destroyed. checkNewScreenshots()
-        // switches to IO internally via withContext.
-        launch {
-            checkNewScreenshots()
-        }
-
-        if (shouldShowSearchOnboarding()) {
-            showSearchOnboarding()
-        }
-    }
-
-    override fun requestOverlayPermission() {
-        PermissionHelper.getOverlayPermissionIntent(requireContext())?.let { intent ->
-            overlayPermissionLauncher.launch(intent)
-        }
-    }
-
-    override fun requestPostNotificationsPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            postNotificationsLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
-
-    override fun requestReadMediaPermission() {
-        readMediaLauncher.launch(PermissionHelper.getReadMediaPermissionString())
-    }
-
-    override fun launchSystemSettingPage() {
-        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-        intent.data = Uri.fromParts("package", activity?.packageName, null)
-        activity?.startActivity(intent)
-    }
-
-    private fun dismissPermissionDialog() = permissionDialog?.takeIf { it.isShowing }?.dismiss()
 
     private fun shouldShowSearchOnboarding(): Boolean {
         return !(pref?.isSearchOnboardingShown() ?: true)
     }
 
-    private fun showSearchOnboarding() {
-        activity?.window?.let {
-            it.statusBarColor = ContextCompat.getColor(context!!, R.color.detail_onboarding_overlay)
+    private val dialogQueue = DialogQueue()
+
+    /**
+     * ADR 0008 — the external-screenshot backfill sync, re-homed from the old
+     * flow's per-resume `FinishState`. Covers the same two cases its comment
+     * documented: the fetch must run *after* the media grant (the wizard asks
+     * before this can ever run), and returning users backfill screenshots
+     * taken since the app was last foregrounded.
+     *
+     * The fragment's own scope (Dispatchers.Main + fragmentJob), not launchIO:
+     * the fetch reads `context`/`viewModel` on the main thread and the job
+     * cancels with the fragment; `checkNewScreenshots` switches to IO
+     * internally via withContext.
+     */
+    private fun syncExternalScreenshotsIfPermitted() {
+        val context = context ?: return
+        if (PermissionHelper.getMediaAccess(context) == MediaAccess.DENIED) {
+            // Pointless query — the fetcher would degrade to an empty list.
+            return
         }
-        _binding?.let { b ->
-            b.onboardingView.visibility = View.VISIBLE
-            b.onboardingView.setOnClickListener {
-                activity?.window?.let {
-                    it.statusBarColor = Color.TRANSPARENT
-                }
-                (b.onboardingView.parent as ViewGroup).removeView(b.onboardingView)
-            }
-
-            b.onboardingOverlay.overlayMode = GraphicOverlay.MODE_HIGHLIGHT
-            b.onboardingOverlay.overlayColor = ContextCompat.getColor(context!!, R.color.detail_onboarding_overlay)
-            b.onboardingOverlay.add(object : GraphicOverlay.Graphic(b.onboardingOverlay) {
-                private val spotlightPaint: Paint = Paint().apply {
-                    xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
-                }
-
-                override fun draw(canvas: Canvas) {
-                    val radius = b.toolbar.height + resources.getDimensionPixelSize(R.dimen.common_padding_12dp)
-
-                    canvas.drawCircle(0f,
-                            0f,
-                            radius.toFloat(),
-                            spotlightPaint)
-                }
-            })
+        launch {
+            checkNewScreenshots()
         }
+    }
 
-        pref?.setSearchOnboardingShown()
+    /**
+     * ADR 0008 — the enable-service re-prompt, re-homed from `onWelcomeDone`
+     * (whose only trigger died with the welcome screen). Flag-gated as before:
+     * `prompt_service_enable` is set by ScryerService's notification
+     * soft-stop and cleared here when shown (or when the service is enabled),
+     * so this fires once per condition — now including after a soft-disable,
+     * which the welcome-click anchor could never do.
+     */
+    private fun promptEnableServiceIfNeeded() {
+        if (shouldPromptEnableService() && isDialogAllowed(PREF_SHOW_ENABLE_SERVICE_DIALOG)) {
+            showEnableServiceDialog()
+        }
     }
 
     private fun initActionBar() {
@@ -609,11 +460,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         setSupportActionBar(activity, view!!.findViewById(R.id.toolbar))
         getSupportActionBar(activity).displayOptions = ActionBar.DISPLAY_SHOW_CUSTOM
         getSupportActionBar(activity).setCustomView(R.layout.view_home_toolbar)
-    }
-
-    private fun initPermissionFlow() {
-        permissionFlow = PermissionFlow(PermissionFlow.createDefaultPermissionProvider(activity),
-                PermissionFlow.createDefaultPageStateProvider(activity), this)
     }
 
     /**
@@ -670,7 +516,10 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         })
 
         view!!.findViewById<View>(R.id.intercept_view).setOnClickListener {
-            if (this::permissionFlow.isInitialized && permissionFlow.isFinished()) {
+            // ADR 0008: the old gate read `permissionFlow.isFinished()` (plus an
+            // isInitialized guard for init ordering); a pref read needs neither.
+            val context = context ?: return@setOnClickListener
+            if (OnboardingPrefs.getInstance(context).isOnboardingComplete()) {
                 Navigation.findNavController(view!!).navigateSafely(R.id.MainFragment,
                         R.id.action_navigate_to_full_text_search,
                         Bundle())
@@ -825,43 +674,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
         return localScreenshots.filter { it.collectionId == CollectionModel.UNCATEGORIZED }
     }
 
-    private fun showNewScreenshotsDialog(newScreenshots: List<ScreenshotModel>) {
-        val context = context?: return
-        val dialog = BottomDialogFactory.create(context, R.layout.dialog_bottom)
-
-        dialog.findViewById<TextView>(R.id.title)?.setText(R.string.sheet_unsorted_title_unsorted)
-        val subtitle = getString(R.string.sheet_unsorted_content_shots, newScreenshots.size)
-        dialog.findViewById<TextView>(R.id.subtitle)?.text = subtitle
-
-        dialog.findViewById<TextView>(R.id.positive_button)?.apply {
-            setText(R.string.sheet_unsorted_action_sort)
-            setOnClickListener {
-                startActivity(SortingPanelActivity.sortCollection(context, CollectionModel.UNCATEGORIZED))
-                dialog.dismiss()
-            }
-        }
-
-        val checkbox = dialog.findViewById<AppCompatCheckBox>(R.id.dont_ask_again_checkbox)
-        dialog.findViewById<TextView>(R.id.negative_button)?.apply {
-            setText(R.string.sheet_action_no)
-            setOnClickListener {
-                dialog.cancel()
-            }
-        }
-
-        dialog.setOnCancelListener {
-            launchIO {
-                viewModel.batchMove(newScreenshots, CollectionModel.CATEGORY_NONE)
-            }
-        }
-
-        dialogQueue.tryShow(dialog, DialogInterface.OnDismissListener {
-            if (checkbox?.isChecked == true) {
-                setDoNotShowDialogAgain(PREF_SHOW_NEW_SCREENSHOT_DIALOG)
-            }
-        })
-    }
-
     private fun showEnableServiceDialog() {
         val context = context?: return
         val dialog = BottomDialogFactory.create(context, R.layout.dialog_bottom)
@@ -966,11 +778,6 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
 
     private fun shouldPromptEnableService(): Boolean {
         return pref?.shouldPromptEnableService() ?: false
-    }
-
-    private fun isFirstTimeLaunched(): Boolean {
-        // TODO: Better way?
-        return (activity as? MainActivity)?.isFirstTimeLaunched ?: false
     }
 
     private fun promptPromotionIfNeeded() {
