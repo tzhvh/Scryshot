@@ -13,6 +13,7 @@ import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.widget.Button
 import io.github.tzhvh.scryernext.*
+import io.github.tzhvh.scryernext.onboarding.SetupHubActivity
 import io.github.tzhvh.scryernext.permission.PermissionHelper
 import io.github.tzhvh.scryernext.preference.PreferenceWrapper
 import io.github.tzhvh.scryernext.promote.PromoteRatingHelper
@@ -23,6 +24,7 @@ class SettingsFragment : PreferenceFragmentCompat(), Preference.OnPreferenceChan
     private val enableCaptureService: SwitchPreferenceCompat by lazy { findPreference<SwitchPreferenceCompat>(getString(R.string.pref_key_enable_capture_service))!! }
     private val enableFloatingScreenshotButton: SwitchPreferenceCompat by lazy { findPreference<SwitchPreferenceCompat>(getString(R.string.pref_key_enable_floating_screenshot_button))!! }
     private val enableAddToCollectionButton: SwitchPreferenceCompat by lazy { findPreference<SwitchPreferenceCompat>(getString(R.string.pref_key_enable_add_to_collection))!! }
+    private val setupHubPreference: Preference by lazy { findPreference<Preference>(getString(R.string.pref_key_setup_hub))!! }
     private val giveFeedbackPreference: Preference by lazy { findPreference<Preference>(getString(R.string.pref_key_give_feedback))!! }
     private val shareWithFriendsPreference: Preference by lazy { findPreference<Preference>(getString(R.string.pref_key_share_with_friends))!! }
     private val aboutPreference: Preference by lazy { findPreference<Preference>(getString(R.string.pref_key_about))!! }
@@ -88,6 +90,9 @@ class SettingsFragment : PreferenceFragmentCompat(), Preference.OnPreferenceChan
             enableAddToCollectionButton.isChecked = enabled
         })
 
+        setupHubPreference.onPreferenceClickListener = this
+        setupHubPreference.isIconSpaceReserved = false
+
         giveFeedbackPreference.onPreferenceClickListener = this
         giveFeedbackPreference.isIconSpaceReserved = false
 
@@ -139,6 +144,10 @@ class SettingsFragment : PreferenceFragmentCompat(), Preference.OnPreferenceChan
 
     override fun onPreferenceClick(preference: Preference): Boolean {
         when (preference) {
+            setupHubPreference -> {
+                activity?.let { SetupHubActivity.start(it) }
+                return true
+            }
             giveFeedbackPreference -> context?.let { showFeedbackDialog(it); return true }
             shareWithFriendsPreference -> context?.let {
                 showShareAppDialog(it)

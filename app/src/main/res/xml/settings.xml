@@ -25,6 +25,12 @@
 
 
 
+    <!-- ADR 0008 §4 entry point 2: the setup hub -->
+    <androidx.preference.Preference
+        android:key="@string/pref_key_setup_hub"
+        android:persistent="false"
+        android:title="@string/settings_list_setup" />
+
     <androidx.preference.Preference
         android:key="@string/pref_key_give_feedback"
         android:persistent="false"

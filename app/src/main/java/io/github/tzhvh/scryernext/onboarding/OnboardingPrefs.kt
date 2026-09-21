@@ -42,10 +42,33 @@ class OnboardingPrefs private constructor(context: Context) {
                 ?: ACCESS_MODEL_MEDIA_STORE
     }
 
+    /**
+     * The revocation-re-entry nudge (ADR 0008 §4): a missing *required* grant
+     * routes to the hub once per recurrence, dismissible. Backing out of the
+     * hub without granting records [NUDGE_MEDIA_DENIED] here; the signature
+     * clears when the condition resolves, so a later revocation re-nudges.
+     */
+    fun isHubNudgeDismissed(): Boolean {
+        return NUDGE_MEDIA_DENIED == prefs.getString(KEY_HUB_NUDGE_DISMISSED_FOR, null)
+    }
+
+    fun dismissHubNudge() {
+        prefs.edit().putString(KEY_HUB_NUDGE_DISMISSED_FOR, NUDGE_MEDIA_DENIED).apply()
+    }
+
+    fun clearHubNudge() {
+        prefs.edit().remove(KEY_HUB_NUDGE_DISMISSED_FOR).apply()
+    }
+
     companion object {
         const val KEY_ONBOARDING_COMPLETE = "onboarding_complete"
         const val KEY_ACCESS_MODEL = "access_model"
         const val ACCESS_MODEL_MEDIA_STORE = "media_store"
+
+        /** Signature of the "media access revoked" recurrence (see [dismissHubNudge]). */
+        const val NUDGE_MEDIA_DENIED = "media_denied"
+
+        private const val KEY_HUB_NUDGE_DISMISSED_FOR = "hub_nudge_dismissed_for"
 
         /**
          * Legacy `PermissionFlow` page-state key that doubled as "the old flow

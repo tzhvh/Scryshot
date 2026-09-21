@@ -7,6 +7,8 @@
     <string name="pref_key_enable_floating_screenshot_button" translatable="false"><xliff:g id="preference_key">pref_key_enable_floating_screenshot_button</xliff:g></string>
     <string name="pref_key_enable_add_to_collection" translatable="false"><xliff:g id="preference_key">pref_key_enable_add_to_collection</xliff:g></string>
 
+    <string name="pref_key_setup_hub" translatable="false"><xliff:g id="preference_key">pref_key_setup_hub</xliff:g></string>
+
     <string name="pref_key_give_feedback" translatable="false"><xliff:g id="preference_key">pref_key_give_feedback</xliff:g></string>
     <string name="pref_key_share_with_friends" translatable="false"><xliff:g id="preference_key">pref_key_share_with_friends</xliff:g></string>
     <string name="pref_key_about" translatable="false"><xliff:g id="preference_key">pref_key_about</xliff:g></string>

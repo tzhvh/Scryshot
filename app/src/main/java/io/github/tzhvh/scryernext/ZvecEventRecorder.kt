@@ -62,11 +62,25 @@ object ZvecEventRecorder {
     internal var enabled: Boolean = false
 
     /**
-     * Initialize the gate. Called once from `ScryerApplication.onCreate`; `enabled = isDebuggable`.
-     * Safe to call from tests to opt the recorder in for assertions.
+     * Optional debug-only mirror — when set, every recorded event is ALSO written to it.
+     * Wired from [ScryerApplication.onCreate] (debuggable builds) to `Log.d("ZvecRecorder", …)`
+     * so open-path decisions (wipe, ladder rungs, invalidation, cancellation) are visible in
+     * logcat without opening the in-memory Inspector (issue 06, track A2). Null (default /
+     * JVM tests) keeps this object free of `android.util.Log` — the ring buffer stays the
+     * only sink, so unit tests are unaffected. `@Volatile` for the same safe-publication
+     * reason as [enabled].
      */
-    fun init(enabled: Boolean) {
+    @Volatile
+    private var mirror: ((String) -> Unit)? = null
+
+    /**
+     * Initialize the gate. Called once from `ScryerApplication.onCreate`; `enabled = isDebuggable`.
+     * Safe to call from tests to opt the recorder in for assertions (a null [mirror] leaves the
+     * ring buffer as the only sink — no android dependency).
+     */
+    fun init(enabled: Boolean, mirror: ((String) -> Unit)? = null) {
         this.enabled = enabled
+        this.mirror = mirror
     }
 
     /**
@@ -84,6 +98,8 @@ object ZvecEventRecorder {
             events.pollFirst()
         }
         events.addLast(Event(System.currentTimeMillis(), message))
+        // Inside the same monitor so logcat ordering matches the ring's order.
+        mirror?.invoke(message)
     }
 
     @Synchronized

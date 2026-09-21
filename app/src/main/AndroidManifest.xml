@@ -54,6 +54,13 @@
             android:launchMode="singleTop"
             android:screenOrientation="portrait" />
 
+        <!-- ADR 0008 §4: the setup hub — Settings entry, partial-access
+             recovery, and revocation re-entry from HomeFragment.onResume. -->
+        <activity
+            android:name="io.github.tzhvh.scryernext.onboarding.SetupHubActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
         <activity
             android:name="io.github.tzhvh.scryernext.sortingpanel.SortingPanelActivity"
             android:launchMode="singleTask"

@@ -163,15 +163,50 @@ open class ZvecContentStore(
      * Lazily open (or create) the collection if it isn't already held. Idempotent under concurrency
      * via [openMutex]. All native entry points route through here so the handle is guaranteed live
      * before any `nativeHandle()` call.
+     *
+     * Observability (issue 06 A2/A3): every open-path entry records the calling thread plus a
+     * short caller trace, a mid-open cancellation records itself, and completion records the
+     * outcome — enough for a logcat timeline to attribute a failed first open to its caller(s).
      */
     private suspend fun ensureOpen() {
         if (collection != null && !collection!!.isClosed) return
         openMutex.withLock {
             if (collection != null && !collection!!.isClosed) return@withLock
+            ZvecEventRecorder.record {
+                "ensureOpen: opening on ${Thread.currentThread().name} ← ${openCallerTrace()}"
+            }
             initializeZvec()
-            collection = openOrCreate()
+            try {
+                collection = openOrCreate()
+            } catch (c: kotlinx.coroutines.CancellationException) {
+                // The caller's job died mid-open (e.g. a per-keystroke search-job cancel). The
+                // native create either already completed — its handle then leaks unreferenced,
+                // holding the idmap/LOCK flocks in-process (the issue-05 contention shape) — or
+                // was abandoned mid-flight. Recorded, not swallowed: cancellation must propagate.
+                ZvecEventRecorder.record {
+                    "ensureOpen: CANCELLED mid-open on ${Thread.currentThread().name} — created handle may be leaked"
+                }
+                throw c
+            }
+            ZvecEventRecorder.record {
+                "ensureOpen: open complete on ${Thread.currentThread().name}, outcome=$lastOpenOutcome"
+            }
         }
     }
+
+    /**
+     * A compact caller fingerprint for the open-path entry event (issue 06 A3): the first few
+     * app frames above the store, as `Class.method(File:line)`. Debug-gated by the recorder's
+     * `enabled` flag (the lambda is not evaluated when disabled), so the stack capture costs
+     * nothing in release — and nothing on any path except the (rare) open itself.
+     */
+    private fun openCallerTrace(): String =
+        Throwable().stackTrace
+            .filter { it.className.startsWith("io.github.tzhvh.scryernext") }
+            .dropWhile { it.className.startsWith("io.github.tzhvh.scryernext.ingestion.ZvecContentStore") }
+            .take(3)
+            .joinToString(" ⇐ ") { "${it.fileName}:${it.lineNumber} ${it.methodName}" }
+            .ifEmpty { "<no app frame>" }
 
     /**
      * Initialize the process-wide zvec library once. `open` so a JVM test can stub it out (the real
@@ -201,6 +236,9 @@ open class ZvecContentStore(
             ZvecEventRecorder.record { "Collection opened successfully" }
             col
         } catch (e: ZvecException) {
+            ZvecEventRecorder.record {
+                "openOrCreate: attempt failed on ${Thread.currentThread().name} — code=${e.code} ${e.message?.take(120)}"
+            }
             val recovery: Pair<String, () -> Boolean>? = when {
                 // HELD lock (another live handle owns the flock): delete the stale file; the
                 // retry's open path re-creates it.
@@ -277,7 +315,12 @@ open class ZvecContentStore(
      *   held data), not fresh creates.
      */
     protected open suspend fun openOrRetry(): ZvecCollection {
-        val markerMatches = markerState(readSchemaMarker(), SCHEMA_VERSION) == SchemaMarkerState.Open
+        val marker = readSchemaMarker()
+        val markerMatches = markerState(marker, SCHEMA_VERSION) == SchemaMarkerState.Open
+        ZvecEventRecorder.record {
+            "openOrRetry: marker=${marker ?: "<absent>"}, dir=${collectionPath.exists()} → " +
+                if (markerMatches && collectionPath.exists()) "openExisting" else "wipe+create"
+        }
         if (markerMatches && collectionPath.exists()) {
             lastOpenOutcome = "success"
             return openExisting(collectionPath, options())

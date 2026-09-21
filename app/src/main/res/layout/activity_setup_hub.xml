@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ADR 0008 §4 — the setup hub ("Setup status"): long.html's checklist.
+     Three rows (required media, optional notifications, optional floating
+     button) with live state + per-row actions, and the pinned privacy
+     footer. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/onboarding_content_background"
+    android:fitsSystemWindows="true"
+    android:orientation="vertical">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingTop="@dimen/common_padding_24dp">
+
+            <TextView
+                style="@style/OnboardingStepLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="@dimen/common_padding_24dp"
+                android:paddingEnd="@dimen/common_padding_24dp"
+                android:text="@string/setup_hub_step_label" />
+
+            <TextView
+                style="@style/OnboardingTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_8dp"
+                android:paddingStart="@dimen/common_padding_24dp"
+                android:paddingEnd="@dimen/common_padding_24dp"
+                android:paddingBottom="@dimen/common_padding_20dp"
+                android:text="@string/setup_hub_title" />
+
+            <!-- Rows: full-bleed white block with hairline separators. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@color/white"
+                android:orientation="vertical">
+
+                <!-- Media access — the required row -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="@dimen/common_padding_16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/OnboardingRowName"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/setup_hub_media_name" />
+
+                        <TextView
+                            style="@style/OnboardingTagRequired"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/common_padding_4dp"
+                            android:text="@string/setup_hub_tag_required" />
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/media_state"
+                        style="@style/OnboardingRowState"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+
+                    <Button
+                        android:id="@+id/media_action"
+                        style="@style/OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="@dimen/common_padding_12dp"
+                        android:text="@string/setup_hub_action_set_up" />
+
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/grey20" />
+
+                <!-- Partial photo access — the only surface that says it
+                     (ADR 0008 §4, entry point 3). -->
+                <TextView
+                    android:id="@+id/media_partial_note"
+                    style="@style/Body2"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@color/white"
+                    android:paddingStart="@dimen/common_padding_16dp"
+                    android:paddingEnd="@dimen/common_padding_16dp"
+                    android:paddingBottom="@dimen/common_padding_16dp"
+                    android:textColor="@color/grey60"
+                    android:visibility="gone"
+                    android:text="@string/setup_hub_media_partial_note" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/grey20" />
+
+                <!-- Notifications — optional row (API 33+; hidden below) -->
+                <LinearLayout
+                    android:id="@+id/notifications_row"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="@dimen/common_padding_16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/OnboardingRowName"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/setup_hub_notifications_name" />
+
+                        <TextView
+                            style="@style/OnboardingTagOptional"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/common_padding_4dp"
+                            android:text="@string/setup_hub_tag_optional" />
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/notifications_state"
+                        style="@style/OnboardingRowState"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+
+                    <Button
+                        android:id="@+id/notifications_action"
+                        style="@style/OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="@dimen/common_padding_12dp"
+                        android:text="@string/setup_hub_action_turn_on" />
+
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/grey20" />
+
+                <!-- Floating button — optional row -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="@dimen/common_padding_16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/OnboardingRowName"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/setup_hub_overlay_name" />
+
+                        <TextView
+                            style="@style/OnboardingTagOptional"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/common_padding_4dp"
+                            android:text="@string/setup_hub_tag_optional" />
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/overlay_state"
+                        style="@style/OnboardingRowState"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+
+                    <Button
+                        android:id="@+id/overlay_action"
+                        style="@style/OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="@dimen/common_padding_12dp"
+                        android:text="@string/setup_hub_action_enable" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <!-- Pinned privacy footer (content-bottom, not floating in dead space). -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/white"
+        android:orientation="vertical">
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/grey20" />
+
+        <TextView
+            style="@style/Body2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:padding="@dimen/common_padding_16dp"
+            android:textColor="@color/grey50"
+            android:text="@string/setup_hub_privacy_footer" />
+
+    </LinearLayout>
+
+</LinearLayout>

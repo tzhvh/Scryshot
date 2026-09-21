@@ -48,6 +48,9 @@ import io.github.tzhvh.scryernext.ingestion.IngestionConfig
 import io.github.tzhvh.scryernext.ingestion.Progress
 import io.github.tzhvh.scryernext.ingestion.triggers.BannerMode
 import io.github.tzhvh.scryernext.ingestion.triggers.bannerMode
+import io.github.tzhvh.scryernext.onboarding.OnboardingPrefs
+import io.github.tzhvh.scryernext.onboarding.SetupHubActivity
+import io.github.tzhvh.scryernext.permission.MediaAccess
 import io.github.tzhvh.scryernext.permission.PermissionFlow
 import io.github.tzhvh.scryernext.permission.PermissionHelper
 import io.github.tzhvh.scryernext.persistence.CollectionModel
@@ -185,6 +188,7 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
     override fun onResume() {
         super.onResume()
         permissionFlow.start()
+        routeToSetupHubIfNeeded()
     }
 
     override fun onStart() {
@@ -610,6 +614,29 @@ class HomeFragment : Fragment(), PermissionFlow.ViewDelegate, CoroutineScope {
     private fun initPermissionFlow() {
         permissionFlow = PermissionFlow(PermissionFlow.createDefaultPermissionProvider(activity),
                 PermissionFlow.createDefaultPageStateProvider(activity), this)
+    }
+
+    /**
+     * ADR 0008 §4, entry point 1 — revocation re-entry: a missing *required*
+     * grant routes to the setup hub once per recurrence, dismissible. (Slice
+     * 3 wiring alongside the legacy flow; slice 4 replaces the flow with the
+     * backfill sync this shares `onResume` with.)
+     */
+    private fun routeToSetupHubIfNeeded() {
+        val context = context ?: return
+        val prefs = OnboardingPrefs.getInstance(context)
+        if (!prefs.isOnboardingComplete()) {
+            // The wizard owns first run; MainActivity gates it.
+            return
+        }
+        if (PermissionHelper.getMediaAccess(context) == MediaAccess.DENIED) {
+            if (!prefs.isHubNudgeDismissed()) {
+                SetupHubActivity.start(requireContext())
+            }
+        } else {
+            // Condition resolved: clear the dismissal so a later revocation re-nudges.
+            prefs.clearHubNudge()
+        }
     }
 
     private fun createOptionsMenuSearchView(activity: Activity) {

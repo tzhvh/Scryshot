@@ -199,4 +199,37 @@
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:textColor">@color/grey90</item>
     </style>
+
+    <style name="OnboardingRowName">
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:textColor">@color/grey90</item>
+    </style>
+
+    <style name="OnboardingRowState">
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/grey50</item>
+    </style>
+
+    <style name="OnboardingTagBase">
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textSize">10sp</item>
+        <item name="android:letterSpacing">0.06</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:paddingLeft">8dp</item>
+        <item name="android:paddingTop">3dp</item>
+        <item name="android:paddingRight">8dp</item>
+        <item name="android:paddingBottom">3dp</item>
+    </style>
+
+    <style name="OnboardingTagRequired" parent="OnboardingTagBase">
+        <item name="android:textColor">@color/onboarding_accent</item>
+        <item name="android:background">@drawable/onboarding_tag_required</item>
+    </style>
+
+    <style name="OnboardingTagOptional" parent="OnboardingTagBase">
+        <item name="android:textColor">@color/grey50</item>
+        <item name="android:background">@drawable/onboarding_tag_optional</item>
+    </style>
 </resources>
