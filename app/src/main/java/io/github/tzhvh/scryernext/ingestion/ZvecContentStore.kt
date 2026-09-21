@@ -22,7 +22,9 @@ import io.github.tzhvh.scryernext.zvec.ZvecConfig
 import io.github.tzhvh.scryernext.zvec.ZvecDoc
 import io.github.tzhvh.scryernext.zvec.ZvecErrorCode
 import io.github.tzhvh.scryernext.zvec.ZvecException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -167,6 +169,20 @@ open class ZvecContentStore(
      * Observability (issue 06 A2/A3): every open-path entry records the calling thread plus a
      * short caller trace, a mid-open cancellation records itself, and completion records the
      * outcome — enough for a logcat timeline to attribute a failed first open to its caller(s).
+     *
+     * ## The open is NON-CANCELLABLE (issue 05 root cause)
+     *
+     * A caller whose coroutine dies mid-open (the search's per-keystroke `searchJob?.cancel()`
+     * storm — `FullTextSearchFragment` cancels on every TextWatcher event, no debounce) must not
+     * abandon the open: `openOrCreate()`'s native `createAndOpen` either already completed — its
+     * fresh handle is then discarded unreferenced, LEAKING its `idmap.0`/`LOCK` flocks in-process,
+     * and every later open/create of the path fails `lock hold by current process` (the exact
+     * issue-05 device signature; the second opener there is innocent — the mutex serialized fine) —
+     * or it was abandoned mid-create, leaving the wipe branch to clean up. Wrapping the open in
+     * [NonCancellable] completes the open and publishes the handle to [collection] regardless:
+     * the handle becomes store-owned and reusable, and the caller's cancellation propagates at
+     * the next suspension point (the mutex unlock) — the cancelled search attempt dies, the
+     * collection survives.
      */
     private suspend fun ensureOpen() {
         if (collection != null && !collection!!.isClosed) return
@@ -175,21 +191,21 @@ open class ZvecContentStore(
             ZvecEventRecorder.record {
                 "ensureOpen: opening on ${Thread.currentThread().name} ← ${openCallerTrace()}"
             }
-            initializeZvec()
-            try {
-                collection = openOrCreate()
-            } catch (c: kotlinx.coroutines.CancellationException) {
-                // The caller's job died mid-open (e.g. a per-keystroke search-job cancel). The
-                // native create either already completed — its handle then leaks unreferenced,
-                // holding the idmap/LOCK flocks in-process (the issue-05 contention shape) — or
-                // was abandoned mid-flight. Recorded, not swallowed: cancellation must propagate.
-                ZvecEventRecorder.record {
-                    "ensureOpen: CANCELLED mid-open on ${Thread.currentThread().name} — created handle may be leaked"
+            withContext(NonCancellable) {
+                initializeZvec()
+                try {
+                    collection = openOrCreate()
+                } catch (c: CancellationException) {
+                    // Defensive: unreachable while NonCancellable wraps the open — kept so a
+                    // future edit that drops the wrapper cannot reintroduce the leak silently.
+                    ZvecEventRecorder.record {
+                        "ensureOpen: CANCELLED mid-open on ${Thread.currentThread().name} — created handle may be leaked"
+                    }
+                    throw c
                 }
-                throw c
-            }
-            ZvecEventRecorder.record {
-                "ensureOpen: open complete on ${Thread.currentThread().name}, outcome=$lastOpenOutcome"
+                ZvecEventRecorder.record {
+                    "ensureOpen: open complete on ${Thread.currentThread().name}, outcome=$lastOpenOutcome"
+                }
             }
         }
     }
