@@ -116,6 +116,30 @@ object ZvecNative {
 
     @JvmStatic external fun nativeOptimize(handle: Long)
 
+    // Phase 2.1 (app issue): runtime scalar-column DDL. The single-field slot
+    // arrays mirror nativeCreateIndex's shape (the shared build_index_params on
+    // the C++ side reads them unchanged). `expression` null = no default-value
+    // expression (existing docs read the field as null — R8 semantics).
+    @JvmStatic external fun nativeAddColumn(
+        handle: Long,
+        name: String,
+        dataType: Int,
+        nullable: Boolean,
+        dimension: Int,
+        indexKind: Int,
+        indexM: IntArray,
+        indexEfConstruction: IntArray,
+        indexNList: IntArray,
+        indexNIters: IntArray,
+        indexMetric: IntArray,
+        indexEnableRangeOpt: BooleanArray,
+        ftsTokenizer: Array<String>,
+        ftsExtraParams: Array<String>,
+        ftsFilterNames: Array<String>,
+        ftsFilterFieldIndices: IntArray,
+        expression: String?,
+    )
+
     // Phase-0 probe: hardcoded two-field schema. Kept for the regression guard
     // (ZvecRoundtripTest); issue 02's nativeSchemaCreateAndOpen generalizes it.
     @JvmStatic external fun nativeCreateAndOpen(path: String, schemaName: String): Long

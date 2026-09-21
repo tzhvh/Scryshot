@@ -222,6 +222,65 @@ class ZvecScreenshotRepositoryDeviceTest {
         assertEquals(uriA, filtered[0].uri)
     }
 
+    /**
+     * Phase 2.1 step 4 — the `last_modified` story end-to-end on a live store:
+     *  1. a pre-2.1-shape doc (indexed with a NULL `last_modified`) is EXCLUDED by a date filter
+     *     (the R8-pinned three-valued-logic contract);
+     *  2. [LastModifiedBackfill] re-upserts it with the row's capture time and flips the marker;
+     *  3. the same filter then recalls it — backfill-before-shipping demonstrably un-hides rows.
+     * The store's DDL self-heal (healSchemaDdl) is incidentally discharged on every newRepo(): the
+     * fresh collection already declares the column, so the open-path add runs the ALREADY_EXISTS
+     * no-op without error.
+     */
+    @Test fun dateRangeFilter_backfill_unhidesNullRows() = runBlocking {
+        val (repo, sink, store) = newRepo()
+        val oldUri = "content://media/lm-old-${System.nanoTime()}"
+        val newUri = "content://media/lm-new-${System.nanoTime()}"
+        val oldRow = ScreenshotModel(id = "id-lm-old", uri = oldUri, displayName = "old.png",
+            size = 1L, lastModified = 1_000L, collectionId = "col")
+        repo.addScreenshot(listOf(oldRow))
+
+        // Index the old doc in the PRE-2.1 shape: upsert without last_modified (null field).
+        val oldBytes = "old-bytes-lm".toByteArray()
+        store.upsert(sha256Hex(oldBytes), oldUri, "shared keyword matchme", "col", lastModified = null)
+        store.flush()
+        repo.markContentIndexed(oldRow, sha256Hex(oldBytes))
+
+        // The new doc via the production sink, which passes the row's capture time.
+        repo.addScreenshot(listOf(ScreenshotModel(id = "id-lm-new", uri = newUri, displayName = "new.png",
+            size = 1L, lastModified = 2_000_000_000L, collectionId = "col")))
+        sink.commit(
+            Candidate(locator = newUri, byteHandle = { ByteArrayInputStream("new-bytes-lm".toByteArray()) }),
+            text = "shared keyword matchme", processed = true, bytes = "new-bytes-lm".toByteArray(),
+        )
+
+        val dateFilter = "last_modified >= 1000000000"
+        assertEquals(
+            "sanity: both docs match unfiltered",
+            2, rows(repo.searchScreenshotList("matchme")).size,
+        )
+        assertEquals(
+            "R8: the null-field old doc is hidden by the date filter pre-backfill",
+            1, rows(repo.searchScreenshotList("matchme", RankPolicy.Recency, dateFilter)).size,
+        )
+
+        val marker = object : LastModifiedBackfill.BackfillMarker {
+            var done = false
+            override fun isDone() = done
+            override fun markDone() { done = true }
+        }
+        val backfilled = LastModifiedBackfill(
+            store, { repo.getScreenshotList() }, marker,
+        ).runIfNeeded()
+        assertEquals("the backfill fills exactly the one null doc", 1, backfilled)
+        assertTrue("the marker flips only after a full pass", marker.done)
+
+        assertEquals(
+            "post-backfill the same filter recalls both docs",
+            2, rows(repo.searchScreenshotList("matchme", RankPolicy.Recency, dateFilter)).size,
+        )
+    }
+
     private fun rows(outcome: SearchOutcome): List<ScreenshotModel> =
         (outcome as SearchOutcome.Results).rows
 

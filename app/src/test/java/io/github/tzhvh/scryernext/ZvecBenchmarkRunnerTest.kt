@@ -140,7 +140,7 @@ class ZvecBenchmarkRunnerTest {
             listOf(ZvecDoc(pk = "seed-pk", score = 1.0f, fields = mapOf()))
         override suspend fun fetch(contentHash: String): ZvecDoc? =
             ZvecDoc(pk = contentHash, score = null, fields = mapOf())
-        override suspend fun upsert(contentHash: String, locator: String, content: String, collectionId: String) {
+        override suspend fun upsert(contentHash: String, locator: String, content: String, collectionId: String, lastModified: Long?) {
             upsertCount++
         }
         override suspend fun flush() { flushCount++ }

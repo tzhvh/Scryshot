@@ -18,6 +18,7 @@ import io.github.tzhvh.scryernext.zvec.Zvec
 import io.github.tzhvh.scryernext.zvec.ZvecCollection
 import io.github.tzhvh.scryernext.zvec.ZvecConfig
 import io.github.tzhvh.scryernext.zvec.ZvecDoc
+import io.github.tzhvh.scryernext.zvec.ZvecErrorCode
 import io.github.tzhvh.scryernext.zvec.ZvecException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -194,7 +195,7 @@ open class ZvecContentStore(
      */
     protected open suspend fun openOrCreate(): ZvecCollection = withContext(Dispatchers.IO) {
         try {
-            val col = openOrRetry()
+            val col = openOrRetry().also { healSchemaDdl(it) }
             ZvecEventRecorder.record { "Collection opened successfully" }
             col
         } catch (e: ZvecException) {
@@ -202,7 +203,7 @@ open class ZvecContentStore(
                 lockRecoveriesCount++
                 ZvecEventRecorder.record { "LOCK recovery triggered: stale LOCK deleted" }
                 try {
-                    val col = openOrRetry()
+                    val col = openOrRetry().also { healSchemaDdl(it) }
                     lastOpenOutcome = "LOCK-recovered"
                     ZvecEventRecorder.record { "Collection opened successfully after LOCK recovery" }
                     col
@@ -216,6 +217,37 @@ open class ZvecContentStore(
                 ZvecEventRecorder.record { "Collection open failed: ${e.message}" }
                 throw e
             }
+        }
+    }
+
+    /**
+     * Phase 2.1 step 4 (2.1-D2) — the runtime scalar-column self-heal. Adds the
+     * [FIELD_LAST_MODIFIED] INVERT column to a collection created before the field existed in
+     * [screenshotContentSchema]. This is the one DDL path verified end-to-end on-device (roadmap
+     * Task-01): scalar `add_column` works at runtime, so the schema evolves WITHOUT a
+     * [SCHEMA_VERSION] bump — no wipe, no re-ingest; the marker contract ("the marker proves the
+     * FTS/tokenizer schema") stays honest because FTS config is untouched.
+     *
+     * Runs on every successful open; the engine answers an add of a present column with
+     * ALREADY_EXISTS (the steady state), so the heal is idempotent and costs one rejected DDL per
+     * launch. Best-effort by design: any OTHER failure is recorded and swallowed — search is
+     * unaffected, and the first write carrying `last_modified` surfaces a real schema problem
+     * loudly. New docs read the column as null until the app's backfill pass fills them — the
+     * R8-pinned semantics that make "backfill completes before the date chip renders" mandatory.
+     */
+    protected open suspend fun healSchemaDdl(col: ZvecCollection) {
+        val field = FieldSchema(
+            name = FIELD_LAST_MODIFIED,
+            type = FieldType.INT64,
+            nullable = true,
+            indexParams = IndexParams.InvertParams(),
+        )
+        try {
+            col.addColumn(field)
+            ZvecEventRecorder.record { "Schema DDL: added $FIELD_LAST_MODIFIED (INT64 INVERT)" }
+        } catch (e: ZvecException) {
+            if (e.code == ZvecErrorCode.ALREADY_EXISTS) return
+            ZvecEventRecorder.record { "Schema DDL: $FIELD_LAST_MODIFIED add failed: ${e.message}" }
         }
     }
 
@@ -303,7 +335,13 @@ open class ZvecContentStore(
      *
      * `open` so a JVM test can record calls without the `.so` (the production body touches native).
      */
-    open suspend fun upsert(contentHash: String, locator: String, content: String, collectionId: String) {
+    open suspend fun upsert(
+        contentHash: String,
+        locator: String,
+        content: String,
+        collectionId: String,
+        lastModified: Long? = null,
+    ) {
         ensureOpen()
         withContext(Dispatchers.IO) {
             collection!!.upsert {
@@ -318,6 +356,11 @@ open class ZvecContentStore(
                 // must populate it or the engine's required-field check rejects the doc.
                 string(FIELD_CONTENT_NGRAM, content)
                 string(FIELD_COLLECTION_ID, collectionId)
+                // Phase 2.1 step 4: capture time as a filterable scalar (2.1-D2). Null (the
+                // default) leaves the field unwritten — the engine reads it as null, which the
+                // R8-pinned contract says filters exclude; the backfill pass fills pre-existing
+                // docs and the ingestion write path always passes a value.
+                lastModified?.let { int64(FIELD_LAST_MODIFIED, it) }
             }
         }
     }
@@ -498,13 +541,21 @@ open class ZvecContentStore(
         private fun options(): CollectionOptions = CollectionOptions()
 
         /**
-         * The screenshot-content schema — v2 (issue 02 B3/B4, the measured decision):
-         * `content_hash` PK + `locator` + `content` (FTS: standard + lowercase +
+         * The screenshot-content schema — v2 (issue 02 B3/B4, the measured decision) + the
+         * Phase 2.1 `last_modified` scalar. **[SCHEMA_VERSION] stays 2 for the 2.1 add**: fresh
+         * creates include the column from birth, and pre-existing v2 collections gain it via the
+         * runtime [healSchemaDdl] scalar add (the Task-01-verified DDL path) on their next open —
+         * both converge on this same schema, so a v2 marker never lies about the FTS/tokenizer
+         * config, which is what the marker exists to prove (the one-bump-per-FTS-change rule is
+         * undisturbed). Existing docs read the column null until the backfill pass fills them
+         * (R8: filters exclude nulls — backfill completes before the date-range chip renders).
+         *
+         * v2 fields: `content_hash` PK + `locator` + `content` (FTS: standard + lowercase +
          * ascii_folding + english stemmer — the Exact leg) + `content_ngram` (FTS: ngram
          * tokenizer — the Fuzzy leg; partial tokens / OCR fragments) + `collection_id`
-         * (INVERT). [search] runs the two legs fused (WeightedReranker 1.0/0.3) — the
-         * Balanced position of 2.1's precision dial. No `image_embedding` — Phase 3 adds
-         * it via its own marker bump.
+         * (INVERT) + `last_modified` (INT64 INVERT — Phase 2.1 2.1-D2). [search] runs the two
+         * FTS legs fused (WeightedReranker 1.0/0.3) — the Balanced position of 2.1's precision
+         * dial. No `image_embedding` — Phase 3 adds it via its own marker bump.
          */
         fun screenshotContentSchema(): CollectionSchema = CollectionSchema(
             name = COLLECTION_NAME,
@@ -528,6 +579,12 @@ open class ZvecContentStore(
                 FieldSchema(
                     name = FIELD_COLLECTION_ID,
                     type = FieldType.STRING,
+                    indexParams = IndexParams.InvertParams(),
+                ),
+                FieldSchema(
+                    name = FIELD_LAST_MODIFIED,
+                    type = FieldType.INT64,
+                    nullable = true,
                     indexParams = IndexParams.InvertParams(),
                 ),
             ),

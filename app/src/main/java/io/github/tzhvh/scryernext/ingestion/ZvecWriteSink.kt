@@ -89,6 +89,10 @@ class ZvecWriteSink(
             locator = locator,
             content = text ?: "",
             collectionId = screenshot.collectionId,
+            // Phase 2.1 step 4 (2.1-D2): the row's capture time rides into zvec so date-range
+            // filters push down. Every ingestion write populates it; the one-shot backfill
+            // covers docs written before the column existed.
+            lastModified = screenshot.lastModified,
         )
         zvecContentStore.flush()
 

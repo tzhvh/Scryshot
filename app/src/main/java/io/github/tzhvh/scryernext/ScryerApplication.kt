@@ -15,6 +15,7 @@ import io.github.tzhvh.scryernext.repository.ScreenshotRepository
 import io.github.tzhvh.scryernext.repository.ZvecScreenshotRepository
 import io.github.tzhvh.scryernext.setting.PreferenceSettingsRepository
 import io.github.tzhvh.scryernext.setting.SettingsRepository
+import io.github.tzhvh.scryernext.repository.LastModifiedBackfill
 import io.github.tzhvh.scryernext.util.launchIO
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
@@ -30,6 +31,10 @@ import io.github.tzhvh.scryernext.ingestion.triggers.OnOpenTrigger
 
 class ScryerApplication : Application() {
     companion object {
+        /** Phase 2.1 step 4 — prefs file + flag key for the one-shot backfill marker. */
+        private const val PREFS_PHASE21 = "zvec_phase21"
+        private const val KEY_BACKFILL_DONE = "last_modified_backfill_done"
+
         private val instance: ScryerApplication by lazy {
             ApplicationHolder.instance
         }
@@ -84,6 +89,13 @@ class ScryerApplication : Application() {
          */
         fun getMetadataCacheDao(): io.github.tzhvh.scryernext.persistence.ContentMetadataCacheDao =
             instance.metadataCacheDao
+
+        /**
+         * Phase 2.1 step 6 render gate: has the one-shot `last_modified` backfill completed?
+         * The search screen's date-range chip renders only when this is true (R8: a filter
+         * silently hides null rows — a visible-but-empty date filter is dead UI).
+         */
+        fun isLastModifiedBackfillDone(): Boolean = instance.isBackfillDone
     }
 
     private object ApplicationHolder {
@@ -92,6 +104,14 @@ class ScryerApplication : Application() {
 
     lateinit var screenshotRepository: ScreenshotRepository
     lateinit var settingsRepository: SettingsRepository
+
+    /** Phase 2.1 step 4 — the one-shot `last_modified` backfill's completion marker. */
+    lateinit var backfillMarker: LastModifiedBackfill.BackfillMarker
+
+    /** Cached gate value for [Companion.isLastModifiedBackfillDone]; flipped by the marker. */
+    @Volatile
+    var isBackfillDone: Boolean = false
+        private set
 
     /**
      * zvec Phase 2, issue 03 — the screenshot-content collection lifecycle owner. Constructed in
@@ -216,6 +236,27 @@ class ScryerApplication : Application() {
             store = zvecContentStore,
         )
         settingsRepository = PreferenceSettingsRepository.getInstance(this)
+
+        // Phase 2.1 step 4 — the one-shot `last_modified` backfill (2.1-D2; R8 ruling:
+        // mandatory-before-shipping). Runs at app start, once per install: the marker flips only
+        // after a full idempotent pass, so a crash re-runs it next launch. The date-range chip's
+        // render gate reads the same marker via [isLastModifiedBackfillDone].
+        backfillMarker = object : LastModifiedBackfill.BackfillMarker {
+            private val prefs = getSharedPreferences(PREFS_PHASE21, MODE_PRIVATE)
+            override fun isDone(): Boolean = prefs.getBoolean(KEY_BACKFILL_DONE, false)
+            override fun markDone() {
+                isBackfillDone = true
+                prefs.edit().putBoolean(KEY_BACKFILL_DONE, true).apply()
+            }
+        }
+        isBackfillDone = backfillMarker.isDone()
+        launchIO {
+            LastModifiedBackfill(
+                store = zvecContentStore,
+                rowSource = { screenshotRepository.getScreenshotList() },
+                marker = backfillMarker,
+            ).runIfNeeded()
+        }
 
         // zvec Phase 2, issue 03 — the write-side cutover. The sink writes OCR content to zvec
         // (replacing the deleted RoomWriteSink). The cache-DAO provider reads the app-scope field

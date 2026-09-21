@@ -799,6 +799,55 @@ class ZvecCollection internal constructor(
     }
 
     /**
+     * Add a column (scalar DDL) to the live collection, after the collection
+     * exists. Phase 2.1 (app issue) adds the `last_modified` capture-time
+     * scalar this way: a scalar `add_column` is the one DDL path verified
+     * end-to-end on-device (roadmap Task-01 finding), so the field joins the
+     * schema WITHOUT the version-marker wipe/re-ingest a vector or FTS-config
+     * change would force (the marker stays untouched; existing docs read the
+     * field as null until the app's backfill pass fills them — the R8-pinned
+     * null semantics that make "backfill before shipping the date filter"
+     * mandatory).
+     *
+     * [field] is the same [FieldSchema] type schema construction takes; its
+     * optional [FieldSchema.indexParams] encodes through
+     * [SchemaDescriptor.encodeIndexParams] and the JNI layer builds the C
+     * field + index params through the SAME per-arm switch `createAndOpen`
+     * uses. [expression] is the engine's default-value expression (null = no
+     * default).
+     *
+     * **Idempotency contract:** adding a column that already exists answers
+     * `ZVEC_ERROR_ALREADY_EXISTS`, surfaced as
+     * [ZvecErrorCode.ALREADY_EXISTS] — callers self-healing an open path
+     * match-and-ignore that code; anything else throws.
+     *
+     * @throws ZvecException on any engine error other than ALREADY_EXISTS.
+     */
+    suspend fun addColumn(field: FieldSchema, expression: String? = null) {
+        ensureNotClosed()
+        val index = field.indexParams?.let { SchemaDescriptor.encodeIndexParams(it) }
+        ZvecNative.nativeAddColumn(
+            handle = nativeHandle(),
+            name = field.name,
+            dataType = field.type.toNative(),
+            nullable = field.nullable,
+            dimension = field.dimension ?: 0,
+            indexKind = index?.indexKind ?: SchemaDescriptor.IndexKind.NONE,
+            indexM = index?.indexM ?: IntArray(0),
+            indexEfConstruction = index?.indexEfConstruction ?: IntArray(0),
+            indexNList = index?.indexNList ?: IntArray(0),
+            indexNIters = index?.indexNIters ?: IntArray(0),
+            indexMetric = index?.indexMetric ?: IntArray(0),
+            indexEnableRangeOpt = index?.indexEnableRangeOpt ?: BooleanArray(0),
+            ftsTokenizer = index?.ftsTokenizer ?: arrayOf(""),
+            ftsExtraParams = index?.ftsExtraParams ?: arrayOf(""),
+            ftsFilterNames = index?.ftsFilterNames ?: arrayOf(""),
+            ftsFilterFieldIndices = index?.ftsFilterFieldIndices ?: IntArray(0),
+            expression = expression,
+        )
+    }
+
+    /**
      * Optimize the collection: rebuild indexes and merge segments. Phase 2's
      * migration calls this after bulk re-ingestion to finish the post-migration
      * index build (the graph index runs after the docs are in). Synchronous —

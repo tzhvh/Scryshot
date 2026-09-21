@@ -34,7 +34,7 @@ class ZvecWriteSinkTest {
         data class Upsert(val contentHash: String, val locator: String, val content: String, val collectionId: String)
         val events: MutableList<Any> = mutableListOf()
 
-        override suspend fun upsert(contentHash: String, locator: String, content: String, collectionId: String) {
+        override suspend fun upsert(contentHash: String, locator: String, content: String, collectionId: String, lastModified: Long?) {
             events += Upsert(contentHash, locator, content, collectionId)
         }
 

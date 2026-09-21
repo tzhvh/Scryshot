@@ -299,4 +299,74 @@ Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeOptimize(
   ZVEC_CHECK_JNI_VOID(env, zvec_collection_optimize(col));
 }
 
+// Phase 2.1 (app issue): runtime scalar-column DDL — zvec_collection_add_column
+// (c_api.h:3579). The field schema is DEEP-COPIED by the engine ("deep-copied
+// internally, caller retains ownership and must call zvec_field_schema_destroy
+// after the call"), so FieldSchemaGuard frees ours on any exit path; the index
+// params we build are transient and freed by IndexParamsGuard after the copy
+// into the field. The one-field build mirrors nativeCreateIndex's single-slot
+// pattern (field_index=0, fts_base=0) through the SAME build_index_params the
+// schema-construction loop uses — a runtime-added column is byte-for-byte the
+// field a schema-declared one would build. `expression` is the engine's
+// default-value expression: null here ("" on the wire) means no default, so
+// existing docs read the new field as null — exactly the R8-probed semantics
+// (filters exclude null rows) the app's backfill ordering builds on.
+//
+// The engine answers an add of an ALREADY-present column with
+// ZVEC_ERROR_ALREADY_EXISTS; the Kotlin layer maps that to a no-op so the
+// open-path self-heal can stay idempotent.
+JNIEXPORT void JNICALL
+Java_io_github_tzhvh_scryernext_zvec_ZvecNative_nativeAddColumn(
+    JNIEnv* env, jclass, jlong handle, jstring jname,
+    jint jdataType, jboolean jnullable, jint jdimension,
+    jint jindexKind,
+    jintArray jindexM, jintArray jindexEfConstruction,
+    jintArray jindexNList, jintArray jindexNIters, jintArray jindexMetric,
+    jbooleanArray jindexEnableRangeOpt,
+    jobjectArray jftsTokenizer, jobjectArray jftsExtraParams,
+    jobjectArray jftsFilterNames, jintArray jftsFilterFieldIndices,
+    jstring jexpression) {
+  zvec_collection_t* col = reinterpret_cast<zvec_collection_t*>(handle);
+  if (!col) {
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "Collection handle is null");
+    return;
+  }
+
+  std::string name = jstring_to_std(env, jname);
+  if (env->ExceptionCheck()) return;
+
+  zvec_field_schema_t* field = zvec_field_schema_create(
+      name.c_str(), static_cast<zvec_data_type_t>(jdataType),
+      jnullable == JNI_TRUE, static_cast<uint32_t>(jdimension));
+  if (!field) {
+    // ZVEC_CHECK_PTR's `return 0` is pointer-function-shaped; this is a void
+    // function, so the null check is spelled out.
+    zvec_throw(env, ZVEC_ERROR_INVALID_ARGUMENT, "field_schema_create returned null");
+    return;
+  }
+  FieldSchemaGuard field_guard{field};
+
+  // Single field → slot 0, fts_base 0 (no prior FTS fields to offset past).
+  zvec_index_params_t* params = build_index_params(
+      env, jindexKind,
+      jindexM, jindexEfConstruction, jindexNList, jindexNIters, jindexMetric,
+      jindexEnableRangeOpt, jftsTokenizer, jftsExtraParams,
+      jftsFilterNames, jftsFilterFieldIndices,
+      /*field_index=*/0, /*fts_base=*/0);
+  if (env->ExceptionCheck()) return;
+  IndexParamsGuard params_guard{params};
+
+  if (params) {
+    // set_index_params deep-copies into the field; params_guard frees the
+    // transient handle regardless (the schema-loop pattern).
+    ZVEC_CHECK_JNI_VOID(env, zvec_field_schema_set_index_params(field, params));
+  }
+
+  std::string expression = jstring_to_std(env, jexpression);
+  if (env->ExceptionCheck()) return;
+
+  ZVEC_CHECK_JNI_VOID(env, zvec_collection_add_column(
+      col, field, expression.empty() ? nullptr : expression.c_str()));
+}
+
 } // extern "C"
