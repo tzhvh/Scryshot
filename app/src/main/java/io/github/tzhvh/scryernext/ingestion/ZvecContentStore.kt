@@ -219,16 +219,37 @@ open class ZvecContentStore(
                     ZvecEventRecorder.record { "Collection opened successfully after LOCK recovery" }
                     col
                 } catch (retryEx: ZvecException) {
-                    lastOpenOutcome = "error: ${retryEx.message}"
-                    ZvecEventRecorder.record { "Collection open failed after LOCK recovery: ${retryEx.message}" }
-                    throw retryEx
+                    invalidateAndRebuild(retryEx)
                 }
             } else {
-                lastOpenOutcome = "error: ${e.message}"
-                ZvecEventRecorder.record { "Collection open failed: ${e.message}" }
-                throw e
+                invalidateAndRebuild(e)
             }
         }
+    }
+
+    /**
+     * Phase 2.1 hard cutover (maintainer doctrine: greenfield, no users, no back-compat, no
+     * fallback) — the terminal open-failure handler. zvec is a **derived index** over the Room
+     * corpus, so an existing collection that cannot be opened (poisoned idmap, corrupt
+     * manifest, unopenable/missing LOCK — the 2026-09-21 device gate's failure shape) is
+     * DESTROYED and rebuilt, never surfaced as a permanently dead search.
+     *
+     * One pass: delete the collection dir + schema marker, then re-enter [openOrRetry] — the
+     * now-absent marker routes through the wipe branch (dir deletion → [runQueueReset] →
+     * createNew → marker write), which queues the full re-ingest. If the rebuild itself fails,
+     * THAT failure propagates — no loop. Runs after (not instead of) the lock-recovery ladder,
+     * and its failures also fall here (a retry that still fails invalidates too).
+     */
+    private suspend fun invalidateAndRebuild(failure: ZvecException): ZvecCollection {
+        ZvecEventRecorder.record {
+            "Collection open failed (${failure.message}) — invalidating: dir + marker wiped, queue reset, rebuild"
+        }
+        collectionPath.deleteRecursively()
+        schemaMarkerFile.delete()
+        val col = openOrRetry()
+        lastOpenOutcome = "invalidated+rebuilt (prior failure: ${failure.message?.take(80)})"
+        ZvecEventRecorder.record { "Collection rebuilt after invalidation (schema v$SCHEMA_VERSION)" }
+        return col
     }
 
     /**
