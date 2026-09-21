@@ -254,7 +254,10 @@ class ZvecScreenshotRepositoryDeviceTest {
             text = "shared keyword matchme", processed = true, bytes = "new-bytes-lm".toByteArray(),
         )
 
-        val dateFilter = "last_modified >= 1000000000"
+        // Bound chosen so the OLD doc's 1,000ms timestamp PASSES it — pre-backfill it is
+        // still hidden (null), post-backfill it is recalled (timestamped). A bound the old
+        // doc fails would prove nothing about the null-hiding.
+        val dateFilter = "last_modified >= 500"
         assertEquals(
             "sanity: both docs match unfiltered",
             2, rows(repo.searchScreenshotList("matchme")).size,

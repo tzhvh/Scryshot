@@ -46,18 +46,33 @@ class LastModifiedBackfill(
     /**
      * Run the pass if it has not completed yet. Returns the number of docs re-upserted (0 on a
      * done marker — the steady state, with zero store calls).
+     *
+     * The pass walks the zvec corpus ONCE ([ZvecContentStore.iterDocs], projected to the fields
+     * it needs) and re-upserts only docs whose `last_modified` is null — a doc that already
+     * carries a timestamp (indexed by any post-2.1 write) is skipped untouched. A hash with no
+     * surviving doc (all duplicates deleted) skips silently; it is unfindable regardless.
      */
     suspend fun runIfNeeded(): Int {
         if (marker.isDone()) return 0
 
+        val rowsByHash = rowSource()
+            .mapNotNull { row -> row.contentHash?.let { it to row } }
+            .toMap()
+        val docs = store.iterDocs(
+            listOf(
+                ZvecContentStore.FIELD_LOCATOR,
+                ZvecContentStore.FIELD_CONTENT,
+                ZvecContentStore.FIELD_LAST_MODIFIED,
+            ),
+        )
         var backfilled = 0
-        for (row in rowSource()) {
-            val hash = row.contentHash ?: continue // never indexed into zvec — nothing to fill
-            val doc = store.fetch(hash) ?: continue // stale: the zvec doc is gone (all dupes deleted)
+        for (doc in docs) {
+            val row = rowsByHash[doc.pk] ?: continue // no Room row: stale doc, nothing to fill
+            if (doc.fields[ZvecContentStore.FIELD_LAST_MODIFIED] != null) continue // already set
             val content = (doc.fields[ZvecContentStore.FIELD_CONTENT] as? ZvecValue.Str)?.value ?: ""
             val locator = (doc.fields[ZvecContentStore.FIELD_LOCATOR] as? ZvecValue.Str)?.value ?: row.uri
             store.upsert(
-                contentHash = hash,
+                contentHash = doc.pk,
                 locator = locator,
                 content = content,
                 collectionId = row.collectionId,
@@ -67,7 +82,7 @@ class LastModifiedBackfill(
         }
         store.flush()
         marker.markDone()
-        ZvecEventRecorder.record { "last_modified backfill complete: $backfilled docs re-upserted" }
+        ZvecEventRecorder.record { "last_modified backfill complete: $backfilled null docs filled" }
         return backfilled
     }
 }

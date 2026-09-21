@@ -22,10 +22,11 @@ import java.io.File
  *
  * Pins the contract the R8 ruling makes mandatory-before-shipping (a `last_modified` filter
  * silently hides null rows, so the date chip may render only after this pass completes):
- *  - runs once, backfills every hashed Room row (fetch → upsert with the row's timestamp), then
- *    marks done — the marker is written only AFTER a full pass (crash-safe);
+ *  - runs once; one corpus walk; fills ONLY null-field docs (a doc already carrying a timestamp
+ *    is skipped untouched — the upgrade pass must not rewrite the whole corpus), then marks done
+ *    — the marker is written only AFTER a full pass (crash-safe);
  *  - a done marker makes every later run a no-op (zero store calls);
- *  - rows without a content_hash and hashes with no surviving zvec doc are skipped, not counted;
+ *  - hashes with no surviving zvec doc skip silently, not counted;
  *  - the re-upsert preserves the fetched content/locator (the OCR text is never clobbered).
  */
 class LastModifiedBackfillTest {
@@ -41,9 +42,13 @@ class LastModifiedBackfillTest {
 
         val upserts = mutableListOf<Upsert>()
         var flushes = 0
-        val docs = mutableMapOf<String, ZvecDoc>()
+        var walks = 0
+        val docs = mutableListOf<ZvecDoc>()
 
-        override suspend fun fetch(contentHash: String): ZvecDoc? = docs[contentHash]
+        override suspend fun iterDocs(outputFields: List<String>?): List<ZvecDoc> {
+            walks++
+            return docs
+        }
 
         override suspend fun upsert(
             contentHash: String,
@@ -72,29 +77,38 @@ class LastModifiedBackfillTest {
         lastModified = lastModified, collectionId = "col", contentHash = hash,
     )
 
-    private fun doc(hash: String) = ZvecDoc(
-        pk = hash,
-        fields = mapOf(
+    private fun doc(hash: String, lastModified: Long? = null): ZvecDoc {
+        val fields = mutableMapOf<String, ZvecValue>(
             ZvecContentStore.FIELD_CONTENT to ZvecValue.Str("ocr text for $hash"),
             ZvecContentStore.FIELD_LOCATOR to ZvecValue.Str("uri://from-zvec-$hash"),
-        ),
-    )
+        )
+        if (lastModified != null) {
+            fields[ZvecContentStore.FIELD_LAST_MODIFIED] = ZvecValue.ScalarInt(lastModified)
+        }
+        return ZvecDoc(pk = hash, fields = fields)
+    }
 
     @Test
-    fun firstRun_backfillsEveryHashedRow_thenMarksDone() = runBlocking {
+    fun firstRun_fillsOnlyNullDocs_thenMarksDone() = runBlocking {
         val store = RecordingBackfillStore()
-        store.docs["h1"] = doc("h1")
-        store.docs["h2"] = doc("h2")
+        store.docs.add(doc("h-null"))
+        store.docs.add(doc("h-set", lastModified = 999L)) // post-2.1 doc: already carries a stamp
         val marker = FakeMarker()
-        val backfill = LastModifiedBackfill(store, { listOf(row("a", "h1", 111), row("b", "h2", 222)) }, marker)
+        val backfill = LastModifiedBackfill(
+            store,
+            { listOf(row("a", "h-null", 111), row("b", "h-set", 222)) },
+            marker,
+        )
 
         val count = backfill.runIfNeeded()
 
-        assertEquals(2, count)
-        assertEquals(listOf(111L, 222L), store.upserts.map { it.lastModified })
-        assertEquals("h1", store.upserts[0].contentHash)
+        assertEquals("only the null-field doc is rewritten", 1, count)
+        val up = store.upserts.single()
+        assertEquals("h-null", up.contentHash)
+        assertEquals(111L, up.lastModified)
         assertTrue(marker.done)
         assertEquals("flush after the pass, before the marker", 1, store.flushes)
+        assertEquals("one corpus walk, not N fetches", 1, store.walks)
     }
 
     @Test
@@ -105,20 +119,21 @@ class LastModifiedBackfillTest {
 
         assertEquals(0, backfill.runIfNeeded())
         assertTrue(store.upserts.isEmpty())
+        assertEquals(0, store.walks)
         assertEquals(0, store.flushes)
     }
 
     @Test
-    fun rowsWithoutHash_andHashesWithoutDocs_areSkipped_notCounted() = runBlocking {
+    fun hashesWithoutDocs_andRoomRowsWithoutHash_skipSilently() = runBlocking {
         val store = RecordingBackfillStore()
-        store.docs["h-ok"] = doc("h-ok")
+        store.docs.add(doc("h-ok"))
         val marker = FakeMarker()
         val backfill = LastModifiedBackfill(
             store,
             {
                 listOf(
-                    row("unindexed", null, 5L),      // never indexed — nothing to backfill
-                    row("stale", "h-gone", 6L),      // zvec doc absent (deleted since)
+                    row("unindexed", null, 5L),   // never indexed — nothing to fill
+                    row("stale", "h-gone", 6L),   // zvec doc absent (deleted since)
                     row("ok", "h-ok", 7L),
                 )
             },
@@ -131,9 +146,19 @@ class LastModifiedBackfillTest {
     }
 
     @Test
+    fun zvecDocWithoutAnyRoomRow_isNotRewritten() = runBlocking {
+        val store = RecordingBackfillStore()
+        store.docs.add(doc("h-ghost"))
+        val backfill = LastModifiedBackfill(store, { listOf(row("a", "h-live", 111)) }, FakeMarker())
+
+        assertEquals("a stale doc with no Room row is unfindable — leave it alone", 0, backfill.runIfNeeded())
+        assertTrue(store.upserts.isEmpty())
+    }
+
+    @Test
     fun reupsert_preservesFetchedContentAndLocator() = runBlocking {
         val store = RecordingBackfillStore()
-        store.docs["h1"] = doc("h1")
+        store.docs.add(doc("h1"))
         val backfill = LastModifiedBackfill(store, { listOf(row("a", "h1", 111)) }, FakeMarker())
 
         backfill.runIfNeeded()
@@ -151,6 +176,7 @@ class LastModifiedBackfillTest {
 
         assertEquals(0, backfill.runIfNeeded())
         assertTrue("a fresh install is backfill-complete at zero docs", marker.done)
+        assertFalse(store.upserts.isNotEmpty())
     }
 
     private companion object {
