@@ -46,8 +46,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/common_padding_12dp"
-                android:textColor="@color/grey60"
-                android:text="@string/setup_media_privacy" />
+                android:textColor="@color/grey60" />
 
             <!-- The real dialog preview for the running OS. API 33 shows
                  Allow / Don't allow; API 34+ shows the three-state reality's

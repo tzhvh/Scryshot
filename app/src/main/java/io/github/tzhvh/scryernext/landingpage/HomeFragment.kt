@@ -36,6 +36,7 @@ import io.github.tzhvh.scryernext.collectionview.ScreenshotItemHolder
 import io.github.tzhvh.scryernext.detailpage.DetailPageActivity
 import io.github.tzhvh.scryernext.detailpage.GraphicOverlay
 import io.github.tzhvh.scryernext.extension.navigateSafely
+import io.github.tzhvh.scryernext.filemonitor.ExternalScreenshotSync
 import io.github.tzhvh.scryernext.filemonitor.ScreenshotFetcher
 import io.github.tzhvh.scryernext.ingestion.IngestionConfig
 import io.github.tzhvh.scryernext.ingestion.Progress
@@ -646,32 +647,11 @@ class HomeFragment : Fragment(), CoroutineScope {
     }
 
     private suspend fun checkNewScreenshots(): List<ScreenshotModel> {
-        return withContext (Dispatchers.IO + NonCancellable) {
-            val dbList = viewModel.getScreenshotList()
-            arrayListOf<ScreenshotModel>().apply {
-                addAll(syncExternalScreenshots(dbList))
-                addAll(getLocalNewScreenshots(dbList))
-            }
-        }
-    }
-
-    private suspend fun syncExternalScreenshots(
-            localScreenshots: List<ScreenshotModel>
-    ): List<ScreenshotModel> {
         val context = context ?: return emptyList()
-        val externalList = ScreenshotFetcher().fetchScreenshots(context)
-        return mergeExternalScreenshots(
-                externalList,
-                localScreenshots
-        ).filter { screenshot ->
-            screenshot.collectionId == CollectionModel.UNCATEGORIZED
+        return withContext (Dispatchers.IO + NonCancellable) {
+            ExternalScreenshotSync(context.applicationContext,
+                    ScryerApplication.getScreenshotRepository()).sync()
         }
-    }
-
-    private fun getLocalNewScreenshots(
-            localScreenshots: List<ScreenshotModel>
-    ): List<ScreenshotModel> {
-        return localScreenshots.filter { it.collectionId == CollectionModel.UNCATEGORIZED }
     }
 
     private fun showEnableServiceDialog() {
@@ -709,52 +689,6 @@ class HomeFragment : Fragment(), CoroutineScope {
         if (isShown) {
             pref?.setShouldPromptEnableService(false)
         }
-    }
-
-    /**
-     * @return screenshots from external that hasn't been recorded in db
-     */
-    private suspend fun mergeExternalScreenshots(
-            externalList: List<ScreenshotModel>,
-            dbList: List<ScreenshotModel>
-    ): List<ScreenshotModel> {
-        // A lookup table of DB rows keyed by uri, so we can quickly check whether each
-        // screenshot from MediaStore had already been recorded before.
-        val localModels = dbList.map { it.uri to it }.toMap().toMutableMap()
-
-        val results = mutableListOf<ScreenshotModel>()
-        externalList.forEach { externalModel ->
-            val localModel = localModels[externalModel.uri]
-            localModel?.let {
-                localModels.remove(externalModel.uri)
-
-            }?: run {
-                // No record found, make a new uncategorized item
-                externalModel.id = UUID.randomUUID().toString()
-                externalModel.collectionId = CollectionModel.UNCATEGORIZED
-
-                results.add(externalModel)
-            }
-        }
-
-        // Drop DB rows whose backing content URI is no longer readable (user deleted the
-        // screenshot from MediaStore via another app). Issue 21: replaces the old
-        // File(path).exists() gate, which was meaningless for content URIs.
-        val resolver = context?.contentResolver
-        for (entry in localModels) {
-            val model = entry.value
-            val readable = try {
-                resolver?.openInputStream(android.net.Uri.parse(model.uri))?.use { true } ?: false
-            } catch (e: Exception) {
-                false
-            }
-            if (!readable) {
-                viewModel.deleteScreenshot(model)
-            }
-        }
-
-        viewModel.addScreenshot(results)
-        return results
     }
 
     private fun log(tag: String, msg: String) {

@@ -24,6 +24,7 @@ import io.github.tzhvh.scryernext.databinding.OnboardingStepMediaBinding
 import io.github.tzhvh.scryernext.databinding.OnboardingStepNotificationsBinding
 import io.github.tzhvh.scryernext.databinding.OnboardingStepOverlayBinding
 import io.github.tzhvh.scryernext.databinding.OnboardingStepWelcomeBinding
+import io.github.tzhvh.scryernext.filemonitor.ExternalScreenshotSync
 import io.github.tzhvh.scryernext.filemonitor.ScreenshotFetcher
 import io.github.tzhvh.scryernext.permission.MediaAccess
 import io.github.tzhvh.scryernext.permission.PermissionHelper
@@ -190,6 +191,8 @@ class OnboardingActivity : AppCompatActivity() {
     }
 
     private fun bindMedia() {
+        mediaBinding.privacyBody.text = getString(R.string.setup_media_privacy,
+                getString(R.string.app_full_name))
         mediaBinding.positiveButton.setOnClickListener {
             when (mediaBinding.positiveButton.tag) {
                 TAG_OPEN_SETTINGS -> launchAppDetailsSettings()
@@ -353,15 +356,36 @@ class OnboardingActivity : AppCompatActivity() {
 
     // ------------------------------------------------------------------ exit
 
+    /**
+     * ADR 0008 §3.5 — with one wiring detail the PRD's CTA depends on: the
+     * bulk trigger ingests the gallery's unprocessed rows (MediaStoreProducer
+     * reads `processed = false` rows — Model B), and on a fresh install those
+     * rows exist only after the external-screenshot sync has run, which the
+     * Home resume hasn't reached yet. So: sync first, *then* fire. Home's own
+     * resume-sync is idempotent over this one. (The original bug: the worker
+     * ran against an empty queue and reported Completed with zero docs.)
+     */
     private fun completeOnboarding(startBulk: Boolean) {
         doneCountJob?.cancel()
         OnboardingPrefs.getInstance(this).setOnboardingComplete()
-        if (startBulk) {
-            // The existing user-initiated bulk trigger (CONTEXT.md's trigger
-            // model) — progress surfaces via the banner/notification machinery.
-            ScryerApplication.getIngestionSession().startBulk()
+        doneBinding.actionButton.isEnabled = false
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    ExternalScreenshotSync(applicationContext,
+                            ScryerApplication.getScreenshotRepository()).sync()
+                }.onFailure {
+                    android.util.Log.w("OnboardingActivity", "pre-bulk sync failed", it)
+                }
+            }
+            if (startBulk) {
+                // The existing user-initiated bulk trigger (CONTEXT.md's
+                // trigger model) — progress surfaces via the banner/notification
+                // machinery.
+                ScryerApplication.getIngestionSession().startBulk()
+            }
+            finish()
         }
-        finish()
     }
 
     /**
