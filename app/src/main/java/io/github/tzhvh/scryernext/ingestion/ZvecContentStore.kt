@@ -208,6 +208,14 @@ open class ZvecContentStore(
                 // MISSING/uncreatable LOCK file: the engine's open uses create=false, so an
                 // externally deleted LOCK made every later open fail — recreate the empty file.
                 isMissingLockFile(e) -> "missing LOCK recreated" to { collectionPath.resolve(LOCK_FILE).createNewFile() }
+                // Stale IDMAP artifact: a previously failed open leaks its idmap.0 RocksDB
+                // flock in-process ("lock hold by current process" on every later open/create
+                // of that path). The idmap is a derived key map — delete it out-of-band and
+                // let the retry recreate it, exactly the missing-LOCK philosophy one level
+                // deeper. (2026-09-21 device gate; hard cutover — no fallback.)
+                isStaleIdmap(e) -> "stale idmap.0 removed" to {
+                    collectionPath.resolve(IDMAP_DIR).deleteRecursively()
+                }
                 else -> null
             }
             if (recovery != null && runCatching { recovery.second.invoke() }.getOrDefault(false)) {
@@ -331,6 +339,20 @@ open class ZvecContentStore(
      */
     private fun isMissingLockFile(e: ZvecException): Boolean =
         e.detail?.contains("lock file", ignoreCase = true) == true
+
+    /**
+     * The stale-idmap signal — "create id map failed" / "recovery idmap failed" with a RocksDB
+     * "lock hold" reason. A failed open leaks its idmap.0 flock in-process; every later open or
+     * create of that path fails until the artifact is deleted out-of-band (flock lives on the
+     * inode — delete + recreate frees it) or the process dies.
+     */
+    private fun isStaleIdmap(e: ZvecException): Boolean {
+        val text = ((e.detail ?: "") + " " + (e.message ?: ""))
+        // The engine spells it both ways: "create id map failed" (id_map.cc:49) and
+        // "recovery idmap failed" (the open-recovery path).
+        return text.contains("id map failed", ignoreCase = true) ||
+            text.contains("idmap failed", ignoreCase = true)
+    }
 
     /** Hook for tests: reopen an existing collection. Production calls [ZvecCollection.open]. */
     protected open suspend fun openExisting(path: File, options: CollectionOptions): ZvecCollection =
@@ -522,6 +544,7 @@ open class ZvecContentStore(
     companion object {
         private const val TAG = "ZvecContentStore"
         private const val LOCK_FILE = "LOCK"
+        private const val IDMAP_DIR = "idmap.0"
         private const val COLLECTION_NAME = "screenshots"
 
         /**

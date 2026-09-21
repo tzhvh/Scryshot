@@ -45,7 +45,10 @@ class ZvecContentStoreInvalidationTest {
         baseDir: File,
         val resetCalls: MutableList<String>,
     ) : ZvecContentStore(baseDir, debug = false, onSchemaWipe = { resetCalls.add("reset") }) {
-        private val root: File = baseDir
+        val root: File = baseDir
+
+        /** Null = always fail; set = succeed after N failures (the idmap rung healed it). */
+        var openSucceedsAfter: Int? = null
         var openCalls = 0
         var createCalls = 0
 
@@ -53,6 +56,13 @@ class ZvecContentStoreInvalidationTest {
 
         override suspend fun openExisting(path: File, options: CollectionOptions): ZvecCollection {
             openCalls++
+            val succeedAfter = openSucceedsAfter
+            if (succeedAfter != null && openCalls > succeedAfter) {
+                // The retry after the artifact deletion: abort at the native boundary — the
+                // JVM cannot construct a ZvecCollection. Reaching THIS error proves the rung
+                // deleted the artifact and re-attempted the open (the retry's distinct shape).
+                throw NativeBoundary("openExisting retry after idmap removal")
+            }
             throw ZvecException(
                 ZvecErrorCode.INTERNAL_ERROR,
                 "recovery idmap failed, path: $path/idmap.0",
@@ -89,12 +99,33 @@ class ZvecContentStoreInvalidationTest {
         val thrown = runCatching { store.driveOpen() }.exceptionOrNull()
 
         // The rebuild ran to the native boundary (createNew) — the open failure did NOT
-        // propagate out of openOrCreate.
+        // propagate out of openOrCreate. Ladder order: the idmap rung deleted the artifact and
+        // retried the open once (the retry failed again — the fake always fails), THEN the
+        // invalidation wiped and rebuilt.
         assertTrue("expected the rebuild's boundary, got $thrown", thrown is NativeBoundary)
-        assertEquals("one open attempt, no open retries", 1, store.openCalls)
+        assertEquals("open retried once by the rung, then invalidated", 2, store.openCalls)
         assertEquals("exactly one rebuild attempt (no loop)", 1, store.createCalls)
         assertEquals("the wipe branch ran the ingestion queue reset", listOf("reset"), resets)
         assertFalse("the poisoned dir was destroyed", store.seededEngineFile().exists())
+    }
+
+    @Test
+    fun idmapRecoveryRung_deletesArtifact_retriesOpen_andSucceeds() = runBlocking {
+        val resets = mutableListOf<String>()
+        val store = CorruptStore(tmp.newFolder(), resets)
+        store.seedCorruptState()
+        store.openSucceedsAfter = 1 // the SECOND open is attempted (fresh idmap recreated)
+
+        val thrown = runCatching { store.driveOpen() }.exceptionOrNull()
+
+        assertTrue("expected the retry's boundary, got $thrown",
+            thrown is NativeBoundary && thrown.message!!.contains("idmap removal"))
+        assertEquals("first open failed, the rung deleted the artifact and retried",
+            2, store.openCalls)
+        assertEquals("the idmap.0 artifact was deleted for the retry", false, File(
+            store.root, "zvec/screenshots/idmap.0",
+        ).exists())
+        assertEquals("no queue reset — no invalidation happened", 0, resets.size)
     }
 
     @Test
