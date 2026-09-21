@@ -137,6 +137,7 @@ class ZvecScreenshotRepository(
             store.search(matchString, filter = filter, precision = precision)
         } catch (e: ZvecException) {
             ZvecEventRecorder.record { "Query error (engine rejected match string): ${e.message?.take(160)}" }
+            android.util.Log.e("SearchDiag", "store.search threw: code=${e.code} detail=${e.detail}", e)
             return SearchOutcome.QueryError(e)
         }
         if (docs.isEmpty()) return SearchOutcome.Results(emptyList())

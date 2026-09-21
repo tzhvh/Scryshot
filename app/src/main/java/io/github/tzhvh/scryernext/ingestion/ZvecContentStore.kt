@@ -197,15 +197,24 @@ open class ZvecContentStore(
      */
     protected open suspend fun openOrCreate(): ZvecCollection = withContext(Dispatchers.IO) {
         try {
-            val col = openOrRetry().also { healSchemaDdl(it) }
+            val col = openOrRetry()
             ZvecEventRecorder.record { "Collection opened successfully" }
             col
         } catch (e: ZvecException) {
-            if (isStaleLock(e) && collectionPath.resolve(LOCK_FILE).delete()) {
+            val recovery: Pair<String, () -> Boolean>? = when {
+                // HELD lock (another live handle owns the flock): delete the stale file; the
+                // retry's open path re-creates it.
+                isStaleLock(e) -> "stale LOCK deleted" to { collectionPath.resolve(LOCK_FILE).delete() }
+                // MISSING/uncreatable LOCK file: the engine's open uses create=false, so an
+                // externally deleted LOCK made every later open fail — recreate the empty file.
+                isMissingLockFile(e) -> "missing LOCK recreated" to { collectionPath.resolve(LOCK_FILE).createNewFile() }
+                else -> null
+            }
+            if (recovery != null && runCatching { recovery.second.invoke() }.getOrDefault(false)) {
                 lockRecoveriesCount++
-                ZvecEventRecorder.record { "LOCK recovery triggered: stale LOCK deleted" }
+                ZvecEventRecorder.record { "LOCK recovery triggered: ${recovery.first}" }
                 try {
-                    val col = openOrRetry().also { healSchemaDdl(it) }
+                    val col = openOrRetry()
                     lastOpenOutcome = "LOCK-recovered"
                     ZvecEventRecorder.record { "Collection opened successfully after LOCK recovery" }
                     col
@@ -219,37 +228,6 @@ open class ZvecContentStore(
                 ZvecEventRecorder.record { "Collection open failed: ${e.message}" }
                 throw e
             }
-        }
-    }
-
-    /**
-     * Phase 2.1 step 4 (2.1-D2) — the runtime scalar-column self-heal. Adds the
-     * [FIELD_LAST_MODIFIED] INVERT column to a collection created before the field existed in
-     * [screenshotContentSchema]. This is the one DDL path verified end-to-end on-device (roadmap
-     * Task-01): scalar `add_column` works at runtime, so the schema evolves WITHOUT a
-     * [SCHEMA_VERSION] bump — no wipe, no re-ingest; the marker contract ("the marker proves the
-     * FTS/tokenizer schema") stays honest because FTS config is untouched.
-     *
-     * Runs on every successful open; the engine answers an add of a present column with
-     * ALREADY_EXISTS (the steady state), so the heal is idempotent and costs one rejected DDL per
-     * launch. Best-effort by design: any OTHER failure is recorded and swallowed — search is
-     * unaffected, and the first write carrying `last_modified` surfaces a real schema problem
-     * loudly. New docs read the column as null until the app's backfill pass fills them — the
-     * R8-pinned semantics that make "backfill completes before the date chip renders" mandatory.
-     */
-    protected open suspend fun healSchemaDdl(col: ZvecCollection) {
-        val field = FieldSchema(
-            name = FIELD_LAST_MODIFIED,
-            type = FieldType.INT64,
-            nullable = true,
-            indexParams = IndexParams.InvertParams(),
-        )
-        try {
-            col.addColumn(field)
-            ZvecEventRecorder.record { "Schema DDL: added $FIELD_LAST_MODIFIED (INT64 INVERT)" }
-        } catch (e: ZvecException) {
-            if (e.code == ZvecErrorCode.ALREADY_EXISTS) return
-            ZvecEventRecorder.record { "Schema DDL: $FIELD_LAST_MODIFIED add failed: ${e.message}" }
         }
     }
 
@@ -314,9 +292,24 @@ open class ZvecContentStore(
             .onFailure { ZvecEventRecorder.record { "Schema marker write failed: ${it.message}" } }
     }
 
-    /** The stale-LOCK heuristic: the lock signal in [ZvecException.detail] (case-insensitive). */
+    /**
+     * The stale-LOCK heuristic: the engine's HELD-lock signal — "Can't lock read-write
+     * collection" (the flock attempt failed). Deliberately NOT the file-open/create messages:
+     * the old `contains("lock")` match also caught "Can't open lock file" (a MISSING file) and
+     * then "recovered" by deleting the very file the retry's open needed — a transient state
+     * made permanent (hit live in the 2026-09-21 device gate).
+     */
     private fun isStaleLock(e: ZvecException): Boolean =
-        e.detail?.contains("lock", ignoreCase = true) == true
+        e.detail?.contains("can't lock", ignoreCase = true) == true
+
+    /**
+     * The missing-LOCK-file signal — "Can't open/create lock file". The engine's collection-open
+     * path opens the LOCK with create=false (`collection.cc:2016` → `acquire_file_lock(false)`),
+     * so a LOCK removed out-of-band (crash window, external cleanup) made every later open fail
+     * forever. The repair is the file's exact birth shape: an empty file at the LOCK path.
+     */
+    private fun isMissingLockFile(e: ZvecException): Boolean =
+        e.detail?.contains("lock file", ignoreCase = true) == true
 
     /** Hook for tests: reopen an existing collection. Production calls [ZvecCollection.open]. */
     protected open suspend fun openExisting(path: File, options: CollectionOptions): ZvecCollection =
@@ -491,13 +484,18 @@ open class ZvecContentStore(
         runCatching {
             kotlinx.coroutines.runBlocking { col.flush() }
             col.close()
+            // Null ONLY after a clean close: a failed close leaves the old handle alive (its
+            // RocksDB/segment LOCKs held), and nulling here would make the next ensureOpen open
+            // a SECOND handle on the same directory — "lock hold by current process" on every
+            // later data call (hit live in the 2026-09-21 device gate). Keeping the reference
+            // means the next call reuses the live handle instead.
+            collection = null
             lastCloseTimestamp = System.currentTimeMillis()
             ZvecEventRecorder.record { "Collection closed under memory pressure" }
         }.onFailure {
-            Log.w(TAG, "onTrimMemoryComplete: flush/close failed", it)
-            ZvecEventRecorder.record { "trim-close failure: ${it.message}" }
+            Log.w(TAG, "onTrimMemoryComplete: flush/close failed; handle kept for reuse", it)
+            ZvecEventRecorder.record { "trim-close failure (handle kept): ${it.message}" }
         }
-        collection = null
     }
 
     companion object {
@@ -517,8 +515,15 @@ open class ZvecContentStore(
          * stemmer, and the `content_ngram` field (ngram tokenizer) joins as the fuzzy leg of the
          * two-leg weighted search. Measured by the bronze A/B: partial-token Recall@10
          * 0.200 → 0.817, general within allowance (issue 02 B3 grid).
+         * `3` = the Phase 2.1 `last_modified` scalar (2.1-D2). The original plan — runtime
+         * `add_column` self-heal, no wipe — is **dead on the v0.7.0 pin**: the DDL probe
+         * (`LegacyCollectionProbeDeviceTest`, emulator x86_64, 2026-09-21) proved
+         * `zvec_collection_add_column` on a POPULATED collection drops every live doc
+         * (10-doc legacy store → post-DDL docCount 0; the Task-01 "scalar add is safe" finding
+         * does not survive the pin move). H3's rule stands: the marker wipes, and the queue reset
+         * re-ingests everything through the sink — which writes `last_modified` from birth.
          */
-        const val SCHEMA_VERSION = 2
+        const val SCHEMA_VERSION = 3
 
         /**
          * The pure wipe decision — total, disk-free, JVM-tested. [markerContent] is the raw marker
@@ -555,16 +560,16 @@ open class ZvecContentStore(
         private fun options(): CollectionOptions = CollectionOptions()
 
         /**
-         * The screenshot-content schema — v2 (issue 02 B3/B4, the measured decision) + the
-         * Phase 2.1 `last_modified` scalar. **[SCHEMA_VERSION] stays 2 for the 2.1 add**: fresh
-         * creates include the column from birth, and pre-existing v2 collections gain it via the
-         * runtime [healSchemaDdl] scalar add (the Task-01-verified DDL path) on their next open —
-         * both converge on this same schema, so a v2 marker never lies about the FTS/tokenizer
-         * config, which is what the marker exists to prove (the one-bump-per-FTS-change rule is
-         * undisturbed). Existing docs read the column null until the backfill pass fills them
-         * (R8: filters exclude nulls — backfill completes before the date-range chip renders).
+         * The screenshot-content schema — v3 (issue 02 B3/B4's FTS decision + the Phase 2.1
+         * `last_modified` scalar). The 2.1 column ships via the marker bump (SCHEMA_VERSION 3):
+         * the runtime `add_column` alternative was measured DATA-DESTRUCTIVE on populated
+         * collections under the v0.7.0 pin (see the [SCHEMA_VERSION] history), so H3's
+         * wipe-and-reingest is the mechanism — the queue reset re-ingests everything through
+         * the sink, which writes `last_modified` from birth. The one-shot
+         * [io.github.tzhvh.scryernext.repository.LastModifiedBackfill] stays as the null-row
+         * safety net (R8: filters exclude nulls — the date chip renders only once it has run).
          *
-         * v2 fields: `content_hash` PK + `locator` + `content` (FTS: standard + lowercase +
+         * Fields: `content_hash` PK + `locator` + `content` (FTS: standard + lowercase +
          * ascii_folding + english stemmer — the Exact leg) + `content_ngram` (FTS: ngram
          * tokenizer — the Fuzzy leg; partial tokens / OCR fragments) + `collection_id`
          * (INVERT) + `last_modified` (INT64 INVERT — Phase 2.1 2.1-D2). [search] runs the two

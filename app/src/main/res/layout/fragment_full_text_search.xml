@@ -217,6 +217,7 @@
         android:layout_marginStart="@dimen/common_padding_24dp"
         android:layout_marginEnd="@dimen/common_padding_24dp"
         android:orientation="horizontal"
+        android:visibility="gone"
         app:layout_constraintTop_toBottomOf="@id/advancedRegion">
 
         <androidx.appcompat.widget.AppCompatCheckBox

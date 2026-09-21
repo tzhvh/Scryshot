@@ -821,6 +821,14 @@ class ZvecCollection internal constructor(
      * [ZvecErrorCode.ALREADY_EXISTS] — callers self-healing an open path
      * match-and-ignore that code; anything else throws.
      *
+     * **⚠ v0.7.0 pin finding (2026-09-21, device-measured): `add_column` on a
+     * POPULATED collection is DATA-DESTRUCTIVE** — a 10-doc legacy store read
+     * `docCount = 0` immediately after the add (probe in the app module's
+     * androidTest history). The Phase-1 "scalar add is the safe runtime DDL"
+     * note predates this pin and does not survive it. Do NOT use this method
+     * to evolve a populated collection; use a schema-version bump + re-ingest
+     * (the app's marker-wipe doctrine) until the engine fixes the DDL path.
+     *
      * @throws ZvecException on any engine error other than ALREADY_EXISTS.
      */
     suspend fun addColumn(field: FieldSchema, expression: String? = null) {
