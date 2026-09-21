@@ -29,6 +29,7 @@ import io.github.tzhvh.scryernext.ingestion.ZvecWriteSink
 import io.github.tzhvh.scryernext.ingestion.triggers.DiscoveryWorker
 import io.github.tzhvh.scryernext.ingestion.triggers.IngestionSession
 import io.github.tzhvh.scryernext.ingestion.triggers.OnOpenTrigger
+import io.github.tzhvh.scryernext.onboarding.OnboardingPrefs
 
 class ScryerApplication : Application() {
     companion object {
@@ -175,7 +176,7 @@ class ScryerApplication : Application() {
         // ADR 0008 — onboarding state migration runs before any activity can
         // consult the launch gate: capture_page_shown ⇒ onboarding_complete for
         // existing installs, access_model pinned on first run.
-        io.github.tzhvh.scryernext.onboarding.OnboardingPrefs.applyLegacyMigration(this)
+        OnboardingPrefs.applyLegacyMigration(this)
 
         // PROFILING_FRAMEWORK.md §3.10 — StrictMode guardrail, debug-only. Catches accidental
         // main-thread disk/network/Room/zvec calls for free — the bug class that would otherwise

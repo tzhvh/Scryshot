@@ -118,12 +118,16 @@ class SetupHubActivity : AppCompatActivity() {
             MediaAccess.GRANTED -> {
                 bindRowState(binding.mediaState, binding.mediaAction,
                         R.string.setup_hub_state_granted, R.color.primaryTeal, action = null)
+                binding.mediaAction.tag = null
                 binding.mediaPartialNote.visibility = View.GONE
             }
             MediaAccess.PARTIAL -> {
                 bindRowState(binding.mediaState, binding.mediaAction,
                         R.string.setup_hub_state_partial, R.color.errorRed,
                         action = R.string.setup_hub_action_review_photos)
+                // Clear any stale tag from a previous DENIED-permanent render —
+                // otherwise "Review photos" would deep-link to App Details.
+                binding.mediaAction.tag = null
                 binding.mediaPartialNote.visibility = View.VISIBLE
             }
             MediaAccess.DENIED -> {

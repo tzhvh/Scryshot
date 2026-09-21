@@ -414,6 +414,13 @@ class HomeFragment : Fragment(), CoroutineScope {
     }
 
     private fun shouldShowSearchOnboarding(): Boolean {
+        val context = context ?: return false
+        // ADR 0008: the spotlight anchors to the first Home resume *after*
+        // setup — the once-ever flag must not be consumed by a resume that
+        // happens beneath the wizard on first run.
+        if (!OnboardingPrefs.getInstance(context).isOnboardingComplete()) {
+            return false
+        }
         return !(pref?.isSearchOnboardingShown() ?: true)
     }
 

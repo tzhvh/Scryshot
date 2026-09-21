@@ -74,22 +74,20 @@ class OnboardingFlow(
     }
 
     /**
+     * The canonical step order — the single source of truth for both
+     * [spine] (presentation order) and [resolve] (the walk). Two lists would
+     * drift; there is one order.
+     */
+    private val canonicalOrder = listOf(OnboardingStep.WELCOME, OnboardingStep.MEDIA,
+            OnboardingStep.NOTIFICATIONS, OnboardingStep.OVERLAY, OnboardingStep.DONE)
+
+    /**
      * The spine in presentation order, minus steps disabled on this OS:
      * welcome → media (required) → notifications (optional, 33+) →
      * floating button (optional, last) → done.
      */
     fun spine(): List<OnboardingStep> {
-        val steps = ArrayList<OnboardingStep>()
-        steps.add(OnboardingStep.WELCOME)
-        if (mediaStepEnabled) {
-            steps.add(OnboardingStep.MEDIA)
-        }
-        if (notificationsStepEnabled) {
-            steps.add(OnboardingStep.NOTIFICATIONS)
-        }
-        steps.add(OnboardingStep.OVERLAY)
-        steps.add(OnboardingStep.DONE)
-        return steps
+        return canonicalOrder.filter { isStepEnabled(it) }
     }
 
     /** The next spine step after [step]; DONE is terminal (DONE → DONE). */
@@ -118,14 +116,12 @@ class OnboardingFlow(
      * goes straight to [nextAfter] — the caller then resolves that step.
      */
     fun resolve(entry: OnboardingStep): OnboardingStep {
-        val order = listOf(OnboardingStep.WELCOME, OnboardingStep.MEDIA,
-                OnboardingStep.NOTIFICATIONS, OnboardingStep.OVERLAY, OnboardingStep.DONE)
-        var index = order.indexOf(entry)
+        var index = canonicalOrder.indexOf(entry)
         if (index < 0) {
             return OnboardingStep.DONE
         }
-        while (index < order.size - 1) {
-            val step = order[index]
+        while (index < canonicalOrder.size - 1) {
+            val step = canonicalOrder[index]
             if (!isStepEnabled(step) || isStepSatisfied(step)) {
                 index++
             } else {
