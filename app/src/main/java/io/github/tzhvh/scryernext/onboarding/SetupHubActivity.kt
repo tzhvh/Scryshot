@@ -46,6 +46,9 @@ class SetupHubActivity : AppCompatActivity() {
      */
     private var mediaDeniedOnce: Boolean = false
 
+    /** Same latch for the notifications row (drives its Open Settings fallback). */
+    private var notificationsDeniedOnce: Boolean = false
+
     private val readMediaLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
@@ -54,7 +57,10 @@ class SetupHubActivity : AppCompatActivity() {
 
     private val postNotificationsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { _ ->
+    ) { granted ->
+        if (!granted) {
+            notificationsDeniedOnce = true
+        }
         render()
     }
 
@@ -71,6 +77,8 @@ class SetupHubActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         if (savedInstanceState != null) {
             mediaDeniedOnce = savedInstanceState.getBoolean(KEY_MEDIA_DENIED_ONCE, false)
+            notificationsDeniedOnce =
+                    savedInstanceState.getBoolean(KEY_NOTIFICATIONS_DENIED_ONCE, false)
         }
         binding = ActivitySetupHubBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -83,7 +91,9 @@ class SetupHubActivity : AppCompatActivity() {
             }
         }
         binding.notificationsAction.setOnClickListener {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (binding.notificationsAction.tag == TAG_OPEN_SETTINGS) {
+                launchNotificationSettings()
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 postNotificationsLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
             }
         }
@@ -99,6 +109,7 @@ class SetupHubActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean(KEY_MEDIA_DENIED_ONCE, mediaDeniedOnce)
+        outState.putBoolean(KEY_NOTIFICATIONS_DENIED_ONCE, notificationsDeniedOnce)
     }
 
     override fun onResume() {
@@ -161,10 +172,24 @@ class SetupHubActivity : AppCompatActivity() {
         if (PermissionHelper.hasPostNotificationsPermission(this)) {
             bindRowState(binding.notificationsState, binding.notificationsAction,
                     R.string.setup_hub_state_granted, R.color.primaryTeal, action = null)
+            binding.notificationsAction.tag = null
+            return
+        }
+        // Permanent denial: the runtime request would auto-deny without ever
+        // showing UI, so the row falls back to the app's native notification
+        // settings — the only control the OS still offers.
+        val permanent = notificationsDeniedOnce && !shouldShowRequestPermissionRationale(
+                android.Manifest.permission.POST_NOTIFICATIONS)
+        if (permanent) {
+            bindRowState(binding.notificationsState, binding.notificationsAction,
+                    R.string.setup_hub_state_off, R.color.grey50,
+                    action = R.string.setup_hub_action_open_settings)
+            binding.notificationsAction.tag = TAG_OPEN_SETTINGS
         } else {
             bindRowState(binding.notificationsState, binding.notificationsAction,
                     R.string.setup_hub_state_off, R.color.grey50,
                     action = R.string.setup_hub_action_turn_on)
+            binding.notificationsAction.tag = null
         }
     }
 
@@ -209,6 +234,13 @@ class SetupHubActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
+    /** The app's native notification-settings page (POST_NOTIFICATIONS recovery). */
+    private fun launchNotificationSettings() {
+        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        intent.putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+        startActivity(intent)
+    }
+
     /**
      * Backing out while the required grant is still missing records the
      * dismissal — HomeFragment won't re-route for this recurrence (ADR 0008
@@ -225,6 +257,7 @@ class SetupHubActivity : AppCompatActivity() {
 
     companion object {
         private const val KEY_MEDIA_DENIED_ONCE = "setup_hub_media_denied_once"
+        private const val KEY_NOTIFICATIONS_DENIED_ONCE = "setup_hub_notifications_denied_once"
         private const val TAG_OPEN_SETTINGS = "open_settings"
 
         fun start(context: Context) {

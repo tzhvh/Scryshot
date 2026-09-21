@@ -38,8 +38,11 @@ import kotlinx.coroutines.withContext
  * (the only required step) → notifications (optional, API 33+) → floating
  * capture button (optional, last) → done. Launched from `MainActivity` when
  * [OnboardingPrefs.isOnboardingComplete] is false; not dismissible until
- * completed — optional steps are skippable, and the required step's "Not now"
- * continues the wizard (the setup hub owns the missing requirement after).
+ * completed. The overlay step is skippable, the media step's "Not now"
+ * continues the wizard, and the notifications step has **no app-level skip**:
+ * its CTA always surfaces the native consent dialog — that dialog is the only
+ * decision surface (see the postNotifications launcher comment), and either
+ * outcome advances. The setup hub owns missing requirements afterwards.
  *
  * Routing is [OnboardingFlow]'s (pure, JVM-tested); this activity is the
  * view-binding + launcher plumbing around it. All steps are inflated once
@@ -98,7 +101,20 @@ class OnboardingActivity : AppCompatActivity() {
     private val postNotificationsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { _ ->
-        showStep(flow.resolve(currentStep))
+        // Notifications policy (user decision, 2026-09-21): the native dialog
+        // is the ONLY consent surface — the wizard shows it unconditionally
+        // and never offers an app-level skip around it. Once the user has
+        // decided natively (either way), the step advances: grant → resolve
+        // skips forward; deny → nextAfter, no counter-offer, no nag. Our
+        // notification call-paths are permission-uniform either way (notify()
+        // drops silently and the bulk job's dataSync FGS promotion is
+        // unaffected — the notification is merely not displayed), so denial
+        // costs visibility, not lifecycle.
+        if (gates.isNotificationsGranted()) {
+            showStep(flow.resolve(OnboardingStep.NOTIFICATIONS))
+        } else {
+            showStep(flow.nextAfter(OnboardingStep.NOTIFICATIONS))
+        }
     }
 
     /** Shared launcher for the app-details page (permanent-denial recovery). */
@@ -216,9 +232,6 @@ class OnboardingActivity : AppCompatActivity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 postNotificationsLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
             }
-        }
-        notificationsBinding.negativeButton.setOnClickListener {
-            showStep(flow.nextAfter(OnboardingStep.NOTIFICATIONS))
         }
     }
 

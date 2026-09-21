@@ -93,16 +93,8 @@
             android:layout_height="1dp"
             android:background="@color/grey20" />
 
-        <Button
-            android:id="@+id/negative_button"
-            style="@style/OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="@dimen/common_padding_16dp"
-            android:layout_marginEnd="@dimen/common_padding_16dp"
-            android:layout_marginTop="@dimen/common_padding_16dp"
-            android:text="@string/setup_action_not_now" />
-
+        <!-- No app-level skip: the native dialog is the only consent surface
+             (user decision 2026-09-21) — a deny inside it advances the wizard. -->
         <Button
             android:id="@+id/positive_button"
             style="@style/OnboardingPrimaryButton"
