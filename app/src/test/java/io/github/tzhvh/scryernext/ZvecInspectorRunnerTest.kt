@@ -6,6 +6,7 @@
 package io.github.tzhvh.scryernext
 
 import io.github.tzhvh.scryernext.ingestion.ZvecContentStore
+import io.github.tzhvh.scryernext.search.PrecisionMode
 import io.github.tzhvh.scryernext.persistence.ScreenshotDao
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.zvec.CollectionStats
@@ -210,7 +211,7 @@ class ZvecInspectorRunnerTest {
             set(value) { closeTs = value }
         override var lastStatsError: String? = null
 
-        override suspend fun search(matchString: String, topK: Int, filter: String?): List<ZvecDoc> {
+        override suspend fun search(matchString: String, topK: Int, filter: String?, precision: PrecisionMode): List<ZvecDoc> {
             // The benchmark-synth probe (O1) returns a configurable count; other queries return the
             // single hardcoded doc the inspectQuery test asserts against.
             if (matchString.contains("benchmark synthetic")) {

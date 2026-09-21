@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.Flow
 import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.ingestion.Candidate
+import io.github.tzhvh.scryernext.search.PrecisionMode
 import io.github.tzhvh.scryernext.search.RankPolicy
 
 /**
@@ -62,11 +63,13 @@ interface ScreenshotRepository {
         queryText: String,
         policy: RankPolicy = RankPolicy.Blended(),
         filter: String? = null,
+        precision: PrecisionMode = PrecisionMode.Default,
     ): Flow<SearchOutcome>
     suspend fun searchScreenshotList(
         queryText: String,
         policy: RankPolicy = RankPolicy.Blended(),
         filter: String? = null,
+        precision: PrecisionMode = PrecisionMode.Default,
     ): SearchOutcome
 
     /**

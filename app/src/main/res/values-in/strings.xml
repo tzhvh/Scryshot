@@ -136,6 +136,12 @@
   <string name="search_date_label">Tanggal</string>
   <string name="search_date_any">Semua</string>
   <string name="search_date_clear">Hapus</string>
+  <string name="search_precision_exact">Eksak</string>
+  <string name="search_precision_balanced">Seimbang</string>
+  <string name="search_precision_fuzzy">Kabur</string>
+  <string name="search_precision_exact_hint">Hanya kata utuh.</string>
+  <string name="search_precision_balanced_hint">Direkomendasikan — menoleransi kecocokan sebagian.</string>
+  <string name="search_precision_fuzzy_hint">Menemukan fragmen dan keanehan OCR.</string>
   <string name="search_mode_list">Daftar</string>
   <string name="search_mode_grid">Kisi</string>
   <string name="search_zero_title">Tidak ada hasil untuk \'%1$s\'</string>

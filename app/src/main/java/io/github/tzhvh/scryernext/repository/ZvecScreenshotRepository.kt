@@ -10,6 +10,7 @@ import io.github.tzhvh.scryernext.ZvecEventRecorder
 import io.github.tzhvh.scryernext.ingestion.ZvecContentStore
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.search.DefaultRankStage
+import io.github.tzhvh.scryernext.search.PrecisionMode
 import io.github.tzhvh.scryernext.search.RankPolicy
 import io.github.tzhvh.scryernext.search.RankStage
 import io.github.tzhvh.scryernext.zvec.ZvecException
@@ -89,16 +90,18 @@ class ZvecScreenshotRepository(
         queryText: String,
         policy: RankPolicy,
         filter: String?,
+        precision: PrecisionMode,
     ): Flow<SearchOutcome> = flow {
-        emit(searchZvecAndBridge(queryText, policy, filter))
+        emit(searchZvecAndBridge(queryText, policy, filter, precision))
     }.flowOn(Dispatchers.IO)
 
     override suspend fun searchScreenshotList(
         queryText: String,
         policy: RankPolicy,
         filter: String?,
+        precision: PrecisionMode,
     ): SearchOutcome =
-        withContext(Dispatchers.IO) { searchZvecAndBridge(queryText, policy, filter) }
+        withContext(Dispatchers.IO) { searchZvecAndBridge(queryText, policy, filter, precision) }
 
     /**
      * The shared zvec-FTS-then-batched-Room-lookup body for both the Flow and the List entry points.
@@ -119,6 +122,7 @@ class ZvecScreenshotRepository(
         queryText: String,
         policy: RankPolicy,
         filter: String?,
+        precision: PrecisionMode,
     ): SearchOutcome {
         val trimmed = queryText.trim()
         if (trimmed.isEmpty()) return SearchOutcome.Results(emptyList())
@@ -130,7 +134,7 @@ class ZvecScreenshotRepository(
 
         // 2.1-D10: the engine's parse rejection is a recoverable state, never a Flow crash.
         val docs = try {
-            store.search(matchString, filter = filter)
+            store.search(matchString, filter = filter, precision = precision)
         } catch (e: ZvecException) {
             ZvecEventRecorder.record { "Query error (engine rejected match string): ${e.message?.take(160)}" }
             return SearchOutcome.QueryError(e)

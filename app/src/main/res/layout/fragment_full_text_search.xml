@@ -84,6 +84,66 @@
                     android:orientation="horizontal" />
             </HorizontalScrollView>
 
+            <!-- Phase 2.1 (2.1-D13): the precision dial — Exact / Balanced / Fuzzy, with a
+                 one-line explainer that previews the effect, never the mechanism. -->
+            <LinearLayout
+                android:id="@+id/precisionRow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingTop="4dp">
+
+                <TextView
+                    android:id="@+id/precisionExact"
+                    style="@style/Subtitle1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_filter_chip"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:text="@string/search_precision_exact"
+                    android:textColor="@color/filter_chip_text" />
+
+                <TextView
+                    android:id="@+id/precisionBalanced"
+                    style="@style/Subtitle1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_filter_chip"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:text="@string/search_precision_balanced"
+                    android:textColor="@color/filter_chip_text" />
+
+                <TextView
+                    android:id="@+id/precisionFuzzy"
+                    style="@style/Subtitle1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_filter_chip"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:text="@string/search_precision_fuzzy"
+                    android:textColor="@color/filter_chip_text" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/precisionHint"
+                style="@style/Body2"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingTop="4dp"
+                android:text="@string/search_precision_balanced_hint"
+                android:textColor="@color/grey50" />
+
             <!-- Phase 2.1 step 6: date-range push-down. Renders only after the last_modified
                  backfill completes (R8 gate) — a visible-but-empty date filter is dead UI. -->
             <LinearLayout

@@ -12,6 +12,8 @@ import io.github.tzhvh.scryernext.zvec.CollectionSchema
 import io.github.tzhvh.scryernext.zvec.FieldSchema
 import io.github.tzhvh.scryernext.zvec.FieldType
 import io.github.tzhvh.scryernext.zvec.IndexParams
+import io.github.tzhvh.scryernext.search.PrecisionMode
+import io.github.tzhvh.scryernext.zvec.QueryRequest
 import io.github.tzhvh.scryernext.zvec.SubQuery
 import io.github.tzhvh.scryernext.zvec.WeightedReranker
 import io.github.tzhvh.scryernext.zvec.Zvec
@@ -411,6 +413,10 @@ open class ZvecContentStore(
      * caller's pre-shape supplies prefix wildcards / exclusions — both legs receive the
      * same string). A no-match query returns an empty list, not an error.
      *
+     * Phase 2.1 (2.1-D13): [precision] selects the call per-request — Exact (single-leg
+     * stemmed), Balanced (the default; the B3-measured 1.0/0.3 weighted fusion), Fuzzy (ngram
+     * leg shifted up; calibration is Phase 4 work). No schema change switches the dial.
+     *
      * Phase 2.1 step 5: [filter] is the push-down expression (scalar IN / range clauses —
      * `SearchFilters` builds it; user-derived values MUST arrive pre-escaped via
      * `ZvecFilters.escapeFilterValue`). Applied BEFORE search by the engine — corpus-wide
@@ -422,21 +428,29 @@ open class ZvecContentStore(
         matchString: String,
         topK: Int = DEFAULT_SEARCH_TOPK,
         filter: String? = null,
+        precision: PrecisionMode = PrecisionMode.Default,
     ): List<ZvecDoc> {
         ensureOpen()
+        // Phase 2.1 (2.1-D13): the precision dial is per-request — [PrecisionMode.toQuerySpec]
+        // selects the call (single-leg Exact vs weighted two-leg fusion), this body executes it.
+        val spec = precision.toQuerySpec()
         return withContext(Dispatchers.IO) {
-            collection!!.hybridSearch(
-                queries = listOf(
-                    SubQuery(field = FIELD_CONTENT, fts = matchString),
-                    SubQuery(field = FIELD_CONTENT_NGRAM, fts = matchString),
-                ),
-                topK = topK,
-                reranker = WeightedReranker(
-                    weights = mapOf(FIELD_CONTENT to 1.0f, FIELD_CONTENT_NGRAM to 0.3f),
-                ),
-                filter = filter,
-                outputFields = listOf(FIELD_LOCATOR, FIELD_CONTENT),
-            )
+            val weights = spec.weights
+            if (weights == null) {
+                // Exact: the single-legged call on the stemmed content field only.
+                collection!!.query(
+                    QueryRequest(field = FIELD_CONTENT, fts = matchString, topK = topK, filter = filter),
+                    outputFields = listOf(FIELD_LOCATOR, FIELD_CONTENT),
+                )
+            } else {
+                collection!!.hybridSearch(
+                    queries = spec.legFields.map { SubQuery(field = it, fts = matchString) },
+                    topK = topK,
+                    reranker = WeightedReranker(weights = weights),
+                    filter = filter,
+                    outputFields = listOf(FIELD_LOCATOR, FIELD_CONTENT),
+                )
+            }
         }
     }
 

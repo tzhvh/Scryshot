@@ -244,6 +244,13 @@
     <string name="search_date_label">Dates</string>
     <string name="search_date_any">Any</string>
     <string name="search_date_clear">Clear</string>
+    <!-- Precision dial (Phase 2.1, 2.1-D13): explainer previews the effect, never the mechanism -->
+    <string name="search_precision_exact">Exact</string>
+    <string name="search_precision_balanced">Balanced</string>
+    <string name="search_precision_fuzzy">Fuzzy</string>
+    <string name="search_precision_exact_hint">Whole words only — punctuation-perfect text wins.</string>
+    <string name="search_precision_balanced_hint">Recommended — tolerates partial matches.</string>
+    <string name="search_precision_fuzzy_hint">Finds fragments and OCR quirks.</string>
     <!-- View-mode toggle (Phase 2.1 step 8): shows the mode you'd switch TO -->
     <string name="search_mode_list">List</string>
     <string name="search_mode_grid">Grid</string>

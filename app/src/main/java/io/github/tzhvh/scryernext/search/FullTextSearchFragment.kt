@@ -66,6 +66,9 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
      */
     private var rankPolicy: RankPolicy = RankPolicy.Blended()
 
+    /** Phase 2.1 (2.1-D13): the precision dial — per-request, default Balanced (the B4 ship pick). */
+    private var precisionMode: PrecisionMode = PrecisionMode.Default
+
     /**
      * Phase 2.1 step 5: the filter-chip state (collection multi-select; date range joins in step 6,
      * gated on the backfill). Composed into the push-down expression on every search.
@@ -225,6 +228,9 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
             searchFilters = searchFilters.withDateRange(null, null)
             onDateRangeChanged()
         }
+        binding.precisionExact.setOnClickListener { selectPrecision(PrecisionMode.Exact) }
+        binding.precisionBalanced.setOnClickListener { selectPrecision(PrecisionMode.Balanced) }
+        binding.precisionFuzzy.setOnClickListener { selectPrecision(PrecisionMode.Fuzzy) }
         binding.emptyRelaxButton.setOnClickListener {
             // The zero-results one-tap relax: drop every active filter and re-run.
             searchFilters = SearchFilters()
@@ -304,7 +310,7 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
         searchJob = viewLifecycleOwner.lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 val filter = searchFilters.takeIf { !it.isEmpty }?.toFilterExpression()
-                viewModel.searchScreenshots(query, rankPolicy, filter).collect { outcome ->
+                viewModel.searchScreenshots(query, rankPolicy, filter, precisionMode).collect { outcome ->
                     // 2.1-D10: a parse error is a recoverable state — the notice shows, the query
                     // stays in the field, and the next submission replaces the state.
                     val isError = outcome is SearchOutcome.QueryError
@@ -380,6 +386,31 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
         binding.sortToggle.text = getString(R.string.search_sort_label, getString(label))
     }
 
+    /**
+     * Phase 2.1 (2.1-D13) — the precision dial: three positions with a one-line explainer that
+     * previews the effect, never the mechanism. Changing position re-runs the search instantly
+     * (per-request dial — no schema change, no re-ingest).
+     */
+    private fun updatePrecisionDial() {
+        val positions = listOf(
+            Triple(binding.precisionExact, PrecisionMode.Exact, R.string.search_precision_exact_hint),
+            Triple(binding.precisionBalanced, PrecisionMode.Balanced, R.string.search_precision_balanced_hint),
+            Triple(binding.precisionFuzzy, PrecisionMode.Fuzzy, R.string.search_precision_fuzzy_hint),
+        )
+        for ((view, mode, hint) in positions) {
+            val selected = mode == precisionMode
+            view.isSelected = selected
+            if (selected) binding.precisionHint.setText(hint)
+        }
+    }
+
+    private fun selectPrecision(mode: PrecisionMode) {
+        if (mode == precisionMode) return
+        precisionMode = mode
+        updatePrecisionDial()
+        startSearchJob(binding.searchEditText.text.toString())
+    }
+
     /** Pushes the current view mode + snippet payload into the adapter (step 8). */
     private fun applyViewModeToAdapter() {
         screenshotAdapter.listMode = isListMode
@@ -393,12 +424,11 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
      * something to offer (collection chips exist); an empty corpus must not show a dead toggle.
      */
     private fun updateAdvancedRegion() {
-        binding.advancedRegion.visibility = if (collectionList.isEmpty()) View.GONE else View.VISIBLE
-        binding.advancedPanel.visibility = if (isAdvancedOpen && collectionList.isNotEmpty()) {
-            View.VISIBLE
-        } else {
-            View.GONE
-        }
+        // Since the precision dial joined the panel (2.1-D13) the Advanced control always has
+        // something to offer; the chip row inside still renders only when collections exist.
+        binding.advancedRegion.visibility = View.VISIBLE
+        binding.advancedPanel.visibility = if (isAdvancedOpen) View.VISIBLE else View.GONE
+        binding.collectionChipRow.visibility = if (collectionList.isEmpty()) View.GONE else View.VISIBLE
         val active = if (searchFilters.isEmpty) 0 else
             searchFilters.collectionIds.size + (if (searchFilters.fromMillis != null || searchFilters.toMillis != null) 1 else 0)
         binding.advancedToggle.text = if (active > 0) {
@@ -407,6 +437,7 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
             getString(R.string.search_advanced_label)
         }
         updateDateRangeControls()
+        updatePrecisionDial()
     }
 
     /**
@@ -664,7 +695,7 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
         searchJob = viewLifecycleOwner.lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 val filter = searchFilters.takeIf { !it.isEmpty }?.toFilterExpression()
-                viewModel.searchScreenshots("", rankPolicy, filter).collect { outcome ->
+                viewModel.searchScreenshots("", rankPolicy, filter, precisionMode).collect { outcome ->
                     screenshotAdapter.screenshotList =
                         (outcome as? SearchOutcome.Results)?.rows ?: emptyList()
                     screenshotAdapter.notifyDataSetChanged()
