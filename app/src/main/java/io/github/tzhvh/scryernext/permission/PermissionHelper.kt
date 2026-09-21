@@ -43,9 +43,13 @@ class PermissionHelper {
         }
 
         /**
-         * The manifest-declared permission string to request at runtime, based on API level.
+         * The primary media permission for this API level — the string to
+         * pass to `shouldShowRequestPermissionRationale` (rationale is a
+         * per-permission check; the request array lives in
+         * [getReadMediaPermissionStrings]). Named for its role, not its
+         * shape, so it can't be confused with the plural one character away.
          */
-        fun getReadMediaPermissionString(): String {
+        fun getPrimaryReadMediaPermission(): String {
             return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 android.Manifest.permission.READ_MEDIA_IMAGES
             } else {

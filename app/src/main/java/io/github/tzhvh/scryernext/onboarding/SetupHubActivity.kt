@@ -49,6 +49,15 @@ class SetupHubActivity : AppCompatActivity() {
     /** Same latch for the notifications row (drives its Open Settings fallback). */
     private var notificationsDeniedOnce: Boolean = false
 
+    /**
+     * Non-null only when HomeFragment auto-routed here for a degraded
+     * required grant — such visits record the nudge dismissal on exit;
+     * voluntary (Settings) visits never do.
+     */
+    private val nudgeSignature: String? by lazy {
+        intent?.getStringExtra(EXTRA_NUDGE_SIGNATURE)
+    }
+
     private val readMediaLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
@@ -68,7 +77,7 @@ class SetupHubActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { _ ->
         if (PermissionHelper.hasOverlayPermission(this)) {
-            onOverlayGranted()
+            SetupActions.enableFloatingButton(this)
         }
         render()
     }
@@ -84,14 +93,14 @@ class SetupHubActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         binding.mediaAction.setOnClickListener {
-            if (binding.mediaAction.tag == TAG_OPEN_SETTINGS) {
-                launchAppDetailsSettings()
+            if (binding.mediaAction.tag == SetupRowAction.OPEN_SETTINGS) {
+                SetupActions.openAppDetails(this)
             } else {
                 requestMediaAccess()
             }
         }
         binding.notificationsAction.setOnClickListener {
-            if (binding.notificationsAction.tag == TAG_OPEN_SETTINGS) {
+            if (binding.notificationsAction.tag == SetupRowAction.OPEN_SETTINGS) {
                 launchNotificationSettings()
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 postNotificationsLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
@@ -129,7 +138,7 @@ class SetupHubActivity : AppCompatActivity() {
             MediaAccess.GRANTED -> {
                 bindRowState(binding.mediaState, binding.mediaAction,
                         R.string.setup_hub_state_granted, R.color.primaryTeal, action = null)
-                binding.mediaAction.tag = null
+                binding.mediaAction.tag = SetupRowAction.NONE
                 binding.mediaPartialNote.visibility = View.GONE
             }
             MediaAccess.PARTIAL -> {
@@ -138,7 +147,9 @@ class SetupHubActivity : AppCompatActivity() {
                         action = R.string.setup_hub_action_review_photos)
                 // Clear any stale tag from a previous DENIED-permanent render —
                 // otherwise "Review photos" would deep-link to App Details.
-                binding.mediaAction.tag = null
+                binding.mediaAction.tag = SetupRowAction.NONE
+                binding.mediaPartialNote.text = getString(R.string.setup_hub_media_partial_note,
+                        getString(R.string.app_full_name))
                 binding.mediaPartialNote.visibility = View.VISIBLE
             }
             MediaAccess.DENIED -> {
@@ -148,16 +159,16 @@ class SetupHubActivity : AppCompatActivity() {
                 binding.mediaPartialNote.visibility = View.GONE
 
                 val permanent = mediaDeniedOnce && !shouldShowRequestPermissionRationale(
-                        PermissionHelper.getReadMediaPermissionString())
+                        PermissionHelper.getPrimaryReadMediaPermission())
                 if (permanent) {
                     binding.mediaAction.text = getString(R.string.setup_hub_action_open_settings)
-                    binding.mediaAction.tag = TAG_OPEN_SETTINGS
+                    binding.mediaAction.tag = SetupRowAction.OPEN_SETTINGS
                     binding.mediaPartialNote.visibility = View.VISIBLE
                     binding.mediaPartialNote.text =
                             getString(R.string.setup_hub_media_permanent_note)
                 } else {
                     binding.mediaAction.text = getString(R.string.setup_hub_action_set_up)
-                    binding.mediaAction.tag = null
+                    binding.mediaAction.tag = SetupRowAction.NONE
                 }
             }
         }
@@ -172,7 +183,7 @@ class SetupHubActivity : AppCompatActivity() {
         if (PermissionHelper.hasPostNotificationsPermission(this)) {
             bindRowState(binding.notificationsState, binding.notificationsAction,
                     R.string.setup_hub_state_granted, R.color.primaryTeal, action = null)
-            binding.notificationsAction.tag = null
+            binding.notificationsAction.tag = SetupRowAction.NONE
             return
         }
         // Permanent denial: the runtime request would auto-deny without ever
@@ -184,12 +195,12 @@ class SetupHubActivity : AppCompatActivity() {
             bindRowState(binding.notificationsState, binding.notificationsAction,
                     R.string.setup_hub_state_off, R.color.grey50,
                     action = R.string.setup_hub_action_open_settings)
-            binding.notificationsAction.tag = TAG_OPEN_SETTINGS
+            binding.notificationsAction.tag = SetupRowAction.OPEN_SETTINGS
         } else {
             bindRowState(binding.notificationsState, binding.notificationsAction,
                     R.string.setup_hub_state_off, R.color.grey50,
                     action = R.string.setup_hub_action_turn_on)
-            binding.notificationsAction.tag = null
+            binding.notificationsAction.tag = SetupRowAction.NONE
         }
     }
 
@@ -220,20 +231,6 @@ class SetupHubActivity : AppCompatActivity() {
         readMediaLauncher.launch(PermissionHelper.getReadMediaPermissionStrings())
     }
 
-    /** A hub grant mirrors Settings' own toggle path (see OnboardingActivity). */
-    private fun onOverlayGranted() {
-        ScryerApplication.getSettingsRepository().floatingEnable = true
-        val intent = Intent(this, ScryerService::class.java)
-        intent.action = ScryerService.ACTION_ENABLE_CAPTURE_BUTTON
-        startService(intent)
-    }
-
-    private fun launchAppDetailsSettings() {
-        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-        intent.data = Uri.fromParts("package", packageName, null)
-        startActivity(intent)
-    }
-
     /** The app's native notification-settings page (POST_NOTIFICATIONS recovery). */
     private fun launchNotificationSettings() {
         val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
@@ -241,27 +238,40 @@ class SetupHubActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
-    /**
-     * Backing out while the required grant is still missing records the
-     * dismissal — HomeFragment won't re-route for this recurrence (ADR 0008
-     * §4). Resolving the condition clears the signature, so a later
-     * revocation re-nudges.
-     */
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        if (PermissionHelper.getMediaAccess(this) == MediaAccess.DENIED) {
-            OnboardingPrefs.getInstance(this).dismissHubNudge()
+    override fun onDestroy() {
+        // ADR 0008 §4 — a *nudged* visit records the dismissal on any exit
+        // (back, gesture nav, predictive back) while its condition persists,
+        // so HomeFragment won't re-route for this recurrence. A voluntary
+        // Settings visit never records one. Resolving the condition clears
+        // the signature (Home does this on resume), so a later recurrence
+        // re-nudges.
+        val signature = nudgeSignature
+        if (isFinishing && signature != null) {
+            val prefs = OnboardingPrefs.getInstance(this)
+            when (PermissionHelper.getMediaAccess(this)) {
+                MediaAccess.DENIED -> prefs.dismissHubNudge(OnboardingPrefs.NUDGE_MEDIA_DENIED)
+                MediaAccess.PARTIAL -> prefs.dismissHubNudge(OnboardingPrefs.NUDGE_MEDIA_PARTIAL)
+                else -> prefs.clearHubNudge()
+            }
         }
-        finish()
+        super.onDestroy()
     }
 
     companion object {
         private const val KEY_MEDIA_DENIED_ONCE = "setup_hub_media_denied_once"
         private const val KEY_NOTIFICATIONS_DENIED_ONCE = "setup_hub_notifications_denied_once"
-        private const val TAG_OPEN_SETTINGS = "open_settings"
+        private const val EXTRA_NUDGE_SIGNATURE = "setup_hub_nudge_signature"
 
+        /** Voluntary visit (Settings entry point) — never records a dismissal. */
         fun start(context: Context) {
             context.startActivity(Intent(context, SetupHubActivity::class.java))
+        }
+
+        /** Auto-routed visit (revocation re-entry) — records the dismissal on exit. */
+        fun startNudged(context: Context, signature: String) {
+            val intent = Intent(context, SetupHubActivity::class.java)
+            intent.putExtra(EXTRA_NUDGE_SIGNATURE, signature)
+            context.startActivity(intent)
         }
     }
 }

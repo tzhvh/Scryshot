@@ -312,7 +312,7 @@
     <string name="setup_preview_select_all">Select all</string>
     <string name="setup_preview_select_photos">Select photos</string>
 
-    <string name="setup_hub_step_label">Scryshot</string>
+    <string name="setup_hub_step_label" translatable="false">@string/app_full_name</string>
     <string name="setup_hub_title">Setup status</string>
     <string name="setup_hub_media_name">Media access</string>
     <string name="setup_hub_notifications_name">Notifications</string>
@@ -329,7 +329,7 @@
     <string name="setup_hub_state_not_granted">Not granted</string>
     <string name="setup_hub_state_on">On</string>
     <string name="setup_hub_state_off">Off</string>
-    <string name="setup_hub_media_partial_note">Scryshot can only see the photos you selected — some screenshots may be missing. Review your selection to include all of them.</string>
+    <string name="setup_hub_media_partial_note">%1$s can only see the photos you selected — some screenshots may be missing. Review your selection to include all of them.</string>
     <string name="setup_hub_media_permanent_note">Android has blocked this permission. Re-enable it from the Android Settings app.</string>
     <string name="setup_hub_privacy_footer">All text recognition runs entirely on your device. Nothing is uploaded anywhere.</string>
     <string name="settings_list_setup">Setup &amp; permissions</string>

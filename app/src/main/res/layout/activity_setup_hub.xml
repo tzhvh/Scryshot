@@ -109,8 +109,7 @@
                     android:paddingEnd="@dimen/common_padding_16dp"
                     android:paddingBottom="@dimen/common_padding_16dp"
                     android:textColor="@color/grey60"
-                    android:visibility="gone"
-                    android:text="@string/setup_hub_media_partial_note" />
+                    android:visibility="gone" />
 
                 <View
                     android:layout_width="match_parent"

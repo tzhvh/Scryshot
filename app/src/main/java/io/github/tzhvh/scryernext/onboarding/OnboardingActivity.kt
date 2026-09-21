@@ -7,17 +7,14 @@ package io.github.tzhvh.scryernext.onboarding
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import io.github.tzhvh.scryernext.R
 import io.github.tzhvh.scryernext.ScryerApplication
-import io.github.tzhvh.scryernext.ScryerService
 import io.github.tzhvh.scryernext.databinding.ActivityOnboardingBinding
 import io.github.tzhvh.scryernext.databinding.OnboardingStepDoneBinding
 import io.github.tzhvh.scryernext.databinding.OnboardingStepMediaBinding
@@ -25,7 +22,6 @@ import io.github.tzhvh.scryernext.databinding.OnboardingStepNotificationsBinding
 import io.github.tzhvh.scryernext.databinding.OnboardingStepOverlayBinding
 import io.github.tzhvh.scryernext.databinding.OnboardingStepWelcomeBinding
 import io.github.tzhvh.scryernext.filemonitor.ExternalScreenshotSync
-import io.github.tzhvh.scryernext.filemonitor.ScreenshotFetcher
 import io.github.tzhvh.scryernext.permission.MediaAccess
 import io.github.tzhvh.scryernext.permission.PermissionHelper
 import kotlinx.coroutines.Dispatchers
@@ -117,20 +113,11 @@ class OnboardingActivity : AppCompatActivity() {
         }
     }
 
-    /** Shared launcher for the app-details page (permanent-denial recovery). */
-    private val settingsLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { _ ->
-        // Settings result codes are unreliable — re-derive on return
-        // (the old flow's overlayPermissionLauncher discipline).
-        showStep(flow.resolve(currentStep))
-    }
-
     private val overlaySettingsLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { _ ->
         if (gates.isOverlayGranted()) {
-            onOverlayGranted()
+            SetupActions.enableFloatingButton(this)
         }
         showStep(flow.resolve(currentStep))
     }
@@ -211,7 +198,7 @@ class OnboardingActivity : AppCompatActivity() {
                 getString(R.string.app_full_name))
         mediaBinding.positiveButton.setOnClickListener {
             when (mediaBinding.positiveButton.tag) {
-                TAG_OPEN_SETTINGS -> launchAppDetailsSettings()
+                SetupRowAction.OPEN_SETTINGS -> SetupActions.openAppDetails(this)
                 else -> requestMediaAccess()
             }
         }
@@ -254,7 +241,8 @@ class OnboardingActivity : AppCompatActivity() {
 
     private fun bindDone() {
         doneBinding.actionButton.setOnClickListener {
-            completeOnboarding(startBulk = doneBinding.actionButton.tag == TAG_START_BULK)
+            completeOnboarding(
+                    startBulk = doneBinding.actionButton.tag == DoneAction.START_BULK)
         }
     }
 
@@ -269,10 +257,10 @@ class OnboardingActivity : AppCompatActivity() {
 
         when (step) {
             OnboardingStep.MEDIA -> renderMedia()
-            OnboardingStep.NOTIFICATIONS -> renderNotifications()
-            OnboardingStep.OVERLAY -> renderOverlay()
+            // NOTIFICATIONS and OVERLAY render statically — their launcher
+            // callbacks and skip handlers drive the transitions.
+            OnboardingStep.NOTIFICATIONS, OnboardingStep.OVERLAY, OnboardingStep.WELCOME -> Unit
             OnboardingStep.DONE -> renderDone()
-            OnboardingStep.WELCOME -> Unit
         }
     }
 
@@ -300,33 +288,27 @@ class OnboardingActivity : AppCompatActivity() {
             mediaBinding.notice.visibility = View.GONE
             mediaBinding.negativeButton.visibility = View.GONE
             mediaBinding.positiveButton.text = getString(R.string.setup_media_action_allow)
-            mediaBinding.positiveButton.tag = null
+            mediaBinding.positiveButton.tag = SetupRowAction.NONE
             return
         }
 
         val permanent = !shouldShowRequestPermissionRationale(
-                PermissionHelper.getReadMediaPermissionString())
+                PermissionHelper.getPrimaryReadMediaPermission())
         if (permanent) {
             mediaBinding.notice.text = getString(R.string.setup_media_permanent_notice, appName)
             mediaBinding.positiveButton.text = getString(R.string.setup_media_permanent_action)
-            mediaBinding.positiveButton.tag = TAG_OPEN_SETTINGS
+            mediaBinding.positiveButton.tag = SetupRowAction.OPEN_SETTINGS
         } else {
             mediaBinding.notice.text = getString(R.string.setup_media_declined_notice, appName)
             mediaBinding.positiveButton.text = getString(R.string.setup_media_declined_retry)
-            mediaBinding.positiveButton.tag = null
+            mediaBinding.positiveButton.tag = SetupRowAction.NONE
         }
         mediaBinding.notice.visibility = View.VISIBLE
         mediaBinding.negativeButton.visibility = View.VISIBLE
     }
 
-    private fun renderNotifications() {
-        // resolve guarantees we only render when the grant is missing; the
-        // allow/Not-now pair is static — denial just keeps the step on screen.
-    }
-
-    private fun renderOverlay() {
-        // Static step; the launcher's return path re-derives via resolve().
-    }
+    // NOTIFICATIONS and OVERLAY render statically — their launcher callbacks
+    // and skip handlers drive the transitions.
 
     private fun renderDone() {
         if (doneCountStarted) {
@@ -339,13 +321,24 @@ class OnboardingActivity : AppCompatActivity() {
         doneBinding.actionButton.visibility = View.GONE
         doneBinding.countProgress.visibility = View.VISIBLE
 
-        // PRD §3.5: count unindexed candidates on entering the done screen —
-        // the ScreenshotFetcher query, off the main thread. A denied media
-        // grant degrades to an empty list (the fetcher's SecurityException
-        // path), which is exactly the N = 0 branch.
+        // PRD §3.5: count *unindexed* candidates on entering the done screen.
+        // The sync runs first (inserting gallery rows — the ingestion work
+        // queue), then the count reads `processed = false` rows: exactly what
+        // "Start indexing" will ingest, not every fetchable screenshot. A
+        // denied media grant degrades to an empty fetch — the N = 0 branch.
         doneCountJob = lifecycleScope.launch {
             val count = withContext(Dispatchers.IO) {
-                ScreenshotFetcher().fetchScreenshots(applicationContext).size
+                runCatching {
+                    val repository = ScryerApplication.getScreenshotRepository()
+                    ExternalScreenshotSync(
+                            applicationContext, repository,
+                            pruneUnreadable = gates.mediaAccess() == MediaAccess.GRANTED
+                    ).sync()
+                    repository.getUnprocessedScreenshotList().size
+                }.getOrElse {
+                    android.util.Log.w("OnboardingActivity", "corpus count failed", it)
+                    0
+                }
             }
             if (currentStep != OnboardingStep.DONE) {
                 return@launch
@@ -356,12 +349,12 @@ class OnboardingActivity : AppCompatActivity() {
                 doneBinding.body.text = resources.getQuantityString(
                         R.plurals.setup_done_corpus, count, count, appName)
                 doneBinding.actionButton.text = getString(R.string.setup_done_action_index)
-                doneBinding.actionButton.tag = TAG_START_BULK
+                doneBinding.actionButton.tag = DoneAction.START_BULK
             } else {
                 doneBinding.body.text = getString(R.string.setup_done_empty, appName)
                 doneBinding.actionButton.text =
                         getString(R.string.setup_done_action_enter, appName)
-                doneBinding.actionButton.tag = null
+                doneBinding.actionButton.tag = DoneAction.ENTER
             }
             doneBinding.actionButton.visibility = View.VISIBLE
         }
@@ -381,43 +374,14 @@ class OnboardingActivity : AppCompatActivity() {
     private fun completeOnboarding(startBulk: Boolean) {
         doneCountJob?.cancel()
         OnboardingPrefs.getInstance(this).setOnboardingComplete()
-        doneBinding.actionButton.isEnabled = false
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    ExternalScreenshotSync(applicationContext,
-                            ScryerApplication.getScreenshotRepository()).sync()
-                }.onFailure {
-                    android.util.Log.w("OnboardingActivity", "pre-bulk sync failed", it)
-                }
-            }
-            if (startBulk) {
-                // The existing user-initiated bulk trigger (CONTEXT.md's
-                // trigger model) — progress surfaces via the banner/notification
-                // machinery.
-                ScryerApplication.getIngestionSession().startBulk()
-            }
-            finish()
+        if (startBulk) {
+            // The existing user-initiated bulk trigger (CONTEXT.md's trigger
+            // model) — progress surfaces via the banner/notification machinery.
+            // The work queue (unprocessed rows) was populated by renderDone's
+            // sync; nothing further to prepare here.
+            ScryerApplication.getIngestionSession().startBulk()
         }
-    }
-
-    /**
-     * A wizard grant mirrors Settings' own toggle path: persist
-     * `floatingEnable` through the repository (the switch observes it) and
-     * start the service action that actually mounts the button
-     * (`ScryerService.initFloatingButton` gates on both).
-     */
-    private fun onOverlayGranted() {
-        ScryerApplication.getSettingsRepository().floatingEnable = true
-        val intent = Intent(this, ScryerService::class.java)
-        intent.action = ScryerService.ACTION_ENABLE_CAPTURE_BUTTON
-        startService(intent)
-    }
-
-    private fun launchAppDetailsSettings() {
-        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-        intent.data = Uri.fromParts("package", packageName, null)
-        settingsLauncher.launch(intent)
+        finish()
     }
 
     /**
@@ -431,13 +395,13 @@ class OnboardingActivity : AppCompatActivity() {
         // Deliberately not calling super.
     }
 
+    /** The done CTA's intent, typed instead of smuggled through tag strings. */
+    private enum class DoneAction { ENTER, START_BULK }
+
     companion object {
         private const val KEY_STEP = "onboarding_step"
         private const val KEY_MEDIA_DIALOG_SHOWN = "onboarding_media_dialog_shown"
         private const val KEY_DONE_COUNT_STARTED = "onboarding_done_count_started"
-
-        private const val TAG_OPEN_SETTINGS = "open_settings"
-        private const val TAG_START_BULK = "start_bulk"
 
         fun start(context: Context) {
             context.startActivity(Intent(context, OnboardingActivity::class.java))

@@ -440,24 +440,29 @@ class HomeFragment : Fragment(), CoroutineScope {
      */
     private fun syncExternalScreenshotsIfPermitted() {
         val context = context ?: return
-        if (PermissionHelper.getMediaAccess(context) == MediaAccess.DENIED) {
+        val access = PermissionHelper.getMediaAccess(context)
+        if (access == MediaAccess.DENIED) {
             // Pointless query — the fetcher would degrade to an empty list.
             return
         }
         launch {
-            checkNewScreenshots()
+            checkNewScreenshots(pruneUnreadable = access == MediaAccess.GRANTED)
         }
     }
 
     /**
      * ADR 0008 — the enable-service re-prompt, re-homed from `onWelcomeDone`
-     * (whose only trigger died with the welcome screen). Flag-gated as before:
-     * `prompt_service_enable` is set by ScryerService's notification
-     * soft-stop and cleared here when shown (or when the service is enabled),
-     * so this fires once per condition — now including after a soft-disable,
-     * which the welcome-click anchor could never do.
+     * (whose only trigger died with the welcome screen). Flag-gated: once per
+     * soft-disable (`prompt_service_enable` is set by ScryerService's
+     * notification soft-stop and cleared when shown or when the service is
+     * enabled) — and only after setup completes, so a partially-onboarded
+     * upgrade never raises the dialog beneath the wizard.
      */
     private fun promptEnableServiceIfNeeded() {
+        val context = context ?: return
+        if (!OnboardingPrefs.getInstance(context).isOnboardingComplete()) {
+            return
+        }
         if (shouldPromptEnableService() && isDialogAllowed(PREF_SHOW_ENABLE_SERVICE_DIALOG)) {
             showEnableServiceDialog()
         }
@@ -471,10 +476,11 @@ class HomeFragment : Fragment(), CoroutineScope {
     }
 
     /**
-     * ADR 0008 §4, entry point 1 — revocation re-entry: a missing *required*
-     * grant routes to the setup hub once per recurrence, dismissible. (Slice
-     * 3 wiring alongside the legacy flow; slice 4 replaces the flow with the
-     * backfill sync this shares `onResume` with.)
+     * ADR 0008 §4 — revocation re-entry, covering both degraded states of the
+     * required grant: DENIED and (since the review) API 34 PARTIAL, which the
+     * wizard treats as success-adjacent but the hub must make visible. Each
+     * condition routes once per recurrence, dismissible; a resolved condition
+     * clears the dismissal so a later recurrence re-nudges.
      */
     private fun routeToSetupHubIfNeeded() {
         val context = context ?: return
@@ -483,13 +489,17 @@ class HomeFragment : Fragment(), CoroutineScope {
             // The wizard owns first run; MainActivity gates it.
             return
         }
-        if (PermissionHelper.getMediaAccess(context) == MediaAccess.DENIED) {
-            if (!prefs.isHubNudgeDismissed()) {
-                SetupHubActivity.start(requireContext())
-            }
-        } else {
-            // Condition resolved: clear the dismissal so a later revocation re-nudges.
+        val signature = when (PermissionHelper.getMediaAccess(context)) {
+            MediaAccess.DENIED -> OnboardingPrefs.NUDGE_MEDIA_DENIED
+            MediaAccess.PARTIAL -> OnboardingPrefs.NUDGE_MEDIA_PARTIAL
+            else -> null
+        }
+        if (signature == null) {
             prefs.clearHubNudge()
+            return
+        }
+        if (!prefs.isHubNudgeDismissedFor(signature)) {
+            SetupHubActivity.startNudged(requireContext(), signature)
         }
     }
 
@@ -653,11 +663,12 @@ class HomeFragment : Fragment(), CoroutineScope {
         mainAdapter?.notifyDataSetChanged()
     }
 
-    private suspend fun checkNewScreenshots(): List<ScreenshotModel> {
+    private suspend fun checkNewScreenshots(pruneUnreadable: Boolean): List<ScreenshotModel> {
         val context = context ?: return emptyList()
         return withContext (Dispatchers.IO + NonCancellable) {
             ExternalScreenshotSync(context.applicationContext,
-                    ScryerApplication.getScreenshotRepository()).sync()
+                    ScryerApplication.getScreenshotRepository(),
+                    pruneUnreadable = pruneUnreadable).sync()
         }
     }
 

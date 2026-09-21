@@ -43,17 +43,20 @@ class OnboardingPrefs private constructor(context: Context) {
     }
 
     /**
-     * The revocation-re-entry nudge (ADR 0008 §4): a missing *required* grant
-     * routes to the hub once per recurrence, dismissible. Backing out of the
-     * hub without granting records [NUDGE_MEDIA_DENIED] here; the signature
-     * clears when the condition resolves, so a later revocation re-nudges.
+     * The revocation-re-entry nudge (ADR 0008 §4): a missing or degraded
+     * *required* grant routes to the hub once per recurrence, dismissible.
+     * Closing a nudged hub visit records the current condition's signature
+     * here; the signature clears when the condition resolves, so a later
+     * recurrence re-nudges. Signatures are exact (DENIED and PARTIAL have
+     * their own), so a user moving between them without full grant still
+     * gets nudged for the new condition.
      */
-    fun isHubNudgeDismissed(): Boolean {
-        return NUDGE_MEDIA_DENIED == prefs.getString(KEY_HUB_NUDGE_DISMISSED_FOR, null)
+    fun isHubNudgeDismissedFor(signature: String): Boolean {
+        return signature == prefs.getString(KEY_HUB_NUDGE_DISMISSED_FOR, null)
     }
 
-    fun dismissHubNudge() {
-        prefs.edit().putString(KEY_HUB_NUDGE_DISMISSED_FOR, NUDGE_MEDIA_DENIED).apply()
+    fun dismissHubNudge(signature: String) {
+        prefs.edit().putString(KEY_HUB_NUDGE_DISMISSED_FOR, signature).apply()
     }
 
     fun clearHubNudge() {
@@ -65,8 +68,9 @@ class OnboardingPrefs private constructor(context: Context) {
         const val KEY_ACCESS_MODEL = "access_model"
         const val ACCESS_MODEL_MEDIA_STORE = "media_store"
 
-        /** Signature of the "media access revoked" recurrence (see [dismissHubNudge]). */
+        /** Signatures of the recurring media-access conditions (see [dismissHubNudge]). */
         const val NUDGE_MEDIA_DENIED = "media_denied"
+        const val NUDGE_MEDIA_PARTIAL = "media_partial"
 
         private const val KEY_HUB_NUDGE_DISMISSED_FOR = "hub_nudge_dismissed_for"
 

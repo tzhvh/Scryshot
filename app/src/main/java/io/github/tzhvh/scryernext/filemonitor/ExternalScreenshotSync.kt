@@ -17,12 +17,20 @@ import java.util.UUID
  * [ScreenshotFetcher]'s MediaStore query, inserts unseen rows as
  * uncategorized (which is also the ingestion work queue — MediaStoreProducer
  * ingests `processed = false` rows, so nothing indexes until this runs), and
- * drops rows whose backing content URI is no longer readable.
+ * — only under a full media grant — drops rows whose backing content URI is
+ * no longer readable.
  *
  * Extracted from HomeFragment (where it lived as private merge helpers
  * behind the old PermissionFlow's finish event) so both consumers — Home's
  * per-resume backfill and the wizard's done-screen "Start indexing" — share
  * one implementation instead of two racing copies.
+ *
+ * The prune flag is load-bearing: an unreadable URI can mean "user deleted
+ * it" OR "it's outside the user's photo selection" (API 34 partial access).
+ * Only the first is a deletion signal, and it is distinguishable only under
+ * a full grant — under PARTIAL, unselected URIs are unreadable by scope, and
+ * pruning would silently destroy previously-indexed rows. Never enable the
+ * prune without `MediaAccess.GRANTED`.
  *
  * Callers run this off the main thread; [sync] touches `contentResolver` and
  * the repository only.
@@ -31,7 +39,8 @@ import java.util.UUID
  */
 class ExternalScreenshotSync(
     private val context: Context,
-    private val repository: ScreenshotRepository
+    private val repository: ScreenshotRepository,
+    private val pruneUnreadable: Boolean
 ) {
     suspend fun sync(): List<ScreenshotModel> {
         val dbList = repository.getScreenshotList()
@@ -68,16 +77,21 @@ class ExternalScreenshotSync(
         // Drop DB rows whose backing content URI is no longer readable (user deleted the
         // screenshot from MediaStore via another app). Issue 21: replaces the old
         // File(path).exists() gate, which was meaningless for content URIs.
-        val resolver = context.contentResolver
-        for (entry in localModels) {
-            val model = entry.value
-            val readable = try {
-                resolver.openInputStream(android.net.Uri.parse(model.uri))?.use { true } ?: false
-            } catch (e: Exception) {
-                false
-            }
-            if (!readable) {
-                repository.deleteScreenshot(model)
+        // Gated on pruneUnreadable: under API 34 partial access, unselected
+        // URIs are unreadable by SCOPE — pruning there would misread the
+        // permission boundary as a deletion (see class KDoc).
+        if (pruneUnreadable) {
+            val resolver = context.contentResolver
+            for (entry in localModels) {
+                val model = entry.value
+                val readable = try {
+                    resolver.openInputStream(android.net.Uri.parse(model.uri))?.use { true } ?: false
+                } catch (e: Exception) {
+                    false
+                }
+                if (!readable) {
+                    repository.deleteScreenshot(model)
+                }
             }
         }
 
