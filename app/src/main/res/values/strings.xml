@@ -244,6 +244,14 @@
     <string name="search_date_label">Dates</string>
     <string name="search_date_any">Any</string>
     <string name="search_date_clear">Clear</string>
+    <!-- Zero-results state machine (Phase 2.1 step 9). %1$s is the query. -->
+    <string name="search_zero_title">No matches for \'%1$s\'</string>
+    <string name="search_zero_content_no_filter">Try fewer terms.</string>
+    <string name="search_zero_content_filters">Not in the filtered collections.</string>
+    <string name="search_zero_relax">Search all collections</string>
+    <!-- Empty-query state: the persisted last-N searches (Phase 2.1 step 9) -->
+    <string name="search_recent_title">Recent searches</string>
+    <string name="search_recent_clear">Clear</string>
     <!-- Recoverable parse-error state (Phase 2.1 step 7, 2.1-D10) -->
     <string name="search_error_parse_title">Couldn\'t search for that</string>
     <string name="search_error_parse_content">Try simpler terms.</string>

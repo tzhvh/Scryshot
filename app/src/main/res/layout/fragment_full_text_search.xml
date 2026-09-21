@@ -194,6 +194,26 @@
             android:textColor="@color/primaryTeal" />
     </LinearLayout>
 
+    <!-- Phase 2.1 step 9: the empty-query state — the persisted last-N searches
+         (the P6 saved-views ancestor). Rows are added programmatically. -->
+    <ScrollView
+        android:id="@+id/recentSearchesView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginStart="@dimen/common_padding_24dp"
+        android:layout_marginEnd="@dimen/common_padding_24dp"
+        android:fillViewport="true"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/advancedRegion">
+
+        <LinearLayout
+            android:id="@+id/recentSearchesList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
+
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/screenshotListView"
         android:layout_width="match_parent"
@@ -221,6 +241,7 @@
             android:src="@drawable/image_noresult" />
 
         <TextView
+            android:id="@+id/emptyTitle"
             style="@style/H3"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -230,6 +251,7 @@
             android:textColor="@color/grey90" />
 
         <TextView
+            android:id="@+id/emptyContent"
             style="@style/Body2"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -237,6 +259,23 @@
             android:layout_marginTop="@dimen/common_padding_4dp"
             android:text="@string/search_error_content_try"
             android:textColor="@color/grey50" />
+
+        <!-- Phase 2.1 step 9: the one-tap filter relax (renders only when filters are active) -->
+        <TextView
+            android:id="@+id/emptyRelaxButton"
+            style="@style/Subtitle1"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="@dimen/common_padding_16dp"
+            android:background="@drawable/bg_filter_chip"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:text="@string/search_zero_relax"
+            android:textColor="@color/filter_chip_text"
+            android:visibility="gone" />
     </LinearLayout>
 
     <LinearLayout

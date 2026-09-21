@@ -32,8 +32,8 @@ import io.github.tzhvh.scryernext.ingestion.triggers.OnOpenTrigger
 class ScryerApplication : Application() {
     companion object {
         /** Phase 2.1 step 4 — prefs file + flag key for the one-shot backfill marker. */
-        private const val PREFS_PHASE21 = "zvec_phase21"
         private const val KEY_BACKFILL_DONE = "last_modified_backfill_done"
+        private val PREFS_PHASE21 = io.github.tzhvh.scryernext.search.RecentSearchesPrefs.PREFS_FILE
 
         private val instance: ScryerApplication by lazy {
             ApplicationHolder.instance

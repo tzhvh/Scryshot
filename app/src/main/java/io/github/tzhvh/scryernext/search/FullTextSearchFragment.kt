@@ -70,6 +70,12 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
     /** The Advanced disclosure's per-session collapsed state (survives rotation, not process death). */
     private var isAdvancedOpen = false
 
+    /**
+     * Phase 2.1 step 9 — the persisted last-N searches (prefs-backed), shown on the empty-query
+     * state. Submissions are recorded on focus loss / IME done, not per debounce keystroke.
+     */
+    private lateinit var recentSearches: RecentSearches
+
     private var actionModeMenu: Menu? = null
     private var isIndexing: Boolean = false
     private var enterTimeMillis: Long = 0
@@ -202,6 +208,7 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        recentSearches = RecentSearches(RecentSearchesPrefs(requireContext()))
         isAdvancedOpen = savedInstanceState?.getBoolean(STATE_ADVANCED_OPEN, false) ?: false
         binding.advancedToggle.setOnClickListener {
             isAdvancedOpen = !isAdvancedOpen
@@ -211,6 +218,12 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
         binding.dateToButton.setOnClickListener { showDatePicker(isFrom = false) }
         binding.dateClearButton.setOnClickListener {
             searchFilters = searchFilters.withDateRange(null, null)
+            onDateRangeChanged()
+        }
+        binding.emptyRelaxButton.setOnClickListener {
+            // The zero-results one-tap relax: drop every active filter and re-run.
+            searchFilters = SearchFilters()
+            rebuildCollectionChips()
             onDateRangeChanged()
         }
         binding.searchEditText.addTextChangedListener(object : TextWatcher {
@@ -234,8 +247,16 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
             if (hasFocus) {
                 showKeyboard(binding.searchEditText)
             } else {
+                commitRecentSearch()
                 hideKeyboard(binding.searchEditText)
             }
+        }
+        binding.searchEditText.setOnEditorActionListener { _, actionId, _ ->
+            // The IME done action is an explicit submission — record it.
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) {
+                commitRecentSearch()
+            }
+            false
         }
         binding.searchEditText.requestFocus()
 
@@ -278,15 +299,37 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
                     binding.errorView.visibility = if (isError) View.VISIBLE else View.GONE
 
                     val screenshots = (outcome as? SearchOutcome.Results)?.rows ?: emptyList()
+
+                    // The empty-query state: recent searches replace the grid (UX-1).
+                    val isEmptyQuery = query.isEmpty()
+                    binding.recentSearchesView.visibility = if (isEmptyQuery && !isError) View.VISIBLE else View.GONE
+                    binding.screenshotListView.visibility = if (isEmptyQuery) View.GONE else View.VISIBLE
+                    if (isEmptyQuery) rebuildRecentSearches()
+
                     binding.subtitleLayout.visibility = if (screenshots.isEmpty()) {
                         View.GONE
                     } else {
                         View.VISIBLE
                     }
+
+                    // The zero-results machine (2.1 step 9): no-filters vs filters-active copy,
+                    // with a one-tap relax in the filters case. Parse errors show errorView
+                    // instead; an indexing run keeps the empty view hidden (the overlay talks).
+                    val filtersActive = !searchFilters.isEmpty
                     binding.emptyView.visibility = if (screenshots.isEmpty() && query.isNotEmpty() && !isError && !isIndexing) {
                         View.VISIBLE
                     } else {
                         View.GONE
+                    }
+                    if (screenshots.isEmpty() && query.isNotEmpty() && !isError && !isIndexing) {
+                        binding.emptyTitle.text = getString(R.string.search_zero_title, query)
+                        if (filtersActive) {
+                            binding.emptyContent.text = getString(R.string.search_zero_content_filters)
+                            binding.emptyRelaxButton.visibility = View.VISIBLE
+                        } else {
+                            binding.emptyContent.text = getString(R.string.search_zero_content_no_filter)
+                            binding.emptyRelaxButton.visibility = View.GONE
+                        }
                     }
 
                     if (query.isEmpty() || !isIndexing) {
@@ -400,6 +443,52 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
         updateAdvancedRegion()
         updateDateRangeControls()
         startSearchJob(binding.searchEditText.text.toString())
+    }
+
+    /**
+     * Phase 2.1 step 9 — record the current query as a recent search. Fired on focus loss and
+     * IME done (explicit submissions), never per debounced keystroke — the prefix spam ("re",
+     * "rece"…) of record-on-search would make the list useless.
+     */
+    private fun commitRecentSearch() {
+        val query = binding.searchEditText.text?.toString() ?: return
+        if (query.isBlank()) return
+        recentSearches.record(query)
+    }
+
+    /** Rebuilds the empty-query view's recent-search rows + Clear affordance. */
+    private fun rebuildRecentSearches() {
+        val list = binding.recentSearchesList
+        list.removeAllViews()
+        val inflator = LayoutInflater.from(context ?: return)
+        val entries = recentSearches.entries()
+        if (entries.isEmpty()) return
+
+        val title = inflator.inflate(R.layout.view_recent_search, list, false) as TextView
+        title.setText(R.string.search_recent_title)
+        title.setTextColor(ContextCompat.getColor(requireContext(), R.color.grey60))
+        list.addView(title)
+
+        for (entry in entries) {
+            val row = inflator.inflate(R.layout.view_recent_search, list, false) as TextView
+            row.text = entry
+            row.setTextColor(ContextCompat.getColor(requireContext(), R.color.grey90))
+            row.setOnClickListener {
+                binding.searchEditText.setText(entry)
+                binding.searchEditText.setSelection(entry.length)
+                startSearchJob(entry)
+            }
+            list.addView(row)
+        }
+
+        val clear = inflator.inflate(R.layout.view_recent_search, list, false) as TextView
+        clear.setText(R.string.search_recent_clear)
+        clear.setTextColor(ContextCompat.getColor(requireContext(), R.color.primaryTeal))
+        clear.setOnClickListener {
+            recentSearches.clear()
+            rebuildRecentSearches()
+        }
+        list.addView(clear)
     }
 
     private fun formatDate(millis: Long): String =
