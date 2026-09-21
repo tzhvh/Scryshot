@@ -18,6 +18,10 @@
          Pictures/Scryshot/). READ_MEDIA_IMAGES on API 33+, READ_EXTERNAL_STORAGE below.
          Owned here per harmonization; consumed by issue 21's read path. -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <!-- ADR 0008: Android 14 partial photo access ("Select photos"). Declared so
+         the tri-state gate can distinguish PARTIAL from DENIED; requested
+         alongside READ_MEDIA_IMAGES so the system offers the full dialog. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />

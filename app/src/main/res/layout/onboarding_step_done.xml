@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ADR 0008 §3.5 — never say "library empty" when the user has a corpus:
+     the body + CTA swap on the live count (Start indexing for N > 0, the
+     take-a-screenshot copy for the rare N = 0). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/onboarding_content_background"
+    android:orientation="vertical">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="@dimen/common_padding_24dp">
+
+            <TextView
+                style="@style/OnboardingStepLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/setup_done_step_label" />
+
+            <TextView
+                android:id="@+id/title"
+                style="@style/OnboardingTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_8dp"
+                android:gravity="center"
+                android:text="@string/setup_done_title" />
+
+            <TextView
+                android:id="@+id/body"
+                style="@style/OnboardingLead"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_16dp"
+                android:gravity="center" />
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/white"
+        android:orientation="vertical">
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/grey20" />
+
+        <ProgressBar
+            android:id="@+id/count_progress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/common_padding_16dp"
+            android:layout_marginEnd="@dimen/common_padding_16dp"
+            android:layout_marginTop="@dimen/common_padding_16dp"
+            android:indeterminate="true" />
+
+        <Button
+            android:id="@+id/action_button"
+            style="@style/OnboardingPrimaryButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="@dimen/common_padding_16dp"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+</LinearLayout>

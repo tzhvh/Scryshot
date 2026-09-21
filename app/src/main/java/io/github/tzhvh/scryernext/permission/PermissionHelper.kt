@@ -66,5 +66,55 @@ class PermissionHelper {
                 android.Manifest.permission.READ_EXTERNAL_STORAGE
             }
         }
+
+        /**
+         * ADR 0008 — the tri-state media gate. Partial exists only on API 34+
+         * (`READ_MEDIA_VISUAL_USER_SELECTED`); on API 33 a non-full grant is
+         * simply denied. On JVM (`SDK_INT == 0`) this reads the legacy
+         * `READ_EXTERNAL_STORAGE` stub and returns DENIED — callers that need
+         * hermetic behaviour inject the state instead (see [OnboardingGates]).
+         */
+        fun getMediaAccess(context: Context): MediaAccess {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ContextCompat.checkSelfPermission(
+                                context, android.Manifest.permission.READ_MEDIA_IMAGES
+                        ) == PackageManager.PERMISSION_GRANTED) {
+                    return MediaAccess.GRANTED
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                        && ContextCompat.checkSelfPermission(
+                                context, android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+                        ) == PackageManager.PERMISSION_GRANTED) {
+                    return MediaAccess.PARTIAL
+                }
+                return MediaAccess.DENIED
+            }
+            return if (ContextCompat.checkSelfPermission(
+                            context, android.Manifest.permission.READ_EXTERNAL_STORAGE
+                    ) == PackageManager.PERMISSION_GRANTED) {
+                MediaAccess.GRANTED
+            } else {
+                MediaAccess.DENIED
+            }
+        }
+
+        /**
+         * ADR 0008 — what to pass to a runtime `RequestMultiplePermissions` for
+         * media access. On API 34+ both strings go out together so the system
+         * offers the full dialog (Allow / Select all / Select photos); on 33
+         * only `READ_MEDIA_IMAGES` exists; below, the legacy storage permission.
+         */
+        fun getReadMediaPermissionStrings(): Array<String> {
+            return when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
+                        android.Manifest.permission.READ_MEDIA_IMAGES,
+                        android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+                )
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
+                        android.Manifest.permission.READ_MEDIA_IMAGES
+                )
+                else -> arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+        }
     }
 }

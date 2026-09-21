@@ -279,4 +279,47 @@
     <string name="setup_welcome_point_2">Text recognition and search run entirely on this device</string>
     <string name="setup_welcome_point_3">Nothing is ever uploaded</string>
     <string name="setup_action_get_started">Get started</string>
+    <string name="setup_media_step_label">Permission required</string>
+    <string name="setup_media_title">Media access</string>
+    <string name="setup_media_lead">To find screenshots automatically, Android requires access to your device\'s photos and media.</string>
+    <string name="setup_media_privacy">%1$s scans your media library for images. Your camera roll is ignored — unless you save screenshots there — and all processing happens locally on your device.</string>
+    <string name="setup_media_preview_title">Allow %1$s to access photos and videos on this device?</string>
+    <string name="setup_media_preview_note_34">Screenshots are usually saved in bulk, so “Select all” is the right choice in the dialog.</string>
+    <string name="setup_media_action_allow">Allow access</string>
+    <string name="setup_media_declined_notice">Without media access, %1$s can\'t find your screenshots automatically. You can try again, or continue for now — the setup hub will show what\'s missing.</string>
+    <string name="setup_media_declined_retry">Try again</string>
+    <string name="setup_media_permanent_notice">Android has blocked this permission for %1$s. It can only be re-enabled from the Android Settings app.</string>
+    <string name="setup_media_permanent_action">Open Settings</string>
+    <string name="setup_action_not_now">Not now</string>
+
+    <string name="setup_notifications_step_label">Optional</string>
+    <string name="setup_notifications_title">Notifications</string>
+    <string name="setup_notifications_lead">Get told when indexing finishes and when new screenshots are found.</string>
+    <string name="setup_notifications_body">You can turn this off anytime — indexing works without it.</string>
+    <string name="setup_notifications_preview_title">Allow %1$s to send you notifications?</string>
+    <string name="setup_notifications_action_allow">Allow notifications</string>
+
+    <string name="setup_overlay_step_label">Optional feature</string>
+    <string name="setup_overlay_title">Floating capture button</string>
+    <string name="setup_overlay_lead">%1$s can place a small button on your screen. Tap it anytime to capture and organize screenshots, without leaving the app you\'re in.</string>
+    <string name="setup_overlay_body">Because this draws over other apps, Android requires a special permission. You can turn it off at any time in Settings.</string>
+    <string name="setup_overlay_preview_title">Display over other apps</string>
+    <string name="setup_overlay_preview_toggle">Allow displaying over other apps</string>
+    <string name="setup_overlay_action_enable">Enable</string>
+    <string name="setup_action_skip">Skip</string>
+
+    <string name="setup_done_step_label">Setup complete</string>
+    <string name="setup_done_title">%1$s is ready</string>
+    <string name="setup_done_action_index">Start indexing</string>
+    <string name="setup_done_action_enter">Enter %1$s</string>
+    <plurals name="setup_done_corpus">
+        <item quantity="one">%1$d screenshot found — %2$s will read its text so you can search it.</item>
+        <item quantity="other">%1$d screenshots found — %2$s will read their text so you can search them.</item>
+    </plurals>
+    <string name="setup_done_empty">Take a screenshot. %1$s will find it, extract the text, and make it searchable automatically.</string>
+
+    <string name="setup_preview_allow">Allow</string>
+    <string name="setup_preview_dont_allow">Don\'t allow</string>
+    <string name="setup_preview_select_all">Select all</string>
+    <string name="setup_preview_select_photos">Select photos</string>
 </resources>

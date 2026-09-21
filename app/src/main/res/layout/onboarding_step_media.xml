@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ADR 0008 §3.2 — the only required step. Explainer + system-dialog preview
+     (the real shape for the running OS), with inline declined /
+     permanent-denied states on the same screen. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/onboarding_content_background"
+    android:orientation="vertical">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="@dimen/common_padding_24dp">
+
+            <TextView
+                style="@style/OnboardingStepLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/setup_media_step_label" />
+
+            <TextView
+                style="@style/OnboardingTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_8dp"
+                android:text="@string/setup_media_title" />
+
+            <TextView
+                style="@style/OnboardingLead"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_16dp"
+                android:text="@string/setup_media_lead" />
+
+            <TextView
+                android:id="@+id/privacy_body"
+                style="@style/Body2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_12dp"
+                android:textColor="@color/grey60"
+                android:text="@string/setup_media_privacy" />
+
+            <!-- The real dialog preview for the running OS. API 33 shows
+                 Allow / Don't allow; API 34+ shows the three-state reality's
+                 Select all / Select photos and the "Select all" note. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_20dp"
+                android:background="@drawable/onboarding_dialog_preview_bkg"
+                android:orientation="vertical"
+                android:padding="@dimen/common_padding_20dp">
+
+                <TextView
+                    android:id="@+id/preview_title"
+                    style="@style/OnboardingMockTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+
+                <TextView
+                    android:id="@+id/preview_note_34"
+                    style="@style/Body2"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/common_padding_12dp"
+                    android:textColor="@color/grey60"
+                    android:visibility="gone"
+                    android:text="@string/setup_media_preview_note_34" />
+
+                <LinearLayout
+                    android:id="@+id/preview_row_33"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/common_padding_16dp"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/OnboardingMockButtonPrimary"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/setup_preview_allow" />
+
+                    <TextView
+                        style="@style/OnboardingMockButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/common_padding_8dp"
+                        android:text="@string/setup_preview_dont_allow" />
+
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/preview_row_34"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/common_padding_16dp"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <TextView
+                        style="@style/OnboardingMockButtonPrimary"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/setup_preview_select_all" />
+
+                    <TextView
+                        style="@style/OnboardingMockButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/common_padding_8dp"
+                        android:text="@string/setup_preview_select_photos" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <!-- Declined / permanent-denial notice. Hidden on the plain
+                 explainer; text + action buttons swapped in code. -->
+            <TextView
+                android:id="@+id/notice"
+                style="@style/OnboardingNotice"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_16dp"
+                android:background="@drawable/onboarding_notice_bkg"
+                android:padding="@dimen/common_padding_12dp"
+                android:visibility="gone" />
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/white"
+        android:orientation="vertical">
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/grey20" />
+
+        <!-- Outlined slot: "Not now" in the declined states, absent on the
+             plain explainer (single full-width CTA, per the prototype). -->
+        <Button
+            android:id="@+id/negative_button"
+            style="@style/OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/common_padding_16dp"
+            android:layout_marginEnd="@dimen/common_padding_16dp"
+            android:layout_marginTop="@dimen/common_padding_16dp"
+            android:visibility="gone"
+            android:text="@string/setup_action_not_now" />
+
+        <Button
+            android:id="@+id/positive_button"
+            style="@style/OnboardingPrimaryButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="@dimen/common_padding_16dp"
+            android:text="@string/setup_media_action_allow" />
+
+    </LinearLayout>
+
+</LinearLayout>

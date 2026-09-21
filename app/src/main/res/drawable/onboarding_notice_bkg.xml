@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Warning notice bar: white body, 3dp attention stripe on the left. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape>
+            <solid android:color="@color/white" />
+            <stroke android:width="1dp" android:color="@color/grey20" />
+        </shape>
+    </item>
+    <item android:width="3dp">
+        <shape>
+            <solid android:color="@color/errorRed" />
+        </shape>
+    </item>
+</layer-list>

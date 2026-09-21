@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ADR 0008 §3.4 — optional feature, positioned LAST: value first, honest
+     cost ("draws over other apps"), Skip + Enable. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/onboarding_content_background"
+    android:orientation="vertical">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="@dimen/common_padding_24dp">
+
+            <TextView
+                style="@style/OnboardingStepLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/setup_overlay_step_label" />
+
+            <TextView
+                style="@style/OnboardingTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_8dp"
+                android:text="@string/setup_overlay_title" />
+
+            <TextView
+                android:id="@+id/lead"
+                style="@style/OnboardingLead"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_16dp"
+                android:text="@string/setup_overlay_lead" />
+
+            <TextView
+                style="@style/Body2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_12dp"
+                android:textColor="@color/grey60"
+                android:text="@string/setup_overlay_body" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_20dp"
+                android:background="@drawable/onboarding_dialog_preview_bkg"
+                android:orientation="vertical"
+                android:padding="@dimen/common_padding_20dp">
+
+                <TextView
+                    style="@style/OnboardingMockTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/setup_overlay_preview_title" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/common_padding_16dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        style="@style/Body2"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:textColor="@color/grey90"
+                        android:text="@string/setup_overlay_preview_toggle" />
+
+                    <!-- Static mock of the system switch. -->
+                    <FrameLayout
+                        android:layout_width="40dp"
+                        android:layout_height="20dp"
+                        android:background="@drawable/onboarding_mock_button_bkg" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/white"
+        android:orientation="vertical">
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/grey20" />
+
+        <Button
+            android:id="@+id/negative_button"
+            style="@style/OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/common_padding_16dp"
+            android:layout_marginEnd="@dimen/common_padding_16dp"
+            android:layout_marginTop="@dimen/common_padding_16dp"
+            android:text="@string/setup_action_skip" />
+
+        <Button
+            android:id="@+id/positive_button"
+            style="@style/OnboardingPrimaryButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="@dimen/common_padding_16dp"
+            android:text="@string/setup_overlay_action_enable" />
+
+    </LinearLayout>
+
+</LinearLayout>

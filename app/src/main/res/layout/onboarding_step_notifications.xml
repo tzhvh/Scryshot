@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ADR 0008 §3.3 — optional, API 33+ only (the step doesn't render below;
+     OnboardingFlow.notificationsStepEnabled). Bulk-index progress, the
+     discovery tally, and capture-result notifications all need this. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/onboarding_content_background"
+    android:orientation="vertical">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="@dimen/common_padding_24dp">
+
+            <TextView
+                style="@style/OnboardingStepLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/setup_notifications_step_label" />
+
+            <TextView
+                style="@style/OnboardingTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_8dp"
+                android:text="@string/setup_notifications_title" />
+
+            <TextView
+                style="@style/OnboardingLead"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_16dp"
+                android:text="@string/setup_notifications_lead" />
+
+            <TextView
+                style="@style/Body2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_12dp"
+                android:textColor="@color/grey60"
+                android:text="@string/setup_notifications_body" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/common_padding_20dp"
+                android:background="@drawable/onboarding_dialog_preview_bkg"
+                android:orientation="vertical"
+                android:padding="@dimen/common_padding_20dp">
+
+                <TextView
+                    android:id="@+id/preview_title"
+                    style="@style/OnboardingMockTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+
+                <TextView
+                    style="@style/OnboardingMockButtonPrimary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/common_padding_16dp"
+                    android:text="@string/setup_preview_allow" />
+
+                <TextView
+                    style="@style/OnboardingMockButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/common_padding_8dp"
+                    android:text="@string/setup_preview_dont_allow" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/white"
+        android:orientation="vertical">
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/grey20" />
+
+        <Button
+            android:id="@+id/negative_button"
+            style="@style/OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/common_padding_16dp"
+            android:layout_marginEnd="@dimen/common_padding_16dp"
+            android:layout_marginTop="@dimen/common_padding_16dp"
+            android:text="@string/setup_action_not_now" />
+
+        <Button
+            android:id="@+id/positive_button"
+            style="@style/OnboardingPrimaryButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="@dimen/common_padding_16dp"
+            android:text="@string/setup_notifications_action_allow" />
+
+    </LinearLayout>
+
+</LinearLayout>

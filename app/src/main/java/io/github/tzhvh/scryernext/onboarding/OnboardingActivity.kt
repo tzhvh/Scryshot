@@ -7,12 +7,30 @@ package io.github.tzhvh.scryernext.onboarding
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
-import android.view.ViewGroup
+import android.provider.Settings
+import android.view.View
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import io.github.tzhvh.scryernext.R
+import io.github.tzhvh.scryernext.ScryerApplication
+import io.github.tzhvh.scryernext.ScryerService
 import io.github.tzhvh.scryernext.databinding.ActivityOnboardingBinding
+import io.github.tzhvh.scryernext.databinding.OnboardingStepDoneBinding
+import io.github.tzhvh.scryernext.databinding.OnboardingStepMediaBinding
+import io.github.tzhvh.scryernext.databinding.OnboardingStepNotificationsBinding
+import io.github.tzhvh.scryernext.databinding.OnboardingStepOverlayBinding
 import io.github.tzhvh.scryernext.databinding.OnboardingStepWelcomeBinding
+import io.github.tzhvh.scryernext.filemonitor.ScreenshotFetcher
+import io.github.tzhvh.scryernext.permission.MediaAccess
+import io.github.tzhvh.scryernext.permission.PermissionHelper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * ADR 0008 — the first-run wizard. A linear spine: welcome → media access
@@ -22,50 +40,368 @@ import io.github.tzhvh.scryernext.databinding.OnboardingStepWelcomeBinding
  * completed — optional steps are skippable, and the required step's "Not now"
  * continues the wizard (the setup hub owns the missing requirement after).
  *
- * Slice 1 shell: the welcome step and the completion exit. The remaining
- * steps land with the wizard spine (slice 2).
+ * Routing is [OnboardingFlow]'s (pure, JVM-tested); this activity is the
+ * view-binding + launcher plumbing around it. All steps are inflated once
+ * into the container and switched by visibility. The media step renders
+ * three sub-states on one screen: explainer, declined (rationale + Try
+ * again / Not now), and permanently-denied (Open Settings deep link).
  */
 class OnboardingActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityOnboardingBinding
 
-    private var welcomeBinding: OnboardingStepWelcomeBinding? = null
+    private val gates = object : OnboardingGates {
+        override fun mediaAccess(): MediaAccess {
+            return PermissionHelper.getMediaAccess(applicationContext)
+        }
+
+        override fun isNotificationsGranted(): Boolean {
+            return PermissionHelper.hasPostNotificationsPermission(applicationContext)
+        }
+
+        override fun isOverlayGranted(): Boolean {
+            return PermissionHelper.hasOverlayPermission(applicationContext)
+        }
+    }
+
+    private val flow by lazy { OnboardingFlow(gates) }
+
+    private lateinit var welcomeBinding: OnboardingStepWelcomeBinding
+    private lateinit var mediaBinding: OnboardingStepMediaBinding
+    private lateinit var notificationsBinding: OnboardingStepNotificationsBinding
+    private lateinit var overlayBinding: OnboardingStepOverlayBinding
+    private lateinit var doneBinding: OnboardingStepDoneBinding
+    private val stepViews = HashMap<OnboardingStep, View>()
+
+    private var currentStep: OnboardingStep = OnboardingStep.WELCOME
+
+    /**
+     * Whether the system media dialog has been dismissed at least once this
+     * wizard run. Only after that can a DENIED gate be presented as declined /
+     * permanently-denied — the plain explainer must render before the first
+     * ask (the thing short.html lacked was the *afterwards*; not the reverse).
+     */
+    private var mediaDialogShown: Boolean = false
+
+    /** The done screen's corpus count fires once; re-entry (onResume) re-binds only. */
+    private var doneCountStarted: Boolean = false
+    private var doneCountJob: Job? = null
+
+    private val readMediaLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        // The result map is advisory; the gate re-derives from the system.
+        showStep(flow.resolve(currentStep))
+    }
+
+    private val postNotificationsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        showStep(flow.resolve(currentStep))
+    }
+
+    /** Shared launcher for the app-details page (permanent-denial recovery). */
+    private val settingsLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        // Settings result codes are unreliable — re-derive on return
+        // (the old flow's overlayPermissionLauncher discipline).
+        showStep(flow.resolve(currentStep))
+    }
+
+    private val overlaySettingsLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        if (gates.isOverlayGranted()) {
+            onOverlayGranted()
+        }
+        showStep(flow.resolve(currentStep))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityOnboardingBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        showWelcome()
-    }
+        if (savedInstanceState != null) {
+            currentStep = savedInstanceState.getSerializable(KEY_STEP) as? OnboardingStep
+                    ?: OnboardingStep.WELCOME
+            mediaDialogShown = savedInstanceState.getBoolean(KEY_MEDIA_DIALOG_SHOWN, false)
+            doneCountStarted = savedInstanceState.getBoolean(KEY_DONE_COUNT_STARTED, false)
+        }
 
-    private fun showWelcome() {
-        val step = OnboardingStepWelcomeBinding.inflate(layoutInflater, binding.stepContainer, true)
-        welcomeBinding = step
+        inflateSteps()
 
-        step.title.text = getString(R.string.setup_welcome_title,
-                getString(R.string.app_full_name))
-        step.actionButton.setOnClickListener {
-            completeOnboarding()
+        if (savedInstanceState == null) {
+            showStep(OnboardingStep.WELCOME)
+        } else {
+            showStep(flow.resolve(currentStep))
         }
     }
 
-    private fun completeOnboarding() {
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putSerializable(KEY_STEP, currentStep)
+        outState.putBoolean(KEY_MEDIA_DIALOG_SHOWN, mediaDialogShown)
+        outState.putBoolean(KEY_DONE_COUNT_STARTED, doneCountStarted)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Returning from a Settings screen the wizard didn't launch (user
+        // granted in the background): re-derive. WELCOME and DONE are stable
+        // under resolve; the gated steps re-derive cheaply.
+        if (currentStep != OnboardingStep.WELCOME) {
+            showStep(flow.resolve(currentStep))
+        }
+    }
+
+    private fun inflateSteps() {
+        welcomeBinding = OnboardingStepWelcomeBinding.inflate(layoutInflater,
+                binding.stepContainer, true)
+        mediaBinding = OnboardingStepMediaBinding.inflate(layoutInflater,
+                binding.stepContainer, true)
+        notificationsBinding = OnboardingStepNotificationsBinding.inflate(layoutInflater,
+                binding.stepContainer, true)
+        overlayBinding = OnboardingStepOverlayBinding.inflate(layoutInflater,
+                binding.stepContainer, true)
+        doneBinding = OnboardingStepDoneBinding.inflate(layoutInflater,
+                binding.stepContainer, true)
+
+        stepViews[OnboardingStep.WELCOME] = welcomeBinding.root
+        stepViews[OnboardingStep.MEDIA] = mediaBinding.root
+        stepViews[OnboardingStep.NOTIFICATIONS] = notificationsBinding.root
+        stepViews[OnboardingStep.OVERLAY] = overlayBinding.root
+        stepViews[OnboardingStep.DONE] = doneBinding.root
+
+        bindWelcome()
+        bindMedia()
+        bindNotifications()
+        bindOverlay()
+        bindDone()
+    }
+
+    private fun bindWelcome() {
+        welcomeBinding.title.text = getString(R.string.setup_welcome_title,
+                getString(R.string.app_full_name))
+        welcomeBinding.actionButton.setOnClickListener {
+            showStep(flow.resolve(OnboardingStep.MEDIA))
+        }
+    }
+
+    private fun bindMedia() {
+        mediaBinding.positiveButton.setOnClickListener {
+            when (mediaBinding.positiveButton.tag) {
+                TAG_OPEN_SETTINGS -> launchAppDetailsSettings()
+                else -> requestMediaAccess()
+            }
+        }
+        mediaBinding.negativeButton.setOnClickListener {
+            showStep(flow.nextAfter(OnboardingStep.MEDIA))
+        }
+    }
+
+    private fun requestMediaAccess() {
+        mediaDialogShown = true
+        readMediaLauncher.launch(PermissionHelper.getReadMediaPermissionStrings())
+    }
+
+    private fun bindNotifications() {
+        notificationsBinding.previewTitle.text = getString(
+                R.string.setup_notifications_preview_title, getString(R.string.app_full_name))
+        notificationsBinding.positiveButton.setOnClickListener {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                postNotificationsLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+        notificationsBinding.negativeButton.setOnClickListener {
+            showStep(flow.nextAfter(OnboardingStep.NOTIFICATIONS))
+        }
+    }
+
+    private fun bindOverlay() {
+        overlayBinding.lead.text = getString(R.string.setup_overlay_lead,
+                getString(R.string.app_full_name))
+        overlayBinding.positiveButton.setOnClickListener {
+            PermissionHelper.getOverlayPermissionIntent(this)?.let { intent ->
+                overlaySettingsLauncher.launch(intent)
+            }
+        }
+        overlayBinding.negativeButton.setOnClickListener {
+            // Sticky decline (ADR 0008): write once through the settings
+            // repository so the Settings switch mirrors it; the hub owns
+            // recovery if the user changes their mind later.
+            ScryerApplication.getSettingsRepository().floatingEnable = false
+            showStep(flow.nextAfter(OnboardingStep.OVERLAY))
+        }
+    }
+
+    private fun bindDone() {
+        doneBinding.actionButton.setOnClickListener {
+            completeOnboarding(startBulk = doneBinding.actionButton.tag == TAG_START_BULK)
+        }
+    }
+
+    // ------------------------------------------------------------------ rendering
+
+    private fun showStep(step: OnboardingStep) {
+        currentStep = step
+        for ((_, view) in stepViews) {
+            view.visibility = View.GONE
+        }
+        stepViews[step]?.visibility = View.VISIBLE
+
+        when (step) {
+            OnboardingStep.MEDIA -> renderMedia()
+            OnboardingStep.NOTIFICATIONS -> renderNotifications()
+            OnboardingStep.OVERLAY -> renderOverlay()
+            OnboardingStep.DONE -> renderDone()
+            OnboardingStep.WELCOME -> Unit
+        }
+    }
+
+    /**
+     * The media step's three sub-states. `resolve` guarantees the gate is
+     * DENIED by the time this renders — anything else auto-advanced.
+     */
+    private fun renderMedia() {
+        if (gates.mediaAccess() != MediaAccess.DENIED) {
+            showStep(flow.resolve(OnboardingStep.MEDIA))
+            return
+        }
+
+        val appName = getString(R.string.app_full_name)
+        mediaBinding.previewTitle.text = getString(R.string.setup_media_preview_title, appName)
+
+        // Preview the real dialog for the running OS (ADR 0008 §3.2).
+        val api34Plus = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+        mediaBinding.previewRow33.visibility = if (api34Plus) View.GONE else View.VISIBLE
+        mediaBinding.previewRow34.visibility = if (api34Plus) View.VISIBLE else View.GONE
+        mediaBinding.previewNote34.visibility = if (api34Plus) View.VISIBLE else View.GONE
+
+        if (!mediaDialogShown) {
+            // Plain explainer: one full-width CTA, no notice.
+            mediaBinding.notice.visibility = View.GONE
+            mediaBinding.negativeButton.visibility = View.GONE
+            mediaBinding.positiveButton.text = getString(R.string.setup_media_action_allow)
+            mediaBinding.positiveButton.tag = null
+            return
+        }
+
+        val permanent = !shouldShowRequestPermissionRationale(
+                PermissionHelper.getReadMediaPermissionString())
+        if (permanent) {
+            mediaBinding.notice.text = getString(R.string.setup_media_permanent_notice, appName)
+            mediaBinding.positiveButton.text = getString(R.string.setup_media_permanent_action)
+            mediaBinding.positiveButton.tag = TAG_OPEN_SETTINGS
+        } else {
+            mediaBinding.notice.text = getString(R.string.setup_media_declined_notice, appName)
+            mediaBinding.positiveButton.text = getString(R.string.setup_media_declined_retry)
+            mediaBinding.positiveButton.tag = null
+        }
+        mediaBinding.notice.visibility = View.VISIBLE
+        mediaBinding.negativeButton.visibility = View.VISIBLE
+    }
+
+    private fun renderNotifications() {
+        // resolve guarantees we only render when the grant is missing; the
+        // allow/Not-now pair is static — denial just keeps the step on screen.
+    }
+
+    private fun renderOverlay() {
+        // Static step; the launcher's return path re-derives via resolve().
+    }
+
+    private fun renderDone() {
+        if (doneCountStarted) {
+            return
+        }
+        doneCountStarted = true
+
+        doneBinding.title.text = getString(R.string.setup_done_title,
+                getString(R.string.app_full_name))
+        doneBinding.actionButton.visibility = View.GONE
+        doneBinding.countProgress.visibility = View.VISIBLE
+
+        // PRD §3.5: count unindexed candidates on entering the done screen —
+        // the ScreenshotFetcher query, off the main thread. A denied media
+        // grant degrades to an empty list (the fetcher's SecurityException
+        // path), which is exactly the N = 0 branch.
+        doneCountJob = lifecycleScope.launch {
+            val count = withContext(Dispatchers.IO) {
+                ScreenshotFetcher().fetchScreenshots(applicationContext).size
+            }
+            if (currentStep != OnboardingStep.DONE) {
+                return@launch
+            }
+            doneBinding.countProgress.visibility = View.GONE
+            val appName = getString(R.string.app_full_name)
+            if (count > 0) {
+                doneBinding.body.text = resources.getQuantityString(
+                        R.plurals.setup_done_corpus, count, count, appName)
+                doneBinding.actionButton.text = getString(R.string.setup_done_action_index)
+                doneBinding.actionButton.tag = TAG_START_BULK
+            } else {
+                doneBinding.body.text = getString(R.string.setup_done_empty, appName)
+                doneBinding.actionButton.text =
+                        getString(R.string.setup_done_action_enter, appName)
+                doneBinding.actionButton.tag = null
+            }
+            doneBinding.actionButton.visibility = View.VISIBLE
+        }
+    }
+
+    // ------------------------------------------------------------------ exit
+
+    private fun completeOnboarding(startBulk: Boolean) {
+        doneCountJob?.cancel()
         OnboardingPrefs.getInstance(this).setOnboardingComplete()
+        if (startBulk) {
+            // The existing user-initiated bulk trigger (CONTEXT.md's trigger
+            // model) — progress surfaces via the banner/notification machinery.
+            ScryerApplication.getIngestionSession().startBulk()
+        }
         finish()
     }
 
     /**
-     * The wizard is the app's front door — back on the first step must not
-     * land the user on an un-onboarded Home (MainActivity would immediately
-     * re-gate). Later steps navigate back within the wizard instead.
+     * A wizard grant mirrors Settings' own toggle path: persist
+     * `floatingEnable` through the repository (the switch observes it) and
+     * start the service action that actually mounts the button
+     * (`ScryerService.initFloatingButton` gates on both).
+     */
+    private fun onOverlayGranted() {
+        ScryerApplication.getSettingsRepository().floatingEnable = true
+        val intent = Intent(this, ScryerService::class.java)
+        intent.action = ScryerService.ACTION_ENABLE_CAPTURE_BUTTON
+        startService(intent)
+    }
+
+    private fun launchAppDetailsSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+        intent.data = Uri.fromParts("package", packageName, null)
+        settingsLauncher.launch(intent)
+    }
+
+    /**
+     * The wizard is the app's front door — back must not land the user on an
+     * un-onboarded Home (MainActivity would immediately re-gate). The spine
+     * is a straight line in v1 (no mode screen to go back to); swallows the
+     * press on every step.
      */
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        // First step: swallow the press; the wizard owns the screen until done.
+        // Deliberately not calling super.
     }
 
     companion object {
+        private const val KEY_STEP = "onboarding_step"
+        private const val KEY_MEDIA_DIALOG_SHOWN = "onboarding_media_dialog_shown"
+        private const val KEY_DONE_COUNT_STARTED = "onboarding_done_count_started"
+
+        private const val TAG_OPEN_SETTINGS = "open_settings"
+        private const val TAG_START_BULK = "start_bulk"
+
         fun start(context: Context) {
             context.startActivity(Intent(context, OnboardingActivity::class.java))
         }
