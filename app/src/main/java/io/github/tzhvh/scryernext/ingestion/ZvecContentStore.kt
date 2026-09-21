@@ -12,7 +12,8 @@ import io.github.tzhvh.scryernext.zvec.CollectionSchema
 import io.github.tzhvh.scryernext.zvec.FieldSchema
 import io.github.tzhvh.scryernext.zvec.FieldType
 import io.github.tzhvh.scryernext.zvec.IndexParams
-import io.github.tzhvh.scryernext.zvec.QueryRequest
+import io.github.tzhvh.scryernext.zvec.SubQuery
+import io.github.tzhvh.scryernext.zvec.WeightedReranker
 import io.github.tzhvh.scryernext.zvec.Zvec
 import io.github.tzhvh.scryernext.zvec.ZvecCollection
 import io.github.tzhvh.scryernext.zvec.ZvecConfig
@@ -313,6 +314,9 @@ open class ZvecContentStore(
                 string(FIELD_CONTENT_HASH, contentHash)
                 string(FIELD_LOCATOR, locator)
                 string(FIELD_CONTENT, content)
+                // v2 schema (issue 02 B4): the ngram leg indexes the SAME text — every upsert
+                // must populate it or the engine's required-field check rejects the doc.
+                string(FIELD_CONTENT_NGRAM, content)
                 string(FIELD_COLLECTION_ID, collectionId)
             }
         }
@@ -353,28 +357,30 @@ open class ZvecContentStore(
     }
 
     /**
-     * Issue 04 — the read-flip search path. Runs a pure-FTS query against the `content` field and
-     * returns the matched docs in zvec's rank order (the engine returns ranked results; the SDK
-     * surfaces the order untouched). The façade projects `locator` (the gallery-row bridge) + `content`
-     * (so [getContentText] callers see text without a second round-trip), then resolves the gallery
-     * rows in one batched Room query.
+     * Issue 04 — the read-flip search path. Since the v2 schema (issue 02 B4) this runs the
+     * **Balanced fused query**: the stemmed `content` leg + the `content_ngram` leg, fused by
+     * `WeightedReranker(content=1.0, content_ngram=0.3)` — the position the B3 bronze A/B
+     * selected (partial-token Recall@10 0.200 → 0.817; general within the pre-registered
+     * allowance; full grid in issue 02). `hybridSearch`'s first production caller.
      *
-     * [matchString] is the natural-language FTS payload (zvec's "match string" recall path), NOT the
-     * boolean `query_string`. A live-engine probe (2026-07-01) confirmed: multi-term match strings
-     * work, case is normalized by the `lowercase` filter, and a no-match query returns an empty list
-     * (not an error). The old Room-era `processQuery` trailing-`*` wildcard ("wifi* bluetooth*") also
-     * matches fine, so the existing UI query shape carries over unchanged.
+     * Returns matched docs in the fused rank order; scores are surfaced untouched (the
+     * repository bridge decides what to keep). [matchString] is the FTS payload (the
+     * caller's pre-shape supplies prefix wildcards / exclusions — both legs receive the
+     * same string). A no-match query returns an empty list, not an error.
      *
      * `open` so a JVM test can record the call without the `.so`.
      */
     open suspend fun search(matchString: String, topK: Int = DEFAULT_SEARCH_TOPK): List<ZvecDoc> {
         ensureOpen()
         return withContext(Dispatchers.IO) {
-            collection!!.query(
-                QueryRequest(
-                    field = FIELD_CONTENT,
-                    fts = matchString,
-                    topK = topK,
+            collection!!.hybridSearch(
+                queries = listOf(
+                    SubQuery(field = FIELD_CONTENT, fts = matchString),
+                    SubQuery(field = FIELD_CONTENT_NGRAM, fts = matchString),
+                ),
+                topK = topK,
+                reranker = WeightedReranker(
+                    weights = mapOf(FIELD_CONTENT to 1.0f, FIELD_CONTENT_NGRAM to 0.3f),
                 ),
                 outputFields = listOf(FIELD_LOCATOR, FIELD_CONTENT),
             )
@@ -439,11 +445,13 @@ open class ZvecContentStore(
          * forever) — and the next launch wipes + queue-resets + re-ingests from scratch (full
          * re-OCR, the doctrine's accepted cost; no back-fill, no migration: H3).
          *
-         * Current value `1` describes the schema as of the marker mechanism's introduction
-         * (`standard` + `lowercase` on `content`). The Phase-B FTS decision (B3/B4 — filters +
-         * stemmer, maybe `content_ngram`) is expected to ship the first *production* bump.
+         * History: `1` = the marker mechanism's introduction (`content` = standard + lowercase).
+         * `2` = the B3/B4 FTS decision (issue 02): `content` gains ascii_folding + the english
+         * stemmer, and the `content_ngram` field (ngram tokenizer) joins as the fuzzy leg of the
+         * two-leg weighted search. Measured by the bronze A/B: partial-token Recall@10
+         * 0.200 → 0.817, general within allowance (issue 02 B3 grid).
          */
-        const val SCHEMA_VERSION = 1
+        const val SCHEMA_VERSION = 2
 
         /**
          * The pure wipe decision — total, disk-free, JVM-tested. [markerContent] is the raw marker
@@ -466,16 +474,20 @@ open class ZvecContentStore(
         const val FIELD_CONTENT_HASH = "content_hash"
         const val FIELD_LOCATOR = "locator"
         const val FIELD_CONTENT = "content"
+        const val FIELD_CONTENT_NGRAM = "content_ngram"
         const val FIELD_COLLECTION_ID = "collection_id"
 
         /** The default collection options (mmap enabled, read-write). */
         private fun options(): CollectionOptions = CollectionOptions()
 
         /**
-         * The minimal screenshot-content schema — `content_hash` PK + `locator` + `content` (FTS,
-         * `standard` tokenizer + `lowercase` filter) + `collection_id` (INVERT, so Phase 5's
-         * push-down filters need no schema migration). No `image_embedding` — Phase 3 adds it via
-         * `add_column` on the live collection.
+         * The screenshot-content schema — v2 (issue 02 B3/B4, the measured decision):
+         * `content_hash` PK + `locator` + `content` (FTS: standard + lowercase +
+         * ascii_folding + english stemmer — the Exact leg) + `content_ngram` (FTS: ngram
+         * tokenizer — the Fuzzy leg; partial tokens / OCR fragments) + `collection_id`
+         * (INVERT). [search] runs the two legs fused (WeightedReranker 1.0/0.3) — the
+         * Balanced position of 2.1's precision dial. No `image_embedding` — Phase 3 adds
+         * it via its own marker bump.
          */
         fun screenshotContentSchema(): CollectionSchema = CollectionSchema(
             name = COLLECTION_NAME,
@@ -485,7 +497,16 @@ open class ZvecContentStore(
                 FieldSchema(
                     name = FIELD_CONTENT,
                     type = FieldType.STRING,
-                    indexParams = IndexParams.FtsParams(tokenizer = "standard", filters = listOf("lowercase")),
+                    indexParams = IndexParams.FtsParams(
+                        tokenizer = "standard",
+                        filters = listOf("lowercase", "ascii_folding", "stemmer"),
+                        extraParams = """{"stemmer_lang":"english"}""",
+                    ),
+                ),
+                FieldSchema(
+                    name = FIELD_CONTENT_NGRAM,
+                    type = FieldType.STRING,
+                    indexParams = IndexParams.FtsParams(tokenizer = "ngram"),
                 ),
                 FieldSchema(
                     name = FIELD_COLLECTION_ID,
