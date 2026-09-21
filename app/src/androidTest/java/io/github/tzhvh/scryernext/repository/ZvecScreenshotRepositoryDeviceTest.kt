@@ -14,6 +14,7 @@ import io.github.tzhvh.scryernext.ingestion.ZvecWriteSink
 import io.github.tzhvh.scryernext.persistence.ContentMetadataCacheDaoFake
 import io.github.tzhvh.scryernext.persistence.ScreenshotDatabase
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
+import io.github.tzhvh.scryernext.search.RankPolicy
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -142,6 +143,45 @@ class ZvecScreenshotRepositoryDeviceTest {
         val results = repo.searchScreenshotList("matchme")
         assertEquals("the stale ghost doc must be filtered; only the live row surfaces", 1, results.size)
         assertEquals(liveUri, results[0].uri)
+    }
+
+    /**
+     * Phase 2.1 step 1 — the [RankPolicy] drives the order the façade returns (the line-213 recency
+     * sort is dead). Fixture: the OLDER doc matches both query terms (higher BM25 — stronger per the
+     * v0.7.0 pinned `bm25OrdersStrongerFtsMatchFirst` ordering), the NEWER doc matches one. Relevance
+     * and Recency must therefore disagree, each producing its documented order end-to-end through
+     * bridge + rankStage — the score map never leaks to the UI, but its effect is observable here.
+     */
+    @Test fun rankPolicy_drivesFacadeOrder_relevanceVsRecency() = runBlocking {
+        val (repo, sink, _) = newRepo()
+        val oldUri = "content://media/old-${System.nanoTime()}"
+        val newUri = "content://media/new-${System.nanoTime()}"
+        repo.addScreenshot(
+            listOf(
+                ScreenshotModel(id = "id-old", uri = oldUri, displayName = "old.png",
+                    size = 1L, lastModified = 1_000L, collectionId = "col"),
+                ScreenshotModel(id = "id-new", uri = newUri, displayName = "new.png",
+                    size = 1L, lastModified = 2_000L, collectionId = "col"),
+            )
+        )
+        sink.commit(
+            Candidate(locator = oldUri, byteHandle = { ByteArrayInputStream("old-bytes".toByteArray()) }),
+            text = "receipt total invoice billing",
+            processed = true,
+            bytes = "old-bytes".toByteArray(),
+        )
+        sink.commit(
+            Candidate(locator = newUri, byteHandle = { ByteArrayInputStream("new-bytes".toByteArray()) }),
+            text = "receipt",
+            processed = true,
+            bytes = "new-bytes".toByteArray(),
+        )
+
+        val relevance = repo.searchScreenshotList("receipt invoice", RankPolicy.Relevance)
+        assertEquals("the two-term (stronger BM25) doc leads under Relevance", oldUri, relevance[0].uri)
+
+        val recency = repo.searchScreenshotList("receipt invoice", RankPolicy.Recency)
+        assertEquals("the newer doc leads under Recency", newUri, recency[0].uri)
     }
 
     private fun sha256Hex(bytes: ByteArray): String {

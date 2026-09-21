@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.Flow
 import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.ingestion.Candidate
+import io.github.tzhvh.scryernext.search.RankPolicy
 
 /**
  * The result of a dedup check — [isKnown] returns this rather than a bare Boolean so the engine's
@@ -52,8 +53,19 @@ interface ScreenshotRepository {
     fun getScreenshots(collectionIds: List<String>): Flow<List<ScreenshotModel>>
     suspend fun getScreenshotList(collectionIds: List<String>): List<ScreenshotModel>
     suspend fun deleteScreenshot(screenshot: ScreenshotModel)
-    fun searchScreenshots(queryText: String): Flow<List<ScreenshotModel>>
-    suspend fun searchScreenshotList(queryText: String): List<ScreenshotModel>
+    /**
+     * FTS search, ranked per [policy] before it reaches the UI (Phase 2.1 step 1 — the RankStage
+     * seam; default [RankPolicy.Blended]). The returned list is already in the policy's final
+     * order — callers must not re-sort it.
+     */
+    fun searchScreenshots(
+        queryText: String,
+        policy: RankPolicy = RankPolicy.Blended(),
+    ): Flow<List<ScreenshotModel>>
+    suspend fun searchScreenshotList(
+        queryText: String,
+        policy: RankPolicy = RankPolicy.Blended(),
+    ): List<ScreenshotModel>
 
     /**
      * Fetch a screenshot's OCR content text from zvec (decision D14: kept, impl → zvec). Signature

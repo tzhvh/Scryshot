@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.ingestion.Candidate
+import io.github.tzhvh.scryernext.search.RankPolicy
 
 @Suppress("unused")
 open class ScreenshotInMemoryRepository : ScreenshotRepository {
@@ -84,11 +85,11 @@ open class ScreenshotInMemoryRepository : ScreenshotRepository {
         return null
     }
 
-    override fun searchScreenshots(queryText: String): Flow<List<ScreenshotModel>> {
+    override fun searchScreenshots(queryText: String, policy: RankPolicy): Flow<List<ScreenshotModel>> {
         return screenshotData.asStateFlow()
     }
 
-    override suspend fun searchScreenshotList(queryText: String): List<ScreenshotModel> {
+    override suspend fun searchScreenshotList(queryText: String, policy: RankPolicy): List<ScreenshotModel> {
         return screenshotList
     }
 

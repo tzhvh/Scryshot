@@ -52,6 +52,12 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
     private var collectionList = emptyList<CollectionModel>()
     private lateinit var viewModel: ScreenshotViewModel
 
+    /**
+     * Phase 2.1 step 1 (2.1-D6): the active sort policy, owned here and applied by the repository's
+     * RankStage — the fragment renders the returned list as-is. Blended is the shipped default.
+     */
+    private var rankPolicy: RankPolicy = RankPolicy.Blended()
+
     private var actionModeMenu: Menu? = null
     private var isIndexing: Boolean = false
     private var enterTimeMillis: Long = 0
@@ -189,34 +195,7 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
 
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 screenshotAdapter.showLoadingView(LoadingViewModel(getText(R.string.search_transition_searching)))
-                searchJob?.cancel()
-                searchJob = viewLifecycleOwner.lifecycleScope.launch {
-                    repeatOnLifecycle(Lifecycle.State.STARTED) {
-                        viewModel.searchScreenshots(s.toString()).collect { screenshots ->
-                            binding.subtitleLayout.visibility = if (screenshots.isEmpty()) {
-                                View.GONE
-                            } else {
-                                View.VISIBLE
-                            }
-                            binding.emptyView.visibility = if (screenshots.isEmpty() && s?.isNotEmpty() == true && !isIndexing) {
-                                View.VISIBLE
-                            } else {
-                                View.GONE
-                            }
-
-                            if (s?.isEmpty() == true || !isIndexing) {
-                                screenshotAdapter.showLoadingView(null)
-                            }
-
-                            binding.subtitleTextView.text = getString(R.string.search_separator_results, screenshots.size)
-
-                            screenshots.sortedByDescending { it.lastModified }.let { sorted ->
-                                screenshotAdapter.screenshotList = sorted
-                                screenshotAdapter.notifyDataSetChanged()
-                            }
-                        }
-                    }
-                }
+                startSearchJob(s.toString())
 
                 binding.clear.visibility = if (binding.searchEditText.text?.isNotEmpty() == true) {
                     View.VISIBLE
@@ -239,6 +218,8 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
 
         binding.clear.setOnClickListener { binding.searchEditText.setText("") }
 
+        binding.sortToggle.setOnClickListener { cycleRankPolicy() }
+
         binding.selectAllCheckbox.setOnClickListener { _ ->
             val isChecked = binding.selectAllCheckbox.isChecked
             binding.selectAllCheckbox.invalidate()
@@ -258,6 +239,61 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
             hideKeyboard(binding.searchEditText)
             false
         }
+    }
+
+    /**
+     * One search = one debounced job: query the repository under the active [rankPolicy] and render
+     * the list as returned (Phase 2.1 step 1 — the fragment no longer re-sorts; the RankStage in
+     * [io.github.tzhvh.scryernext.repository.ZvecScreenshotRepository] owns the order). Shared by
+     * the text watcher and the sort toggle (a policy change re-runs the search).
+     */
+    private fun startSearchJob(query: String) {
+        searchJob?.cancel()
+        searchJob = viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.searchScreenshots(query, rankPolicy).collect { screenshots ->
+                    binding.subtitleLayout.visibility = if (screenshots.isEmpty()) {
+                        View.GONE
+                    } else {
+                        View.VISIBLE
+                    }
+                    binding.emptyView.visibility = if (screenshots.isEmpty() && query.isNotEmpty() && !isIndexing) {
+                        View.VISIBLE
+                    } else {
+                        View.GONE
+                    }
+
+                    if (query.isEmpty() || !isIndexing) {
+                        screenshotAdapter.showLoadingView(null)
+                    }
+
+                    binding.subtitleTextView.text = getString(R.string.search_separator_results, screenshots.size)
+
+                    screenshotAdapter.screenshotList = screenshots
+                    screenshotAdapter.notifyDataSetChanged()
+                }
+            }
+        }
+    }
+
+    /** Blended → Relevance → Recency → Blended, then re-runs the current query under the new policy. */
+    private fun cycleRankPolicy() {
+        rankPolicy = when (rankPolicy) {
+            is RankPolicy.Blended -> RankPolicy.Relevance
+            RankPolicy.Relevance -> RankPolicy.Recency
+            RankPolicy.Recency -> RankPolicy.Blended()
+        }
+        updateSortToggle()
+        startSearchJob(binding.searchEditText.text.toString())
+    }
+
+    private fun updateSortToggle() {
+        val label = when (rankPolicy) {
+            is RankPolicy.Blended -> R.string.search_sort_blended
+            RankPolicy.Relevance -> R.string.search_sort_relevance
+            RankPolicy.Recency -> R.string.search_sort_recent
+        }
+        binding.sortToggle.text = getString(R.string.search_sort_label, getString(label))
     }
 
     override fun onDestroyView() {
@@ -294,6 +330,7 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
 
         setHasOptionsMenu(true)
         setupActionBar()
+        updateSortToggle()
         initScreenshotList(activity)
     }
 
@@ -376,11 +413,9 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
 
         searchJob = viewLifecycleOwner.lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.searchScreenshots("").collect { screenshots ->
-                    screenshots.sortedByDescending { it.lastModified }.let { sorted ->
-                        screenshotAdapter.screenshotList = sorted
-                        screenshotAdapter.notifyDataSetChanged()
-                    }
+                viewModel.searchScreenshots("", rankPolicy).collect { screenshots ->
+                    screenshotAdapter.screenshotList = screenshots
+                    screenshotAdapter.notifyDataSetChanged()
                 }
             }
         }

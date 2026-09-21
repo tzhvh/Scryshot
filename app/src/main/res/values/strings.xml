@@ -232,6 +232,11 @@
     <string name="search_error_content_try">Try another word</string>
     <!-- Parameter %1$d is the quantity of matched search results, i.e. 100 results -->
     <string name="search_separator_results">%1$d results</string>
+    <!-- Search result sort policies (Phase 2.1 RankStage; the toggle cycles through them) -->
+    <string name="search_sort_label">Sort: %1$s</string>
+    <string name="search_sort_blended">Blended</string>
+    <string name="search_sort_relevance">Relevance</string>
+    <string name="search_sort_recent">Recent</string>
     <!-- String displayed to inform users the progress of text recognition. Parameter %1$d is the quantity of screenshot files, i.e. 100 screenshots remaining -->
     <string name="search_transition_progress">%1$d screenshots remaining&#8230;</string>
     <!-- String displayed to provide more details when text recognition is done -->

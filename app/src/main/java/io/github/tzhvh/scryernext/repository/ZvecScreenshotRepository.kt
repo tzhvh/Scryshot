@@ -9,6 +9,9 @@ import android.util.Log
 import io.github.tzhvh.scryernext.ZvecEventRecorder
 import io.github.tzhvh.scryernext.ingestion.ZvecContentStore
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
+import io.github.tzhvh.scryernext.search.DefaultRankStage
+import io.github.tzhvh.scryernext.search.RankPolicy
+import io.github.tzhvh.scryernext.search.RankStage
 import io.github.tzhvh.scryernext.zvec.ZvecValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -48,6 +51,7 @@ import kotlinx.coroutines.withContext
 class ZvecScreenshotRepository(
     private val delegate: ScreenshotDatabaseRepository,
     private val store: ZvecContentStore,
+    private val rankStage: RankStage = DefaultRankStage,
 ) : ScreenshotRepository by delegate {
 
     /**
@@ -76,17 +80,16 @@ class ZvecScreenshotRepository(
      * re-runs the zvec query + Room lookup. The zvec result is finite (zvec returns a ranked set, not
      * a stream), so the flow emits exactly once per query and completes.
      *
-     * Rank order is preserved by indexing the Room rows by `uri` and walking the zvec result order
-     * (NOT the Room result order). A locator absent from Room (the screenshot was deleted between the
-     * zvec FTS query and the lookup — a delete-during-search race) is filtered **silently**: a stale
-     * zvec doc must not surface in search. Logged at debug so the staleness is observable.
+     * Rank order leaving this method is the [policy]'s order, applied by [rankStage] over the
+     * bridged rows + the engine score map (Phase 2.1 step 1) — callers render the list as returned;
+     * the old downstream recency re-sort is gone. Changing the policy re-runs the search.
      */
-    override fun searchScreenshots(queryText: String): Flow<List<ScreenshotModel>> = flow {
-        emit(searchZvecAndBridge(queryText))
+    override fun searchScreenshots(queryText: String, policy: RankPolicy): Flow<List<ScreenshotModel>> = flow {
+        emit(searchZvecAndBridge(queryText, policy))
     }.flowOn(Dispatchers.IO)
 
-    override suspend fun searchScreenshotList(queryText: String): List<ScreenshotModel> =
-        withContext(Dispatchers.IO) { searchZvecAndBridge(queryText) }
+    override suspend fun searchScreenshotList(queryText: String, policy: RankPolicy): List<ScreenshotModel> =
+        withContext(Dispatchers.IO) { searchZvecAndBridge(queryText, policy) }
 
     /**
      * The shared zvec-FTS-then-batched-Room-lookup body for both the Flow and the List entry points.
@@ -97,8 +100,13 @@ class ZvecScreenshotRepository(
      * pointed at; bridging by hash returns ALL surviving Room rows for each matched hash, so
      * deleting one duplicate doesn't make the others unsearchable. Rank order is preserved by
      * walking the zvec result order and expanding each hash's rows in place.
+     *
+     * Phase 2.1 step 1 (2.1-D1/D7): the engine score also survives the bridge — `doc.score` (the
+     * fused BM25, higher = stronger per the v0.7.0 pinned ordering) is collected per PK and passed
+     * with the rows to [rankStage], which owns the final order per [policy]. The score never rides
+     * on [ScreenshotModel]; it lives in this parallel map and dies here.
      */
-    private suspend fun searchZvecAndBridge(queryText: String): List<ScreenshotModel> {
+    private suspend fun searchZvecAndBridge(queryText: String, policy: RankPolicy): List<ScreenshotModel> {
         val trimmed = queryText.trim()
         if (trimmed.isEmpty()) return emptyList()
 
@@ -106,11 +114,16 @@ class ZvecScreenshotRepository(
         if (docs.isEmpty()) return emptyList()
 
         // The content_hash (zvec doc PK) is the gallery-row bridge. Collect PKs preserving zvec
-        // rank order; de-dup the PK list (a multi-term match can return the same doc twice).
+        // rank order; de-dup the PK list (a multi-term match can return the same doc twice). The
+        // first sighting of a PK carries its score.
         val rankedHashes = ArrayList<String>(docs.size)
+        val scores = HashMap<String, Float>(docs.size)
         val seen = HashSet<String>()
         for (doc in docs) {
-            if (doc.pk.isNotEmpty() && seen.add(doc.pk)) rankedHashes.add(doc.pk)
+            if (doc.pk.isNotEmpty() && seen.add(doc.pk)) {
+                rankedHashes.add(doc.pk)
+                scores[doc.pk] = doc.score ?: 0f
+            }
         }
         if (rankedHashes.isEmpty()) return emptyList()
 
@@ -137,7 +150,7 @@ class ZvecScreenshotRepository(
                 result.addAll(hashRows)
             }
         }
-        return result
+        return rankStage.apply(result, scores, policy)
     }
 
     /**

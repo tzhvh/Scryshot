@@ -19,6 +19,7 @@ import kotlinx.coroutines.withContext
 import io.github.tzhvh.scryernext.R
 import io.github.tzhvh.scryernext.persistence.*
 import io.github.tzhvh.scryernext.ingestion.Candidate
+import io.github.tzhvh.scryernext.search.RankPolicy
 import java.security.MessageDigest
 
 class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : ScreenshotRepository {
@@ -269,10 +270,10 @@ class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : 
      * wired — fail loudly rather than return a silent empty result (a "search works" symptom would
      * hide the wiring regression).
      */
-    override fun searchScreenshots(queryText: String): Flow<List<ScreenshotModel>> =
+    override fun searchScreenshots(queryText: String, policy: RankPolicy): Flow<List<ScreenshotModel>> =
         throw UnsupportedOperationException("searchScreenshots is served by ZvecScreenshotRepository (zvec); wire the façade.")
 
-    override suspend fun searchScreenshotList(queryText: String): List<ScreenshotModel> =
+    override suspend fun searchScreenshotList(queryText: String, policy: RankPolicy): List<ScreenshotModel> =
         throw UnsupportedOperationException("searchScreenshotList is served by ZvecScreenshotRepository (zvec); wire the façade.")
 
     /**

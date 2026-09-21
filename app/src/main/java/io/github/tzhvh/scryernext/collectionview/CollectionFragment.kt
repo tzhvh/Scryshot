@@ -35,6 +35,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import io.github.tzhvh.scryernext.*
 import io.github.tzhvh.scryernext.Observer
+import io.github.tzhvh.scryernext.search.DefaultRankStage
+import io.github.tzhvh.scryernext.search.RankPolicy
 import io.github.tzhvh.scryernext.databinding.DialogCollectionInfoBinding
 import io.github.tzhvh.scryernext.databinding.DialogScreenshotInfoBinding
 import io.github.tzhvh.scryernext.databinding.FragmentCollectionBinding
@@ -411,7 +413,10 @@ class CollectionFragment : Fragment() {
                         _binding?.emptyView?.visibility = View.VISIBLE
                     }
 
-                    screenshots.sortedByDescending { it.lastModified }.let { sorted ->
+                    // Phase 2.1 step 1: the recency sort routes through the RankStage (2.1-D1).
+                    // Collection browse is Room-backed (no score map) and stays recency-ordered —
+                    // regression parity with the old inline sortedByDescending, via the shared seam.
+                    DefaultRankStage.apply(screenshots, emptyMap(), RankPolicy.Recency).let { sorted ->
                         screenshotAdapter.screenshotList = sorted
                         screenshotAdapter.notifyDataSetChanged()
                     }

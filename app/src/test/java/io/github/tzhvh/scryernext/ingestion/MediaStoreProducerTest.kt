@@ -7,6 +7,7 @@ package io.github.tzhvh.scryernext.ingestion
 
 import android.content.ContentResolver
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
+import io.github.tzhvh.scryernext.search.RankPolicy
 import io.github.tzhvh.scryernext.repository.DedupResult
 import io.github.tzhvh.scryernext.repository.ScreenshotRepository
 import kotlinx.coroutines.flow.Flow
@@ -49,8 +50,8 @@ class MediaStoreProducerTest {
         override fun getScreenshots(collectionIds: List<String>): Flow<List<ScreenshotModel>> = TODO()
         override suspend fun getScreenshotList(collectionIds: List<String>): List<ScreenshotModel> = TODO()
         override suspend fun deleteScreenshot(screenshot: ScreenshotModel) = TODO()
-        override fun searchScreenshots(queryText: String): Flow<List<ScreenshotModel>> = TODO()
-        override suspend fun searchScreenshotList(queryText: String): List<ScreenshotModel> = TODO()
+        override fun searchScreenshots(queryText: String, policy: RankPolicy): Flow<List<ScreenshotModel>> = TODO()
+        override suspend fun searchScreenshotList(queryText: String, policy: RankPolicy): List<ScreenshotModel> = TODO()
         override suspend fun getUnprocessedCount(): Int = TODO()
         override suspend fun getScreenshotByUri(uri: String): ScreenshotModel? = TODO()
         override suspend fun getContentText(screenshot: ScreenshotModel): String? = TODO()
