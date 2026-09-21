@@ -15,6 +15,7 @@ import io.github.tzhvh.scryernext.repository.ScreenshotRepository
 import io.github.tzhvh.scryernext.repository.ZvecScreenshotRepository
 import io.github.tzhvh.scryernext.setting.PreferenceSettingsRepository
 import io.github.tzhvh.scryernext.setting.SettingsRepository
+import io.github.tzhvh.scryernext.ZvecEventRecorder
 import io.github.tzhvh.scryernext.repository.LastModifiedBackfill
 import io.github.tzhvh.scryernext.util.launchIO
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -251,11 +252,18 @@ class ScryerApplication : Application() {
         }
         isBackfillDone = backfillMarker.isDone()
         launchIO {
-            LastModifiedBackfill(
-                store = zvecContentStore,
-                rowSource = { screenshotRepository.getScreenshotList() },
-                marker = backfillMarker,
-            ).runIfNeeded()
+            // Guarded: launchIO has no exception handler, and runIfNeeded throws on any
+            // store/Room failure — an unguarded throw here is process death at launch
+            // (review P1 fix). A failed pass leaves the marker unset; the next start retries.
+            runCatching {
+                LastModifiedBackfill(
+                    store = zvecContentStore,
+                    rowSource = { screenshotRepository.getScreenshotList() },
+                    marker = backfillMarker,
+                ).runIfNeeded()
+            }.onFailure {
+                ZvecEventRecorder.record { "last_modified backfill failed (retries next start): ${it.message}" }
+            }
         }
 
         // zvec Phase 2, issue 03 — the write-side cutover. The sink writes OCR content to zvec

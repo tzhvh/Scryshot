@@ -228,9 +228,9 @@ class ZvecScreenshotRepositoryDeviceTest {
      *     (the R8-pinned three-valued-logic contract);
      *  2. [LastModifiedBackfill] re-upserts it with the row's capture time and flips the marker;
      *  3. the same filter then recalls it — backfill-before-shipping demonstrably un-hides rows.
-     * The store's DDL self-heal (healSchemaDdl) is incidentally discharged on every newRepo(): the
-     * fresh collection already declares the column, so the open-path add runs the ALREADY_EXISTS
-     * no-op without error.
+     * The store creates every fresh collection with the column declared from birth
+     * (SCHEMA_VERSION 3 marker-bump — the runtime add_column path was found data-destructive
+     * on v0.7.0 and removed), so this test exercises the shipped create shape directly.
      */
     @Test fun dateRangeFilter_backfill_unhidesNullRows() = runBlocking {
         val (repo, sink, store) = newRepo()

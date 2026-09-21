@@ -218,6 +218,13 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         recentSearches = RecentSearches(RecentSearchesPrefs(requireContext()))
         isAdvancedOpen = savedInstanceState?.getBoolean(STATE_ADVANCED_OPEN, false) ?: false
+        // The empty-query state is the entry state too (UX-1): show recent searches immediately,
+        // not only after the user types and deletes text (review P1 fix).
+        if (binding.searchEditText.text?.isEmpty() == true) {
+            binding.recentSearchesView.visibility = View.VISIBLE
+            binding.screenshotListView.visibility = View.GONE
+            rebuildRecentSearches()
+        }
         binding.advancedToggle.setOnClickListener {
             isAdvancedOpen = !isAdvancedOpen
             updateAdvancedRegion()
@@ -420,8 +427,8 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
     }
 
     /**
-     * Phase 2.1 step 5 — the Advanced disclosure (UX-2). The control renders only when it has
-     * something to offer (collection chips exist); an empty corpus must not show a dead toggle.
+     * Phase 2.1 step 5 — the Advanced disclosure (UX-2). Always rendered since the precision
+     * dial joined the panel (2.1-D13); the chip row inside still gates on collections existing.
      */
     private fun updateAdvancedRegion() {
         // Since the precision dial joined the panel (2.1-D13) the Advanced control always has
@@ -627,8 +634,10 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
 
     private fun onIndexEnd() {
         screenshotAdapter.showLoadingView(null)
+        // Don't stack the zero-results view on a live parse-error state (review P3 fix).
         if (screenshotAdapter.screenshotList.isEmpty()
-                && binding.searchEditText.text?.isNotEmpty() == true) {
+                && binding.searchEditText.text?.isNotEmpty() == true
+                && binding.errorView.visibility != View.VISIBLE) {
             binding.emptyView.visibility = View.VISIBLE
         }
         isIndexing = false

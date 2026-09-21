@@ -100,7 +100,7 @@ class SearchAdapter(
             return VIEW_TYPE_LOADING
         }
 
-        return VIEW_TYPE_ITEM
+        return if (listMode) VIEW_TYPE_LIST_ITEM else VIEW_TYPE_ITEM
     }
 
     override fun getItemCount(): Int {

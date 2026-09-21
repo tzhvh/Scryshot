@@ -53,6 +53,14 @@ class ProcessFtsQueryTest {
         assertEquals("a b*", processFtsQuery("  a   b  "))
     }
 
+    @Test
+    fun anyWhitespaceKind_splits_tabAndNewline() {
+        // The shipped parser splits on \s+ — broader than the Room-era space-only splitter.
+        // Pinned so the regression net states the actual contract (review P3 fix).
+        assertEquals("a b*", processFtsQuery("a\tb"))
+        assertEquals("a b*", processFtsQuery("a\nb"))
+    }
+
     // ---- exclusion path (new; R9-pinned engine contract) ----
 
     @Test
