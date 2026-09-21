@@ -172,7 +172,7 @@ class BronzeHarnessTest {
             "[$arm] Recall@10=%.3f @50=%.3f @200=%.3f median=%dms n=%d".format(m.recallAt10, m.recallAt50, m.recallAt200, m.medianLatencyMs, m.queries)
 
         var scored = 0
-        listOf("baseline", "fused_ngram", "stemmed_only", "fused_stemmed", "fused_stemmed_w30", "fused_stemmed_w10").forEach { config ->
+        listOf("baseline", "fused_ngram", "stemmed_only", "fused_stemmed", "fused_stemmed_w30", "fused_stemmed_w10", "B5_final").forEach { config ->
             val f = File("/tmp/bronze_results_$config.json")
             if (!f.exists()) return@forEach
             val (ranked, latency) = parse(f)
