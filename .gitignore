@@ -73,6 +73,7 @@ fastlane/readme.md
 .agent/
 .devin/
 .commandcode/
+.zcode/
 
 # Scratch directories and temporary scripts used by agents for testing/experiments
 scratch/

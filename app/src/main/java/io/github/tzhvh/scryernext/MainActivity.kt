@@ -15,10 +15,13 @@ import androidx.appcompat.app.ActionBar
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.fragment.app.FragmentActivity
-import androidx.lifecycle.Observer
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import io.github.tzhvh.scryernext.databinding.ActivityMainBinding
+import io.github.tzhvh.scryernext.ingestion.Progress
 import io.github.tzhvh.scryernext.preference.PreferenceWrapper
-import io.github.tzhvh.scryernext.scan.ContentScanner
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
@@ -55,17 +58,27 @@ class MainActivity : AppCompatActivity() {
 
         if (BuildConfig.DEBUG) {
             binding.scanProgressBar.visibility = View.VISIBLE
-            ScryerApplication.getContentScanner().getProgressState().observe(this, Observer {
-                if (it is ContentScanner.ProgressState.Progress) {
-                    updateDebugProgress(it)
+            // Issue 17: source-swapped from ContentScanner.getProgressState() LiveData onto the
+            // app-scope StateFlow<Progress>. Indexing -> bar; anything else -> hidden (the old
+            // current==total->GONE fold is subsumed by "not Indexing").
+            lifecycleScope.launch {
+                lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    ScryerApplication.getIngestionProgressStore().progress.collect { progress ->
+                        val indexing = progress as? Progress.Indexing
+                        if (indexing != null) {
+                            updateDebugProgress(indexing)
+                        } else {
+                            binding.scanProgressBar.visibility = View.GONE
+                        }
+                    }
                 }
-            })
+            }
         }
     }
 
 
 
-    private fun updateDebugProgress(progress: ContentScanner.ProgressState.Progress) {
+    private fun updateDebugProgress(progress: Progress.Indexing) {
         binding.scanProgressBar.progress = if (progress.current == progress.total) {
             100
         } else {

@@ -3,8 +3,11 @@
     native <methods>;
 }
 
-# ZvecException: constructed only from JNI (invisible to R8). Keep the ctor
-# the C++ calls and the fields it reads.
+# ZvecException: constructed by JNI (invisible to R8). The bridge ctor is
+# internal (code: Int, detail: String?) — R8 strips internal members.
 -keep class io.github.tzhvh.scryernext.zvec.ZvecException {
-    public <init>(int, java.lang.String);
+    <init>(int, java.lang.String);
+}
+-keepclassmembers class io.github.tzhvh.scryernext.zvec.ZvecException {
+    <init>(int, java.lang.String);
 }

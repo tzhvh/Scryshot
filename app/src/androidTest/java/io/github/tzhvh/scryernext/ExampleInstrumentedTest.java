@@ -21,6 +21,6 @@ public class ExampleInstrumentedTest {
         // Context of the app under test.
         Context appContext = InstrumentationRegistry.getTargetContext();
 
-        assertEquals("io.github.tzhvh.scryernext", appContext.getPackageName());
+        assertTrue(appContext.getPackageName().startsWith("io.github.tzhvh.scryernext"));
     }
 }

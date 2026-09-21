@@ -8,7 +8,6 @@ package io.github.tzhvh.scryernext.persistence
 import androidx.lifecycle.LiveData
 import androidx.room.*
 import androidx.room.OnConflictStrategy.Companion.REPLACE
-import androidx.sqlite.db.SimpleSQLiteQuery
 
 @Dao
 interface ScreenshotDao {
@@ -35,49 +34,81 @@ interface ScreenshotDao {
     @Delete
     fun deleteScreenshot(screenshot: ScreenshotModel)
 
-//    @Query("SELECT screenshot.* FROM screenshot JOIN fts ON " +
-//            "screenshot.rowid = fts.docid WHERE fts.content_text MATCH :queryText")
-//    fun searchScreenshots(queryText: String): LiveData<List<ScreenshotModel>>
-
-    /**
-     *  SELECT
-     *      s.*
-     *  FROM
-     *      screenshot s
-     *  INNER JOIN
-     *      (SELECT
-     *          content.*
-     *      FROM
-     *          screenshot_content content
-     *      INNER JOIN
-     *          fts
-     *      ON
-     *          content.`rowid` = fts.`rowid`
-     *      WHERE
-     *          fts.content_text
-     *      MATCH
-     *          :queryText) result
-     *  ON
-     *      s.id = result.id
-     */
-    @Query("SELECT s.* FROM screenshot s INNER JOIN (SELECT content.* FROM screenshot_content content INNER JOIN fts ON content.`rowid` = fts.`rowid` WHERE fts.content_text MATCH :queryText) result ON s.id = result.id")
-    fun searchScreenshots(queryText: String): LiveData<List<ScreenshotModel>>
-
-    @Query("SELECT s.* FROM screenshot s INNER JOIN (SELECT content.* FROM screenshot_content content INNER JOIN fts ON content.`rowid` = fts.`rowid` WHERE fts.content_text MATCH :queryText) result ON s.id = result.id")
-    fun searchScreenshotList(queryText: String): List<ScreenshotModel>
-
-    @RawQuery
-    fun searchScreenshotsRaw(query: SimpleSQLiteQuery) : List<ScreenshotModel>
-
     @Query("SELECT screenshot.* FROM (SELECT id, max(last_modified) AS max_date FROM screenshot GROUP BY collection_id) AS latest INNER JOIN screenshot ON latest.id = screenshot.id AND screenshot.last_modified = latest.max_date")
     fun getCollectionCovers(): LiveData<List<ScreenshotModel>>
 
-    @Query("SELECT * FROM screenshot_content")
-    fun getScreenshotContent(): LiveData<List<ScreenshotContentModel>>
+    /**
+     * zvec Phase 2, issue 03: record the [contentHash] bridge column (D13) **and** retire the row
+     * (`processed = 1`) in one update. Called by `ZvecWriteSink` *after* the zvec upsert (zvec-first
+     * ordering — a crash between the two leaves the row un-`processed`, so the producer re-pulls it
+     * and `isKnown` self-heals on the next run; R8 makes the re-upsert a no-op). The hash is the
+     * bridge `getContentText` (issue 04) fetches from zvec by.
+     */
+    @Query("UPDATE screenshot SET content_hash = :contentHash, processed = 1 WHERE id = :id")
+    fun markContentIndexed(id: String, contentHash: String)
 
-    @Insert(onConflict = REPLACE)
-    fun updateContentText(contentModel: ScreenshotContentModel)
+    /**
+     * zvec Phase B, issue 02 B0 — the wipe side of the schema-marker operation. Puts every row back
+     * in the producers' work queue (`MediaStoreProducer` pulls `WHERE processed = 0` via
+     * [getUnprocessed]), so the post-wipe empty zvec collection actually re-ingests instead of the
+     * engine skipping everything as "done". `content_hash` is deliberately left in place: re-ingest
+     * recomputes it (deterministic) and the write-path update overwrites it; the row-level "what was
+     * indexed" bookkeeping lives in the metadata cache, which the same wipe clears.
+     *
+     * Must run in the SAME operation as the zvec dir wipe (wired via `ZvecContentStore`'s
+     * `onSchemaWipe` callback) — a wipe without this leaves the queue empty; this without a wipe
+     * double-ingests. Returns the number of rows re-queued.
+     */
+    @Query("UPDATE screenshot SET processed = 0")
+    fun resetProcessedForReingest(): Int
 
-    @Query("SELECT * FROM screenshot_content WHERE id = :screenshotId")
-    fun getContentText(screenshotId: String): ScreenshotContentModel?
+    @Query("SELECT * FROM screenshot WHERE processed = 0")
+    fun getUnprocessed(): List<ScreenshotModel>
+
+    @Query("SELECT COUNT(*) FROM screenshot WHERE processed = 0")
+    fun getUnprocessedCount(): Int
+
+    @Query("SELECT COUNT(*) FROM screenshot WHERE processed = 1")
+    fun getProcessedCount(): Int
+
+    @Query("SELECT COUNT(*) FROM screenshot WHERE content_hash IS NOT NULL")
+    fun getIndexedCount(): Int
+
+    /**
+     * D4 — distinct content_hash count, the dedup-correct peer of [getIndexedCount]. N duplicate
+     * screenshots share one hash; counting raw rows overcounts and produces permanent false-positive
+     * "holes" in the drift meter (N rows vs 1 zvec doc). Counting DISTINCT hashes matches zvec's
+     * one-doc-per-hash model, so the inspector's orphan/holes math is sound under duplicates.
+     */
+    @Query("SELECT COUNT(DISTINCT content_hash) FROM screenshot WHERE content_hash IS NOT NULL")
+    fun getDistinctIndexedCount(): Int
+
+    /** Issue 11/#4: lookup by `uri` (the indexed unique column) without materializing every row. */
+    @Query("SELECT * FROM screenshot WHERE uri = :uri LIMIT 1")
+    fun getScreenshotByUri(uri: String): ScreenshotModel?
+
+    /**
+     * zvec Phase 2, issue 04: the **batched** search-result → gallery-row bridge. zvec FTS search
+     * returns content docs carrying `locator` (=uri); the UI needs the [ScreenshotModel] gallery row.
+     * Resolving each result with [getScreenshotByUri] would N+1 (40 results = 40 Room queries); this
+     * resolves the whole result set in one `WHERE uri IN (...)` query.
+     *
+     * Callers preserve zvec rank order by indexing the returned rows by `uri` (not by the Room result
+     * order) when mapping back. A row deleted from Room between the zvec FTS query and this lookup is
+     * simply absent here — the façade filters those nulls silently (a stale zvec doc must not surface).
+     */
+    @Query("SELECT * FROM screenshot WHERE uri IN (:uris)")
+    fun getScreenshotsByUri(uris: List<String>): List<ScreenshotModel>
+
+    /**
+     * zvec Phase 2, D3 — the **dedup-correct** search-result → gallery-row bridge. zvec FTS search
+     * returns content docs keyed by `content_hash`; duplicates (same bytes) collapse to one zvec doc
+     * but may have N Room rows sharing that hash. Resolving by `locator` (the old bridge) loses every
+     * duplicate except whichever one zvec's locator points at — a surviving duplicate whose uri isn't
+     * the stored locator is silently invisible to search. Resolving by `content_hash` returns ALL
+     * surviving rows for each matched hash, so deleting one duplicate doesn't make the others
+     * unsearchable.
+     */
+    @Query("SELECT * FROM screenshot WHERE content_hash IN (:hashes)")
+    fun getScreenshotsByContentHash(hashes: List<String>): List<ScreenshotModel>
 }

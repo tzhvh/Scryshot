@@ -22,7 +22,6 @@ import androidx.viewpager.widget.ViewPager
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.snackbar.Snackbar
-import com.google.mlkit.common.MlKitException
 import com.google.mlkit.vision.text.Text
 import kotlinx.coroutines.*
 import me.saket.bettermovementmethod.BetterLinkMovementMethod
@@ -32,11 +31,13 @@ import io.github.tzhvh.scryernext.collectionview.showDeleteScreenshotDialog
 import io.github.tzhvh.scryernext.collectionview.showScreenshotInfoDialog
 import io.github.tzhvh.scryernext.collectionview.showShareScreenshotDialog
 import io.github.tzhvh.scryernext.databinding.ActivityDetailPageBinding
+import io.github.tzhvh.scryernext.ingestion.MlKitOcrStage
+import io.github.tzhvh.scryernext.ScryerApplication
 import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
+import io.github.tzhvh.scryernext.repository.SearchOutcome
 import io.github.tzhvh.scryernext.preference.PreferenceWrapper
 import io.github.tzhvh.scryernext.promote.Promoter
-import io.github.tzhvh.scryernext.scan.OcrTextHelper
 import io.github.tzhvh.scryernext.sortingpanel.SortingPanelActivity
 import io.github.tzhvh.scryernext.ui.ScryerToast
 import io.github.tzhvh.scryernext.viewmodel.ScreenshotViewModel
@@ -50,6 +51,9 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         private const val EXTRA_SCREENSHOT_ID = "screenshot_id"
         private const val EXTRA_COLLECTION_ID = "collection_id"
         private const val EXTRA_SEARCH_KEYWORD = "search_keyword"
+
+        /** SHA-256 hex lookup — mirrors `ZvecWriteSink` / the repo's shared helper. */
+        val HEX = "0123456789abcdef".toCharArray()
 
         private const val SUPPORT_SLIDE = true
 
@@ -117,6 +121,16 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
 
     /* whether the user has run ocr on the current image before swiping to the next one */
     private var hasRunOcr = false
+
+    /**
+     * Issue 15 (option b): the ML Kit decode+OCR mechanism, shared with the ingestion
+     * engine. DetailPage keeps its own orchestration ([Result] taxonomy, dimension check,
+     * `isRecognizing` write gate, [Promoter] call); only the ML Kit call site moved off
+     * the former `OcrTextHelper` (deleted in Phase 3 issue `16`). Lazy like the other
+     * Activity-owned dependencies; the default `TextRecognizer` is itself lazy inside the
+     * stage's companion.
+     */
+    private val ocrStage by lazy { MlKitOcrStage() }
 
     private val screenSize: RectF by lazy {
         val size = Point().apply {
@@ -364,7 +378,10 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
                             Toast.LENGTH_SHORT).show()
                 }
 
-                OcrTextHelper.writeContentTextToDb(screenshot, result.value.text)
+                // §7.2 (issue 15): a success (incl. WeiredImageSize success-with-warning)
+                // writes the recognized text + processed=true. Write runs on Default so the
+                // isRecognizing gate below still sees the right state regardless of write timing.
+                writeOcrResultToDb(screenshot, result.value.text, result.bytes)
 
                 if (isRecognizing) {
                     isTextMode = true
@@ -380,6 +397,15 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
                 showConnectPromptSnackbar()
 
             } else if (result is Result.Failed) {
+                // §7.2 (issue 15): a permanent-content failure (corrupt/illegible) now writes
+                // processed=true-but-empty instead of writing nothing. The legacy path left such
+                // files processed=false, so issue 13's DiscoveryWorker re-counted them forever
+                // (the backlog notification that never clears — ADR 0004 §7.2). Unavailable is a
+                // transient failure (re-attemptable) and still writes nothing, by contrast.
+                // zvec Phase 2 issue 04: the bytes (if any) upsert as processed-but-empty content —
+                // the same shape the engine's ZvecWriteSink writes. A decode failure (no bytes)
+                // only flips the Room row.
+                writeOcrResultToDb(screenshot, "", result.bytes)
                 ScryerToast.makeText(this@DetailPageActivity,
                         getString(R.string.detail_ocr_error_failed),
                         Toast.LENGTH_SHORT).show()
@@ -388,6 +414,57 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
             isRecognizing = false
             updateUI()
         }
+    }
+
+    /**
+     * DetailPage's single-file write (issue 15) — zvec Phase 2 issue 04: re-pointed to the **same
+     * zvec-upsert-then-[markContentIndexed] two-step** the engine's [io.github.tzhvh.scryernext.ingestion.ZvecWriteSink]
+     * performs. The old path wrote a `ScreenshotContentModel` Room row + flipped `processed`; the Room
+     * content table is gone (issue 04), so content goes to zvec and Room just records the bridge hash
+     * + retires the row.
+     *
+     * **Call order is load-bearing (D13): zvec-first, then Room.** A crash between the two leaves the
+     * row un-`processed` → the producer re-pulls it → the engine re-reads, `isKnown` returns `true`
+     * (hash already in zvec), the dedup-skip seam retires the row, and R8 makes the would-be re-upsert
+     * a no-op. Self-healing, no orphans. Never reverse — Room-first would leave a row marked
+     * `processed = 1` pointing at a nonexistent zvec doc.
+     *
+     * [bytes] is the file content [runTextRecognition] read once (issue 15 owns the READ); the hash is
+     * computed from it with no re-open (single-open, matching the engine sink). A null [bytes] (a
+     * decode failure that never read the file) skips the zvec upsert and only retires the Room row —
+     * there's no content to index. Transient (Unavailable) outcomes never call this.
+     */
+    private suspend fun writeOcrResultToDb(screenshot: ScreenshotModel, contentText: String, bytes: ByteArray?) {
+        val store = ScryerApplication.getZvecContentStore()
+        // ── zvec-first (D13) ──────────────────────────────────────────────────────────────
+        // Upsert content to zvec on the content_hash PK (R8: idempotent), then flush for durability.
+        // Empty `contentText` is the processed-but-empty case (§7.2 permanent-content failure).
+        if (bytes != null) {
+            val contentHash = sha256Hex(bytes)
+            store.upsert(
+                contentHash = contentHash,
+                locator = screenshot.uri,
+                content = contentText,
+                collectionId = screenshot.collectionId,
+            )
+            store.flush()
+            // ── then Room: record the bridge hash + retire the row (one update). ──────────────
+            viewModel.markContentIndexed(screenshot, contentHash)
+        } else {
+            // Decode failure — no bytes to hash/index; just retire the row so it leaves the queue.
+            viewModel.updateScreenshots(listOf(screenshot.copy(processed = true)))
+        }
+    }
+
+    /** SHA-256 hex — the zvec content_hash PK. Mirrors `ZvecWriteSink` / the repo's shared helper. */
+    private fun sha256Hex(bytes: ByteArray): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        val sb = StringBuilder(digest.size * 2)
+        for (b in digest) {
+            val v = b.toInt() and 0xff
+            sb.append(HEX[v ushr 4]).append(HEX[v and 0x0f])
+        }
+        return sb.toString()
     }
 
     private fun showConnectPromptSnackbar() {
@@ -400,52 +477,82 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
     }
 
     private suspend fun runTextRecognition(screenshot: ScreenshotModel): Result {
-        val decoded = try {
+        // Issue 15 (option b): DetailPage owns the READ — opens the ContentResolver stream and
+        // hands the stage `bytes`, mirroring how IngestionEngine consumes Candidate.byteHandle.
+        // The stage (MlKitOcrStage.recognize) owns DECODE+OCR over those bytes — the same stage
+        // boundary the engine honours. The legacy OcrTextHelper path is no longer referenced
+        // from DetailPage (deleted outright in Phase 3 issue `16`).
+        val bytes = try {
             val resolver = contentResolver
             resolver.openInputStream(android.net.Uri.parse(screenshot.uri))?.use { input ->
-                BitmapFactory.decodeStream(input)
+                input.readBytes()
             } ?: return Result.Failed("decode failed: unable to open screenshot uri")
         } catch (e: Error) {
             return Result.Failed("decode failed: " + e.message)
         }
 
-        return try {
-            val result = OcrTextHelper.extractText(decoded)
-            if (isValidSize(decoded)) {
-                Result.Success(result)
-            } else {
-                Result.WeiredImageSize(
-                        result,
-                        "weird image size: ${decoded.width}x${decoded.height}"
-                )
+        // Probe the bitmap bounds cheaply (no allocation) for the dimension check, without
+        // decoding the full bitmap — the stage decodes internally. Mirrors the standard
+        // inJustDecodeBounds pattern; keeps recognize(bytes) returning only Text + outcome.
+        val size = try {
+            probeBitmapSize(bytes) ?: return Result.Failed("decode failed: unreadable bitmap header")
+        } catch (e: Throwable) {
+            return Result.Failed("decode failed: " + e.message)
+        }
+        return when (val outcome = ocrStage.recognize(bytes)) {
+            is OcrTextResult.Success -> {
+                if (isValidSize(size.width, size.height)) {
+                    Result.Success(outcome.text, bytes)
+                } else {
+                    Result.WeiredImageSize(
+                            outcome.text,
+                            bytes,
+                            "weird image size: ${size.width}x${size.height}"
+                    )
+                }
             }
-
-        } catch (e: Exception) {
-            if ((e as? MlKitException)?.errorCode == MlKitException.UNAVAILABLE) {
-                Result.Unavailable("recognize failed: " + e.message)
-            } else {
-                Result.Failed("recognize failed: " + e.message)
-            }
+            is OcrTextResult.TransientFailure ->
+                Result.Unavailable("recognize failed: " + outcome.cause.message)
+            OcrTextResult.PermanentContentFailure ->
+                // §7.2 permanent-content failure: the bytes were read but the image is illegible.
+                // Carry them so writeOcrResultToDb can upsert processed-but-empty content to zvec
+                // (the same hash the engine sink would write), keeping the two write paths identical.
+                Result.Failed("recognize failed: permanent content failure", bytes)
         }
     }
 
-    private fun isValidSize(bitmap: Bitmap): Boolean {
-        return if (bitmap.width >= bitmap.height) {
-            isValidLandscapeSize(bitmap)
+    /**
+     * Cheap dimension probe via `inJustDecodeBounds = true` — decodes only the bitmap
+     * header (no pixel allocation), so [isValidSize] can run without holding the full
+     * decoded [Bitmap] (which now lives inside the OCR stage).
+     */
+    private fun probeBitmapSize(bytes: ByteArray): BitmapSize? {
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        return if (opts.outWidth > 0 && opts.outHeight > 0) {
+            BitmapSize(opts.outWidth, opts.outHeight)
+        } else null
+    }
+
+    private data class BitmapSize(val width: Int, val height: Int)
+
+    private fun isValidSize(width: Int, height: Int): Boolean {
+        return if (width >= height) {
+            isValidLandscapeSize(width, height)
         } else {
-            isValidPortraitSize(bitmap)
+            isValidPortraitSize(width, height)
         }
     }
 
-    private fun isValidPortraitSize(bitmap: Bitmap): Boolean {
-        val isWidthValid = bitmap.width <= 1.5f * screenSize.width()
-        val isHeightValid = bitmap.height <= 2 * screenSize.height()
+    private fun isValidPortraitSize(width: Int, height: Int): Boolean {
+        val isWidthValid = width <= 1.5f * screenSize.width()
+        val isHeightValid = height <= 2 * screenSize.height()
         return isWidthValid && isHeightValid
     }
 
-    private fun isValidLandscapeSize(bitmap: Bitmap): Boolean {
-        val isWidthValid = bitmap.width <= screenSize.height()
-        val isHeightValid = bitmap.height <= 2 * screenSize.width()
+    private fun isValidLandscapeSize(width: Int, height: Int): Boolean {
+        val isWidthValid = width <= screenSize.height()
+        val isHeightValid = height <= 2 * screenSize.width()
         return isWidthValid && isHeightValid
     }
 
@@ -559,7 +666,11 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
                         }
                         viewModel.getScreenshotList(list)
                     }
-                    searchKeyword != null -> viewModel.searchScreenshotList(searchKeyword!!)
+                    searchKeyword != null ->
+                        // Phase 2.1 step 7: the search submission returns a SearchOutcome; the
+                        // slide-show source list only needs rows (a query error means no slide show).
+                        (viewModel.searchScreenshotList(searchKeyword!!) as? SearchOutcome.Results)?.rows
+                            ?: emptyList()
                     else -> viewModel.getScreenshotList()
                 }
             } else {
@@ -720,13 +831,21 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         }
     }
 
+    /**
+     * The OCR outcome taxonomy. The `Success` / `Failed` arms carry [bytes] — the file content
+     * [runTextRecognition] read **once** (issue 15 owns the READ) — so the zvec write
+     * ([writeOcrResultToDb]) can compute the content_hash from the same bytes with no re-open
+     * (D13's single-open rule, applied to this UI path the same way it applies to the engine sink).
+     * `Unavailable` (transient) carries no bytes — it writes nothing.
+     */
     sealed class Result {
-        open class Success(val value: Text) : Result()
+        open class Success(val value: Text, val bytes: ByteArray) : Result()
         class WeiredImageSize(
                 value: Text,
+                bytes: ByteArray,
                 @Suppress("unused") val msg: String
-        ) : Success(value)
-        open class Failed(@Suppress("unused") val msg: String) : Result()
+        ) : Success(value, bytes)
+        open class Failed(@Suppress("unused") val msg: String, val bytes: ByteArray? = null) : Result()
         class Unavailable(msg: String) : Failed(msg)
     }
 

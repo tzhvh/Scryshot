@@ -50,6 +50,9 @@ subsamplingImageView = "3.10.0"
 lottie = "6.6.0"
 betterLinkMovementMethod = "2.2.0"
 
+# LeakCanary (PROFILING_FRAMEWORK.md §3.11 — debug-only leak guardrail)
+leakcanary = "2.14"
+
 [libraries]
 # AndroidX
 appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appCompat" }
@@ -77,9 +80,17 @@ navigation-fragment-ktx = { module = "androidx.navigation:navigation-fragment-kt
 # Room (issue 16: kapt→KSP)
 room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+# On-device Room DAO/migration testing (zvec phase 2 issue 01: ContentMetadataCacheDaoTest uses
+# Room.inMemoryDatabaseBuilder; also enables MigrationTestHelper for the v4→v5 schema).
+room-testing = { module = "androidx.room:room-testing", version.ref = "room" }
 
 # WorkManager (issue 15: moved to androidx group with -ktx variant)
 work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
+
+# WorkManager on-device testing (issue 12/13/14 device smoke): TestDriver +
+# WorkManagerTestInitHelper let the instrumented tests force-run periodic work and assert
+# WorkInfo state against a deterministic scheduler. Same version as work-runtime-ktx.
+work-testing = { module = "androidx.work:work-testing", version.ref = "work" }
 
 # Kotlin
 kotlin-stdlib-jdk8 = { module = "org.jetbrains.kotlin:kotlin-stdlib-jdk8", version.ref = "kotlin" }
@@ -97,6 +108,9 @@ lottie = { module = "com.airbnb.android:lottie", version.ref = "lottie" }
 
 # BetterLinkMovementMethod
 better-link-movement-method = { module = "me.saket:better-link-movement-method", version.ref = "betterLinkMovementMethod" }
+
+# LeakCanary (PROFILING_FRAMEWORK.md §3.11 — debug-only; auto-initializes via its ContentProvider)
+leakcanary = { module = "com.squareup.leakcanary:leakcanary-android", version.ref = "leakcanary" }
 
 # Test
 junit = { module = "junit:junit", version.ref = "junit" }

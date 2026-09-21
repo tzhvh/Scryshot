@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phase 2.1 step 8: the list-mode search result card — thumbnail, display name, and a 2-3 line
+     OCR snippet with the matched terms highlighted (the adapter applies the spans). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingTop="6dp"
+    android:paddingBottom="6dp">
+
+    <ImageView
+        android:id="@+id/list_image"
+        android:layout_width="96dp"
+        android:layout_height="96dp"
+        android:scaleType="centerCrop" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/list_title"
+            style="@style/Subtitle1"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textColor="@color/grey90" />
+
+        <TextView
+            android:id="@+id/list_snippet"
+            style="@style/Body2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:maxLines="3"
+            android:ellipsize="end"
+            android:textColor="@color/grey60" />
+    </LinearLayout>
+</LinearLayout>

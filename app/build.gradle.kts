@@ -69,6 +69,13 @@ android {
         viewBinding = true
         buildConfig = true
     }
+
+    testOptions {
+        // JVM unit tests touch production code that calls android.util.Log (e.g. ZvecWriteSink's
+        // missing-row warning). Without this, unmocked android.jar stubs throw; with it they return
+        // defaults, so the Log call is a no-op on the JVM and the behaviour under test stays visible.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 // The preview flavor ships release-only — drop its debug variants.
@@ -88,6 +95,9 @@ ksp {
 }
 
 dependencies {
+    // zvec SDK (zvec Phase 2, issue 03 — the write-side cutover writes OCR content to zvec).
+    implementation(project(":zvec-android"))
+
     // AndroidX
     implementation(libs.appcompat)
     implementation(libs.material)
@@ -137,9 +147,18 @@ dependencies {
     // BetterLinkMovementMethod
     implementation(libs.better.link.movement.method)
 
+    // LeakCanary (PROFILING_FRAMEWORK.md §3.11) — debug-only leak guardrail. Auto-initializes via
+    // its own ContentProvider; no code wiring needed. Catches the Coroutine-Job-leaks-a-Fragment
+    // class that footprint tools (§3.8) never flag. `debugImplementation` keeps it out of release.
+    debugImplementation(libs.leakcanary)
+
     // Test
     testImplementation(libs.junit)
     testImplementation(libs.mockito.core)
     androidTestImplementation(libs.test.runner)
     androidTestImplementation(libs.espresso.core)
+    // WorkManager on-device testing (issue 12/13/14 device smoke).
+    androidTestImplementation(libs.work.testing)
+    // Room on-device DAO/migration testing (zvec phase 2 issue 01).
+    androidTestImplementation(libs.room.testing)
 }

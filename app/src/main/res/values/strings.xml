@@ -20,6 +20,24 @@
     <string name="notification_action_collect_title">New screenshots captured</string>
     <string name="notification_action_collect">Tap to sort your screenshots</string>
 
+    <!-- Ingestion bulk worker (issue 12): the dataSync foreground notification shown while
+         the engine OCRs a backlog. Channel name, content title, and the per-tick content text.
+         "Analyzing N of M" is ADR 0003 Context's verbatim phrasing (carried by ADR 0004 §4). -->
+    <string name="ingestion_notification_channel">Screenshot indexing</string>
+    <string name="ingestion_notification_title">Indexing screenshots</string>
+    <!-- %1$d = current (indexed + failed so far), %2$d = total this run -->
+    <string name="ingestion_notification_progress">Analyzing %1$d of %2$d</string>
+    <!-- Banner SUCCESS state: shown ~4s after a run completes, then auto-dismisses. -->
+    <string name="ingestion_banner_success">Indexing complete ✓</string>
+
+    <!-- Discovery worker (issue 13): the periodic count-and-notify notification (no OCR —
+         it counts the unindexed backlog and, if above the threshold, offers to start the bulk
+         job). %1$d = the unindexed count. "Snooze" is dismissal, not scheduling (ADR 0004 §4:
+         WM's periodic interval handles cadence). -->
+    <string name="discovery_notification_text">%1$d screenshots unindexed — search may be incomplete.</string>
+    <string name="notification_action_index">Index now</string>
+    <string name="notification_action_snooze">Snooze</string>
+
     <!-- Sorting panel: strings displayed on the sorting panel to help users categorize screenshots, 
     Refer to UX spec 1.1: legacy UX spec 1.1 -->
     <!-- String displayed to skip the current screenshot and move on to the next one -->
@@ -214,6 +232,39 @@
     <string name="search_error_content_try">Try another word</string>
     <!-- Parameter %1$d is the quantity of matched search results, i.e. 100 results -->
     <string name="search_separator_results">%1$d results</string>
+    <!-- Search result sort policies (Phase 2.1 RankStage; the toggle cycles through them) -->
+    <string name="search_sort_label">Sort: %1$s</string>
+    <string name="search_sort_blended">Blended</string>
+    <string name="search_sort_relevance">Relevance</string>
+    <string name="search_sort_recent">Recent</string>
+    <!-- Advanced search disclosure (Phase 2.1 step 5). %1$d is the count of active filters -->
+    <string name="search_advanced_label">Advanced</string>
+    <string name="search_advanced_label_count">Advanced · %1$d active</string>
+    <!-- Date-range filter (Phase 2.1 step 6). Renders only after the backfill completes. -->
+    <string name="search_date_label">Dates</string>
+    <string name="search_date_any">Any</string>
+    <string name="search_date_clear">Clear</string>
+    <!-- Precision dial (Phase 2.1, 2.1-D13): explainer previews the effect, never the mechanism -->
+    <string name="search_precision_exact">Exact</string>
+    <string name="search_precision_balanced">Balanced</string>
+    <string name="search_precision_fuzzy">Fuzzy</string>
+    <string name="search_precision_exact_hint">Whole words only — punctuation-perfect text wins.</string>
+    <string name="search_precision_balanced_hint">Recommended — tolerates partial matches.</string>
+    <string name="search_precision_fuzzy_hint">Finds fragments and OCR quirks.</string>
+    <!-- View-mode toggle (Phase 2.1 step 8): shows the mode you'd switch TO -->
+    <string name="search_mode_list">List</string>
+    <string name="search_mode_grid">Grid</string>
+    <!-- Zero-results state machine (Phase 2.1 step 9). %1$s is the query. -->
+    <string name="search_zero_title">No matches for \'%1$s\'</string>
+    <string name="search_zero_content_no_filter">Try fewer terms.</string>
+    <string name="search_zero_content_filters">Not in the filtered collections.</string>
+    <string name="search_zero_relax">Search all collections</string>
+    <!-- Empty-query state: the persisted last-N searches (Phase 2.1 step 9) -->
+    <string name="search_recent_title">Recent searches</string>
+    <string name="search_recent_clear">Clear</string>
+    <!-- Recoverable parse-error state (Phase 2.1 step 7, 2.1-D10) -->
+    <string name="search_error_parse_title">Couldn\'t search for that</string>
+    <string name="search_error_parse_content">Try simpler terms.</string>
     <!-- String displayed to inform users the progress of text recognition. Parameter %1$d is the quantity of screenshot files, i.e. 100 screenshots remaining -->
     <string name="search_transition_progress">%1$d screenshots remaining&#8230;</string>
     <!-- String displayed to provide more details when text recognition is done -->

@@ -23,8 +23,10 @@ import io.github.tzhvh.scryernext.sortingpanel.SortingPanelActivity
 
 open class ScreenshotAdapter(
         private val context: Context?,
-        private val selector: ListSelector<ScreenshotModel>? = null,
-        private val onItemClickListener: ((item: ScreenshotModel, view: View?, position: Int) -> Unit)? = null
+        // `protected` (not private) so SearchAdapter's list-mode view type can wire the same
+        // selection + click plumbing its grid view type inherits (Phase 2.1 step 8).
+        protected val selector: ListSelector<ScreenshotModel>? = null,
+        protected val onItemClickListener: ((item: ScreenshotModel, view: View?, position: Int) -> Unit)? = null
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>(), OnContextMenuActionListener {
 
     var screenshotList: List<ScreenshotModel> = emptyList()

@@ -19,6 +19,13 @@ import java.util.*
  * The v2→v3 migration is destructive (rows wiped): this is a personal fork with no users to
  * migrate, and zvec treats path/URI as an opaque locator string, so the identity change is
  * invisible downstream.
+ *
+ * `content_hash` (zvec Phase 2, issue 03) is the **read bridge** to zvec (decision D13): the gallery
+ * row is keyed by UUID (`id`), but zvec's screenshot-content doc is keyed by SHA-256 content_hash, so
+ * a content-text read (`getContentText`, issue 04) needs the hash on the row to fetch
+ * (`zvec.fetch(screenshot.contentHash)`). Nullable — populated by `ZvecWriteSink` after the zvec
+ * upsert (zvec-first ordering, D13); a null means "not yet indexed into zvec." This extends an
+ * existing coupling (the row already carries `uri`, zvec's `locator`) rather than creating a new one.
  */
 @Entity(tableName = "screenshot",
         indices = [
@@ -32,7 +39,9 @@ data class ScreenshotModel constructor (
         @ColumnInfo(name = "display_name") var displayName: String,
         @ColumnInfo(name = "size") var size: Long,
         @ColumnInfo(name = "last_modified") var lastModified: Long,
-        @ColumnInfo(name = "collection_id") var collectionId: String
+        @ColumnInfo(name = "collection_id") var collectionId: String,
+        @ColumnInfo(name = "processed", defaultValue = "0") var processed: Boolean = false,
+        @ColumnInfo(name = "content_hash") var contentHash: String? = null
 ) {
     @Ignore
     constructor(

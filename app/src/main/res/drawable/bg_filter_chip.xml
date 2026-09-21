@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phase 2.1 step 5: filter-chip background. Driven by View.isSelected so a plain TextView
+     doubles as a chip under the app's AppCompat theme (Material Chip needs MaterialComponents). -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_selected="true" android:drawable="@drawable/bg_filter_chip_selected" />
+    <item android:drawable="@drawable/bg_filter_chip_unselected" />
+</selector>

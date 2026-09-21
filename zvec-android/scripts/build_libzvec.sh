@@ -77,28 +77,12 @@ git -C "$ZVEC_SUBMODULE_DIR" checkout "$ZVEC_TAG" 2>/dev/null || {
     echo "       run: git -C \"$ZVEC_SUBMODULE_DIR\" fetch --tags"
     exit 1
 }
-# Align nested submodules (arrow, rocksdb, protobuf, ...) to the tag's pointers.
+# Align nested submodules (arrow, rocksdb, glog, ...) to the tag's pointers.
+# (0.7 dropped the protobuf nested submodule entirely — upstream #627.)
 git -C "$ZVEC_SUBMODULE_DIR" submodule update --init --recursive
 
-# 2. Build host protoc
-HOST_BUILD_DIR="$ZVEC_ANDROID_DIR/build/host"
+# 2. Cross-compile zvec C API for Android ABI
 CORE_COUNT=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
-
-echo ">>> Step 1: Building protoc for host..."
-if [ ! -f "$HOST_BUILD_DIR/bin/protoc" ]; then
-    cmake -S "$ZVEC_SUBMODULE_DIR" -B "$HOST_BUILD_DIR" \
-        -DCMAKE_BUILD_TYPE="Release" \
-        -DCMAKE_TOOLCHAIN_FILE="" \
-        -G Ninja \
-        -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-    cmake --build "$HOST_BUILD_DIR" --target protoc -j"$CORE_COUNT"
-else
-    echo "  (cached - skipping host protoc build)"
-fi
-PROTOC_EXECUTABLE="$HOST_BUILD_DIR/bin/protoc"
-echo "Host protoc is at: $PROTOC_EXECUTABLE"
-
-# 3. Cross-compile zvec C API for Android ABI
 BUILD_DIR="$ZVEC_ANDROID_DIR/build/android_${ABI}"
 CMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
 
@@ -111,7 +95,7 @@ git -C "$ZVEC_SUBMODULE_DIR" checkout -- .
 git -C "$ZVEC_SUBMODULE_DIR" clean -ffxd
 git -C "$ZVEC_SUBMODULE_DIR" submodule foreach --recursive 'git checkout -- . && git clean -ffxd'
 
-echo ">>> Step 2: Cross-compiling zvec for Android ($ABI)..."
+echo ">>> Step 1: Cross-compiling zvec for Android ($ABI)..."
 cmake -S "$ZVEC_SUBMODULE_DIR" -B "$BUILD_DIR" -G Ninja \
     -DANDROID_NDK="$ANDROID_NDK_HOME" \
     -DCMAKE_TOOLCHAIN_FILE="$CMAKE_TOOLCHAIN_FILE" \
@@ -123,7 +107,6 @@ cmake -S "$ZVEC_SUBMODULE_DIR" -B "$BUILD_DIR" -G Ninja \
     -DBUILD_TOOLS=OFF \
     -DENABLE_NATIVE=OFF \
     -DAUTO_DETECT_ARCH=OFF \
-    -DGLOBAL_CC_PROTOBUF_PROTOC="$PROTOC_EXECUTABLE" \
     -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
@@ -131,7 +114,7 @@ cmake -S "$ZVEC_SUBMODULE_DIR" -B "$BUILD_DIR" -G Ninja \
 # Build target zvec_c_api
 cmake --build "$BUILD_DIR" --target zvec_c_api -j"$CORE_COUNT"
 
-# 4. Copy and rename compiled shared library to jniLibs
+# 3. Copy and rename compiled shared library to jniLibs
 JNI_LIBS_DIR="$ZVEC_ANDROID_DIR/src/main/jniLibs/$ABI"
 mkdir -p "$JNI_LIBS_DIR"
 

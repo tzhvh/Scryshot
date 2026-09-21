@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phase 2.1 step 5: one filter chip (a TextView styled as a chip — the AppCompat theme rules
+     out Material's Chip). Selected state flips background + text color via state_selected. -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_marginEnd="8dp"
+    android:layout_marginVertical="4dp"
+    android:background="@drawable/bg_filter_chip"
+    android:paddingStart="14dp"
+    android:paddingEnd="14dp"
+    android:paddingTop="6dp"
+    android:paddingBottom="6dp"
+    android:singleLine="true"
+    android:textColor="@color/filter_chip_text"
+    android:textSize="13sp" />

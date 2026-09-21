@@ -44,13 +44,181 @@
     </androidx.appcompat.widget.Toolbar>
 
     <LinearLayout
+        android:id="@+id/advancedRegion"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/common_padding_24dp"
+        android:layout_marginEnd="@dimen/common_padding_24dp"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/toolbar">
+
+        <TextView
+            android:id="@+id/advancedToggle"
+            style="@style/Subtitle1"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingTop="@dimen/common_padding_8dp"
+            android:paddingBottom="@dimen/common_padding_8dp"
+            android:paddingEnd="@dimen/common_padding_8dp"
+            android:text="@string/search_advanced_label"
+            android:textColor="@color/primaryTeal" />
+
+        <LinearLayout
+            android:id="@+id/advancedPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/collectionChipRow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal" />
+            </HorizontalScrollView>
+
+            <!-- Phase 2.1 (2.1-D13): the precision dial — Exact / Balanced / Fuzzy, with a
+                 one-line explainer that previews the effect, never the mechanism. -->
+            <LinearLayout
+                android:id="@+id/precisionRow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingTop="4dp">
+
+                <TextView
+                    android:id="@+id/precisionExact"
+                    style="@style/Subtitle1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_filter_chip"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:text="@string/search_precision_exact"
+                    android:textColor="@color/filter_chip_text" />
+
+                <TextView
+                    android:id="@+id/precisionBalanced"
+                    style="@style/Subtitle1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_filter_chip"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:text="@string/search_precision_balanced"
+                    android:textColor="@color/filter_chip_text" />
+
+                <TextView
+                    android:id="@+id/precisionFuzzy"
+                    style="@style/Subtitle1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_filter_chip"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:text="@string/search_precision_fuzzy"
+                    android:textColor="@color/filter_chip_text" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/precisionHint"
+                style="@style/Body2"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingTop="4dp"
+                android:text="@string/search_precision_balanced_hint"
+                android:textColor="@color/grey50" />
+
+            <!-- Phase 2.1 step 6: date-range push-down. Renders only after the last_modified
+                 backfill completes (R8 gate) — a visible-but-empty date filter is dead UI. -->
+            <LinearLayout
+                android:id="@+id/dateRangeRow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingTop="4dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:paddingEnd="@dimen/common_padding_8dp"
+                    android:text="@string/search_date_label"
+                    android:textColor="@color/grey60" />
+
+                <TextView
+                    android:id="@+id/dateFromButton"
+                    style="@style/Subtitle1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_filter_chip"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:textColor="@color/filter_chip_text" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:text="–"
+                    android:textColor="@color/grey60" />
+
+                <TextView
+                    android:id="@+id/dateToButton"
+                    style="@style/Subtitle1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_filter_chip"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:textColor="@color/filter_chip_text" />
+
+                <TextView
+                    android:id="@+id/dateClearButton"
+                    style="@style/Subtitle1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:paddingStart="@dimen/common_padding_8dp"
+                    android:paddingEnd="@dimen/common_padding_8dp"
+                    android:text="@string/search_date_clear"
+                    android:textColor="@color/primaryTeal"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
         android:id="@+id/subtitleLayout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginStart="@dimen/common_padding_24dp"
         android:layout_marginEnd="@dimen/common_padding_24dp"
         android:orientation="horizontal"
-        app:layout_constraintTop_toBottomOf="@id/toolbar">
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/advancedRegion">
 
         <androidx.appcompat.widget.AppCompatCheckBox
             android:id="@+id/selectAllCheckbox"
@@ -66,12 +234,60 @@
         <TextView
             android:id="@+id/subtitleTextView"
             style="@style/Subtitle1"
-            android:layout_width="match_parent"
+            android:layout_width="0dp"
+            android:layout_weight="1"
             android:layout_height="wrap_content"
             android:paddingTop="@dimen/common_padding_12dp"
             android:paddingBottom="@dimen/common_padding_12dp"
             android:textColor="@color/grey60" />
+
+        <TextView
+            android:id="@+id/viewModeToggle"
+            style="@style/Subtitle1"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="@dimen/common_padding_8dp"
+            android:paddingEnd="@dimen/common_padding_8dp"
+            android:paddingTop="@dimen/common_padding_12dp"
+            android:paddingBottom="@dimen/common_padding_12dp"
+            android:text="@string/search_mode_list"
+            android:textColor="@color/primaryTeal" />
+
+        <TextView
+            android:id="@+id/sortToggle"
+            style="@style/Subtitle1"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="@dimen/common_padding_8dp"
+            android:paddingEnd="@dimen/common_padding_8dp"
+            android:paddingTop="@dimen/common_padding_12dp"
+            android:paddingBottom="@dimen/common_padding_12dp"
+            android:textColor="@color/primaryTeal" />
     </LinearLayout>
+
+    <!-- Phase 2.1 step 9: the empty-query state — the persisted last-N searches
+         (the P6 saved-views ancestor). Rows are added programmatically. -->
+    <ScrollView
+        android:id="@+id/recentSearchesView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginStart="@dimen/common_padding_24dp"
+        android:layout_marginEnd="@dimen/common_padding_24dp"
+        android:fillViewport="true"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/advancedRegion">
+
+        <LinearLayout
+            android:id="@+id/recentSearchesList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/screenshotListView"
@@ -100,6 +316,7 @@
             android:src="@drawable/image_noresult" />
 
         <TextView
+            android:id="@+id/emptyTitle"
             style="@style/H3"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -109,6 +326,7 @@
             android:textColor="@color/grey90" />
 
         <TextView
+            android:id="@+id/emptyContent"
             style="@style/Body2"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -116,6 +334,23 @@
             android:layout_marginTop="@dimen/common_padding_4dp"
             android:text="@string/search_error_content_try"
             android:textColor="@color/grey50" />
+
+        <!-- Phase 2.1 step 9: the one-tap filter relax (renders only when filters are active) -->
+        <TextView
+            android:id="@+id/emptyRelaxButton"
+            style="@style/Subtitle1"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="@dimen/common_padding_16dp"
+            android:background="@drawable/bg_filter_chip"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:text="@string/search_zero_relax"
+            android:textColor="@color/filter_chip_text"
+            android:visibility="gone" />
     </LinearLayout>
 
     <LinearLayout
@@ -132,23 +367,27 @@
         app:layout_constraintRight_toRightOf="parent"
         app:layout_constraintTop_toBottomOf="@id/toolbar">
 
+        <!-- Phase 2.1 step 7 (2.1-D10): this was the defunct ML-Kit download state (dead UI);
+             repurposed as the recoverable parse-error state. Cleared by the next submission. -->
+
         <TextView
             style="@style/Body1"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
-            android:text="@string/detail_ocr_error_module"
+            android:text="@string/search_error_parse_title"
             android:textAlignment="center"
             android:textColor="@color/grey90" />
 
         <TextView
-            android:id="@+id/connectButton"
-            style="@style/ContainedButton"
+            style="@style/Body2"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
-            android:layout_marginTop="@dimen/common_padding_16dp"
-            android:text="@string/detail_ocr_error_action_connect" />
+            android:layout_marginTop="@dimen/common_padding_4dp"
+            android:text="@string/search_error_parse_content"
+            android:textAlignment="center"
+            android:textColor="@color/grey50" />
     </LinearLayout>
 
     <View
