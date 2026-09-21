@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ADR 0008: the wizard's primary CTA — the app's square ContainedButton
+     shape in the onboarding accent (single indirection, see colors.xml). -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="@color/grey50">
+    <item>
+        <shape>
+            <corners android:radius="4dp" />
+            <solid android:color="@color/onboarding_accent" />
+        </shape>
+    </item>
+</ripple>

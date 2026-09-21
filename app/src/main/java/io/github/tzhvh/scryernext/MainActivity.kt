@@ -20,6 +20,8 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import io.github.tzhvh.scryernext.databinding.ActivityMainBinding
 import io.github.tzhvh.scryernext.ingestion.Progress
+import io.github.tzhvh.scryernext.onboarding.OnboardingActivity
+import io.github.tzhvh.scryernext.onboarding.OnboardingPrefs
 import io.github.tzhvh.scryernext.preference.PreferenceWrapper
 import kotlinx.coroutines.launch
 
@@ -73,6 +75,13 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+        }
+
+        // ADR 0008 — first-run gate: the wizard owns setup until
+        // `onboarding_complete` exists (existing installs skip via the
+        // capture_page_shown migration in ScryerApplication.onCreate).
+        if (!OnboardingPrefs.getInstance(this).isOnboardingComplete()) {
+            OnboardingActivity.start(this)
         }
     }
 

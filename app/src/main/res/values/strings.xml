@@ -269,4 +269,14 @@
     <string name="search_transition_progress">%1$d screenshots remaining&#8230;</string>
     <!-- String displayed to provide more details when text recognition is done -->
     <string name="search_transition_content_searchable">We’re making all screenshots searchable. You can soon type to search words within screenshots!</string>
+
+    <!-- Fresh onboarding (ADR 0008): first-run wizard + setup hub. The
+         setup_ prefix is scoped to these surfaces; shared onboarding_*
+         strings (search/OCR spotlights) are separate. -->
+    <string name="setup_welcome_step_label">Welcome</string>
+    <string name="setup_welcome_title">Welcome to %1$s</string>
+    <string name="setup_welcome_point_1">Find any screenshot by searching the text in it</string>
+    <string name="setup_welcome_point_2">Text recognition and search run entirely on this device</string>
+    <string name="setup_welcome_point_3">Nothing is ever uploaded</string>
+    <string name="setup_action_get_started">Get started</string>
 </resources>

@@ -172,6 +172,11 @@ class ScryerApplication : Application() {
         super.onCreate()
         ApplicationHolder.instance = this
 
+        // ADR 0008 — onboarding state migration runs before any activity can
+        // consult the launch gate: capture_page_shown ⇒ onboarding_complete for
+        // existing installs, access_model pinned on first run.
+        io.github.tzhvh.scryernext.onboarding.OnboardingPrefs.applyLegacyMigration(this)
+
         // PROFILING_FRAMEWORK.md §3.10 — StrictMode guardrail, debug-only. Catches accidental
         // main-thread disk/network/Room/zvec calls for free — the bug class that would otherwise
         // send someone down a Perfetto rabbit hole for front D ("tap feels slow"). penaltyLog()
@@ -230,8 +235,12 @@ class ScryerApplication : Application() {
         )
         // zvec Runtime Inspector — gate the event recorder to debuggable builds. Called before any
         // ingestion/store call so the recorder's `enabled` is published before first use. Release
-        // builds leave the recorder disabled → zero overhead at the (inline) call sites.
-        ZvecEventRecorder.init(enabled = isDebuggable)
+        // builds leave the recorder disabled → zero overhead at the (inline) call sites. Debug
+        // builds also mirror every event to logcat (issue 06 A2): open-path decisions (wipe,
+        // ladder rungs, invalidation, ensureOpen entry/cancellation) are then observable in a
+        // scripted smoke without reading the in-memory Inspector — the 2026-09-21 first-open
+        // contention investigation needs exactly that timeline.
+        ZvecEventRecorder.init(enabled = isDebuggable) { msg -> Log.d("ZvecRecorder", msg) }
         screenshotRepository = ZvecScreenshotRepository(
             delegate = dbRepository,
             store = zvecContentStore,

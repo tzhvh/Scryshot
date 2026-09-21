@@ -39,6 +39,12 @@
     <!-- Notification -->
     <color name="foreground_notification">@color/primaryTeal</color>
 
+    <!-- Onboarding wizard + setup hub (ADR 0008). Accent indirection: setup
+         surfaces make decisions with the app indigo, so a palette refresh is
+         one constant. Content background mirrors the prototype's app grey. -->
+    <color name="onboarding_accent">@color/colorPrimary</color>
+    <color name="onboarding_content_background">@color/grey10</color>
+
     <!-- DetailPage -->
     <color name="detail_onboarding_overlay">#cc000000</color>
 

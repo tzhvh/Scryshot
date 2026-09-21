@@ -42,6 +42,14 @@
             </intent-filter>
         </activity>
 
+        <!-- ADR 0008: first-run wizard. singleTop so a MainActivity recreation
+             under memory pressure can't stack a second wizard instance. -->
+        <activity
+            android:name="io.github.tzhvh.scryernext.onboarding.OnboardingActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait" />
+
         <activity
             android:name="io.github.tzhvh.scryernext.sortingpanel.SortingPanelActivity"
             android:launchMode="singleTask"

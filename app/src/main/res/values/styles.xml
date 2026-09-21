@@ -140,4 +140,30 @@
         <item name="android:paddingLeft">4dp</item>
         <item name="android:paddingRight">4dp</item>
     </style>
+
+    <!-- Onboarding wizard + setup hub (ADR 0008): the prototypes' layout
+         vocabulary on the app's existing grey scale + accent indirection. -->
+    <style name="OnboardingStepLabel">
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:letterSpacing">0.08</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:textColor">@color/grey50</item>
+    </style>
+
+    <style name="OnboardingTitle">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textSize">28sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:lineSpacingMultiplier">1.2</item>
+        <item name="android:textColor">@color/grey90</item>
+    </style>
+
+    <style name="OnboardingLead" parent="Subtitle1">
+        <item name="android:textColor">@color/grey60</item>
+    </style>
+
+    <style name="OnboardingPrimaryButton" parent="ContainedButton">
+        <item name="android:background">@drawable/onboarding_button_primary_bkg</item>
+    </style>
 </resources>
