@@ -14,6 +14,7 @@ import io.github.tzhvh.scryernext.ingestion.ZvecWriteSink
 import io.github.tzhvh.scryernext.persistence.ContentMetadataCacheDaoFake
 import io.github.tzhvh.scryernext.persistence.ScreenshotDatabase
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
+import io.github.tzhvh.scryernext.repository.SearchOutcome
 import io.github.tzhvh.scryernext.search.RankPolicy
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -91,12 +92,12 @@ class ZvecScreenshotRepositoryDeviceTest {
         )
 
         // searchScreenshotList: zvec FTS → batched gallery-row bridge. The OCR text matches the query.
-        val results = repo.searchScreenshotList("deploy search index")
+        val results = rows(repo.searchScreenshotList("deploy search index"))
         assertEquals("search must return exactly the one matching screenshot", 1, results.size)
         assertEquals("the bridge resolves the zvec locator back to the Room gallery row", uri, results[0].uri)
 
         // searchScreenshots (the Flow variant) emits the same result.
-        val flowResults = repo.searchScreenshots("deploy").first()
+        val flowResults = rows(repo.searchScreenshots("deploy").first())
         assertEquals("the Flow variant matches the List variant", 1, flowResults.size)
         assertEquals(uri, flowResults[0].uri)
 
@@ -140,7 +141,7 @@ class ZvecScreenshotRepositoryDeviceTest {
         store.flush()
 
         // Both docs match the FTS query, but only the live (Room-backed) one surfaces.
-        val results = repo.searchScreenshotList("matchme")
+        val results = rows(repo.searchScreenshotList("matchme"))
         assertEquals("the stale ghost doc must be filtered; only the live row surfaces", 1, results.size)
         assertEquals(liveUri, results[0].uri)
     }
@@ -177,10 +178,10 @@ class ZvecScreenshotRepositoryDeviceTest {
             bytes = "new-bytes".toByteArray(),
         )
 
-        val relevance = repo.searchScreenshotList("receipt invoice", RankPolicy.Relevance)
+        val relevance = rows(repo.searchScreenshotList("receipt invoice", RankPolicy.Relevance))
         assertEquals("the two-term (stronger BM25) doc leads under Relevance", oldUri, relevance[0].uri)
 
-        val recency = repo.searchScreenshotList("receipt invoice", RankPolicy.Recency)
+        val recency = rows(repo.searchScreenshotList("receipt invoice", RankPolicy.Recency))
         assertEquals("the newer doc leads under Recency", newUri, recency[0].uri)
     }
 
@@ -211,15 +212,18 @@ class ZvecScreenshotRepositoryDeviceTest {
             text = "shared keyword matchme", processed = true, bytes = "b-bytes".toByteArray(),
         )
 
-        val unfiltered = repo.searchScreenshotList("matchme")
+        val unfiltered = rows(repo.searchScreenshotList("matchme"))
         assertEquals("sanity: both docs match without a filter", 2, unfiltered.size)
 
-        val filtered = repo.searchScreenshotList(
+        val filtered = rows(repo.searchScreenshotList(
             "matchme", RankPolicy.Recency, "collection_id IN ('col-target')",
-        )
+        ))
         assertEquals("push-down must narrow to the selected collection", 1, filtered.size)
         assertEquals(uriA, filtered[0].uri)
     }
+
+    private fun rows(outcome: SearchOutcome): List<ScreenshotModel> =
+        (outcome as SearchOutcome.Results).rows
 
     private fun sha256Hex(bytes: ByteArray): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)

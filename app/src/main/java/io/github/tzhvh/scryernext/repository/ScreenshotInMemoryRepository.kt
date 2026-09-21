@@ -85,12 +85,12 @@ open class ScreenshotInMemoryRepository : ScreenshotRepository {
         return null
     }
 
-    override fun searchScreenshots(queryText: String, policy: RankPolicy, filter: String?): Flow<List<ScreenshotModel>> {
-        return screenshotData.asStateFlow()
+    override fun searchScreenshots(queryText: String, policy: RankPolicy, filter: String?): Flow<SearchOutcome> {
+        return kotlinx.coroutines.flow.flow { emit(SearchOutcome.Results(screenshotList)) }
     }
 
-    override suspend fun searchScreenshotList(queryText: String, policy: RankPolicy, filter: String?): List<ScreenshotModel> {
-        return screenshotList
+    override suspend fun searchScreenshotList(queryText: String, policy: RankPolicy, filter: String?): SearchOutcome {
+        return SearchOutcome.Results(screenshotList)
     }
 
     /**

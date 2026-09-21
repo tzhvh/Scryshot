@@ -9,6 +9,7 @@ import io.github.tzhvh.scryernext.ingestion.triggers.OnOpenTrigger
 import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.search.RankPolicy
+import io.github.tzhvh.scryernext.repository.SearchOutcome
 import io.github.tzhvh.scryernext.repository.DedupResult
 import io.github.tzhvh.scryernext.repository.ScreenshotRepository
 import kotlinx.coroutines.CoroutineScope
@@ -68,8 +69,8 @@ class OnOpenTriggerTest {
         override fun getScreenshots(collectionIds: List<String>): Flow<List<ScreenshotModel>> = TODO()
         override suspend fun getScreenshotList(collectionIds: List<String>): List<ScreenshotModel> = TODO()
         override suspend fun deleteScreenshot(screenshot: ScreenshotModel) = TODO()
-        override fun searchScreenshots(queryText: String, policy: RankPolicy, filter: String?): Flow<List<ScreenshotModel>> = TODO()
-        override suspend fun searchScreenshotList(queryText: String, policy: RankPolicy, filter: String?): List<ScreenshotModel> = TODO()
+        override fun searchScreenshots(queryText: String, policy: RankPolicy, filter: String?): Flow<SearchOutcome> = TODO()
+        override suspend fun searchScreenshotList(queryText: String, policy: RankPolicy, filter: String?): SearchOutcome = TODO()
         override suspend fun getContentText(screenshot: ScreenshotModel): String? = TODO()
         override suspend fun setupDefaultContent(context: android.content.Context) = TODO()
     }

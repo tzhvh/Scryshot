@@ -12,6 +12,7 @@ import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.search.DefaultRankStage
 import io.github.tzhvh.scryernext.search.RankPolicy
 import io.github.tzhvh.scryernext.search.RankStage
+import io.github.tzhvh.scryernext.zvec.ZvecException
 import io.github.tzhvh.scryernext.zvec.ZvecValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -88,7 +89,7 @@ class ZvecScreenshotRepository(
         queryText: String,
         policy: RankPolicy,
         filter: String?,
-    ): Flow<List<ScreenshotModel>> = flow {
+    ): Flow<SearchOutcome> = flow {
         emit(searchZvecAndBridge(queryText, policy, filter))
     }.flowOn(Dispatchers.IO)
 
@@ -96,7 +97,7 @@ class ZvecScreenshotRepository(
         queryText: String,
         policy: RankPolicy,
         filter: String?,
-    ): List<ScreenshotModel> =
+    ): SearchOutcome =
         withContext(Dispatchers.IO) { searchZvecAndBridge(queryText, policy, filter) }
 
     /**
@@ -118,12 +119,23 @@ class ZvecScreenshotRepository(
         queryText: String,
         policy: RankPolicy,
         filter: String?,
-    ): List<ScreenshotModel> {
+    ): SearchOutcome {
         val trimmed = queryText.trim()
-        if (trimmed.isEmpty()) return emptyList()
+        if (trimmed.isEmpty()) return SearchOutcome.Results(emptyList())
 
-        val docs = store.search(processQuery(trimmed), filter = filter)
-        if (docs.isEmpty()) return emptyList()
+        val matchString = processQuery(trimmed)
+        // A submission of only separators shapes to blank — no terms to anchor a query. (Legacy
+        // shaped it to "*" and matched the whole corpus; a term-free box means no results.)
+        if (matchString.isBlank()) return SearchOutcome.Results(emptyList())
+
+        // 2.1-D10: the engine's parse rejection is a recoverable state, never a Flow crash.
+        val docs = try {
+            store.search(matchString, filter = filter)
+        } catch (e: ZvecException) {
+            ZvecEventRecorder.record { "Query error (engine rejected match string): ${e.message?.take(160)}" }
+            return SearchOutcome.QueryError(e)
+        }
+        if (docs.isEmpty()) return SearchOutcome.Results(emptyList())
 
         // The content_hash (zvec doc PK) is the gallery-row bridge. Collect PKs preserving zvec
         // rank order; de-dup the PK list (a multi-term match can return the same doc twice). The
@@ -137,7 +149,7 @@ class ZvecScreenshotRepository(
                 scores[doc.pk] = doc.score ?: 0f
             }
         }
-        if (rankedHashes.isEmpty()) return emptyList()
+        if (rankedHashes.isEmpty()) return SearchOutcome.Results(emptyList())
 
         // One batched Room query (WHERE content_hash IN (...)) — NOT N+1. Group by hash so each
         // zvec hit expands into ALL its surviving Room rows (the dedup-correct behavior).
@@ -162,7 +174,7 @@ class ZvecScreenshotRepository(
                 result.addAll(hashRows)
             }
         }
-        return rankStage.apply(result, scores, policy)
+        return SearchOutcome.Results(rankStage.apply(result, scores, policy))
     }
 
     /**
@@ -192,15 +204,55 @@ class ZvecScreenshotRepository(
 
 /**
  * The query pre-shape from the Room era, preserved verbatim so the UI's existing search semantics
- * carry over. Splits on whitespace / quotes / dashes / asterisks and rejoins as space-separated
- * terms with a trailing `*` wildcard each (prefix-match per term). A live-engine probe (2026-07-01)
- * confirmed zvec's FTS match-string accepts this shape.
+ * The query pre-shape applied to user input before hitting zvec FTS, split into a structured
+ * [FtsQueryParts] view and the match-string builder so the chips layer (2.1) can reuse the parse.
+ *
+ * **Positive terms** keep the Room-era shape verbatim: whitespace is the token separator; quotes
+ * and asterisks are stripped; embedded dashes split terms; the joined terms carry the legacy
+ * single trailing wildcard (the shipped `joinToString(" ", "", "*")` shape — the LAST positive
+ * term carries the `*`). The positive shape is regression-pinned by `ProcessFtsQueryTest` —
+ * the B5 bronze floor was measured through it.
+ *
+ * **Exclusions** (Phase 2.1 step 7; R9-pinned) are whitespace tokens starting with `-`: the term
+ * drops out of the positive set and rejoins as `-term` with NO wildcard, which the engine honors
+ * on the match-string path (`ZvecR8R9ContractProbesTest`). A bare `-` token is a separator, not
+ * an exclusion (the syntax is the attached form). A bare exclusion reaches the engine verbatim
+ * and matches nothing per the pinned contract — exclusion needs a positive anchor.
  *
  * Top-level (not a member of [ZvecScreenshotRepository]) so the debug ZvecInspectorRunner can apply
  * the identical transform — the inspector's Query Inspector must see what production sees, not a
  * divergent raw view that would misdiagnose a prefix-match result as a recall failure (O3).
  */
+internal data class FtsQueryParts(
+    val positives: List<String>,
+    val exclusions: List<String>,
+)
+
+internal fun parseFtsQueryParts(queryText: String): FtsQueryParts {
+    val positives = ArrayList<String>()
+    val exclusions = ArrayList<String>()
+    for (raw in queryText.split(WHITESPACE)) {
+        if (raw.isEmpty() || raw == "-") continue
+        val cleaned = raw.replace(STRIPPED_CHARS, "")
+        val side = if (cleaned.startsWith("-")) exclusions else positives
+        val body = if (cleaned.startsWith("-")) cleaned.substring(1) else cleaned
+        // Embedded dashes split within a side, preserving the Room-era "well-known" behavior.
+        for (piece in body.split(DASH)) {
+            if (piece.isNotEmpty()) side.add(piece)
+        }
+    }
+    return FtsQueryParts(positives, exclusions)
+}
+
+internal fun buildFtsMatchString(parts: FtsQueryParts): String {
+    val positive = if (parts.positives.isEmpty()) "" else parts.positives.joinToString(" ") + "*"
+    val excluded = parts.exclusions.joinToString(" ") { "-$it" }
+    return listOf(positive, excluded).filter { it.isNotEmpty() }.joinToString(" ")
+}
+
 internal fun processFtsQuery(queryText: String): String =
-    queryText.split("[ \"\\-*]".toRegex())
-        .filter { it.isNotEmpty() }
-        .joinToString(" ", "", "*")
+    buildFtsMatchString(parseFtsQueryParts(queryText))
+
+private val WHITESPACE = Regex("\\s+")
+private val DASH = Regex("-")
+private val STRIPPED_CHARS = "[\"*]".toRegex()

@@ -62,12 +62,12 @@ interface ScreenshotRepository {
         queryText: String,
         policy: RankPolicy = RankPolicy.Blended(),
         filter: String? = null,
-    ): Flow<List<ScreenshotModel>>
+    ): Flow<SearchOutcome>
     suspend fun searchScreenshotList(
         queryText: String,
         policy: RankPolicy = RankPolicy.Blended(),
         filter: String? = null,
-    ): List<ScreenshotModel>
+    ): SearchOutcome
 
     /**
      * Fetch a screenshot's OCR content text from zvec (decision D14: kept, impl → zvec). Signature

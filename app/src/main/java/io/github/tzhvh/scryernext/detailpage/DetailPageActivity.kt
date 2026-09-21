@@ -35,6 +35,7 @@ import io.github.tzhvh.scryernext.ingestion.MlKitOcrStage
 import io.github.tzhvh.scryernext.ScryerApplication
 import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
+import io.github.tzhvh.scryernext.repository.SearchOutcome
 import io.github.tzhvh.scryernext.preference.PreferenceWrapper
 import io.github.tzhvh.scryernext.promote.Promoter
 import io.github.tzhvh.scryernext.sortingpanel.SortingPanelActivity
@@ -665,7 +666,11 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
                         }
                         viewModel.getScreenshotList(list)
                     }
-                    searchKeyword != null -> viewModel.searchScreenshotList(searchKeyword!!)
+                    searchKeyword != null ->
+                        // Phase 2.1 step 7: the search submission returns a SearchOutcome; the
+                        // slide-show source list only needs rows (a query error means no slide show).
+                        (viewModel.searchScreenshotList(searchKeyword!!) as? SearchOutcome.Results)?.rows
+                            ?: emptyList()
                     else -> viewModel.getScreenshotList()
                 }
             } else {

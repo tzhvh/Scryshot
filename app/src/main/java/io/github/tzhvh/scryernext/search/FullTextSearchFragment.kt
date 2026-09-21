@@ -1,10 +1,8 @@
 package io.github.tzhvh.scryernext.search
 
 import android.content.Context
-import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
-import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.*
@@ -32,6 +30,7 @@ import io.github.tzhvh.scryernext.persistence.CollectionModel
 import io.github.tzhvh.scryernext.persistence.LoadingViewModel
 import io.github.tzhvh.scryernext.persistence.ScreenshotModel
 import io.github.tzhvh.scryernext.persistence.SuggestCollectionHelper
+import io.github.tzhvh.scryernext.repository.SearchOutcome
 import io.github.tzhvh.scryernext.ingestion.Progress
 import io.github.tzhvh.scryernext.setSupportActionBar
 import io.github.tzhvh.scryernext.ui.InnerSpaceDecoration
@@ -247,10 +246,6 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
             screenshotAdapter.notifyDataSetChanged()
         }
 
-        binding.connectButton.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
-        }
-
         binding.screenshotListView.setOnTouchListener { _, _ ->
             hideKeyboard(binding.searchEditText)
             false
@@ -268,13 +263,19 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
         searchJob = viewLifecycleOwner.lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 val filter = searchFilters.takeIf { !it.isEmpty }?.toFilterExpression()
-                viewModel.searchScreenshots(query, rankPolicy, filter).collect { screenshots ->
+                viewModel.searchScreenshots(query, rankPolicy, filter).collect { outcome ->
+                    // 2.1-D10: a parse error is a recoverable state — the notice shows, the query
+                    // stays in the field, and the next submission replaces the state.
+                    val isError = outcome is SearchOutcome.QueryError
+                    binding.errorView.visibility = if (isError) View.VISIBLE else View.GONE
+
+                    val screenshots = (outcome as? SearchOutcome.Results)?.rows ?: emptyList()
                     binding.subtitleLayout.visibility = if (screenshots.isEmpty()) {
                         View.GONE
                     } else {
                         View.VISIBLE
                     }
-                    binding.emptyView.visibility = if (screenshots.isEmpty() && query.isNotEmpty() && !isIndexing) {
+                    binding.emptyView.visibility = if (screenshots.isEmpty() && query.isNotEmpty() && !isError && !isIndexing) {
                         View.VISIBLE
                     } else {
                         View.GONE
@@ -479,8 +480,9 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
         searchJob = viewLifecycleOwner.lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 val filter = searchFilters.takeIf { !it.isEmpty }?.toFilterExpression()
-                viewModel.searchScreenshots("", rankPolicy, filter).collect { screenshots ->
-                    screenshotAdapter.screenshotList = screenshots
+                viewModel.searchScreenshots("", rankPolicy, filter).collect { outcome ->
+                    screenshotAdapter.screenshotList =
+                        (outcome as? SearchOutcome.Results)?.rows ?: emptyList()
                     screenshotAdapter.notifyDataSetChanged()
                 }
             }
