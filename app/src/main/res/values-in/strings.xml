@@ -131,6 +131,8 @@
   <string name="search_sort_blended">Blended</string>
   <string name="search_sort_relevance">Relevansi</string>
   <string name="search_sort_recent">Terbaru</string>
+  <string name="search_advanced_label">Lanjutan</string>
+  <string name="search_advanced_label_count">Lanjutan · %1$d aktif</string>
   <string name="search_transition_progress">%1$d tangkapan layar tersisa ...</string>
   <string name="search_transition_content_searchable">Kami membuat semua tangkapan layar dapat dicari. Anda dapat segera mengetik untuk mencari kata dalam tangkapan layar!</string>
 </resources>

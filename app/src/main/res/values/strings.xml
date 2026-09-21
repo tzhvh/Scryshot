@@ -237,6 +237,9 @@
     <string name="search_sort_blended">Blended</string>
     <string name="search_sort_relevance">Relevance</string>
     <string name="search_sort_recent">Recent</string>
+    <!-- Advanced search disclosure (Phase 2.1 step 5). %1$d is the count of active filters -->
+    <string name="search_advanced_label">Advanced</string>
+    <string name="search_advanced_label_count">Advanced · %1$d active</string>
     <!-- String displayed to inform users the progress of text recognition. Parameter %1$d is the quantity of screenshot files, i.e. 100 screenshots remaining -->
     <string name="search_transition_progress">%1$d screenshots remaining&#8230;</string>
     <!-- String displayed to provide more details when text recognition is done -->

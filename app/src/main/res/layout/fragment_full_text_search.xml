@@ -44,13 +44,50 @@
     </androidx.appcompat.widget.Toolbar>
 
     <LinearLayout
+        android:id="@+id/advancedRegion"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/common_padding_24dp"
+        android:layout_marginEnd="@dimen/common_padding_24dp"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/toolbar">
+
+        <TextView
+            android:id="@+id/advancedToggle"
+            style="@style/Subtitle1"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingTop="@dimen/common_padding_8dp"
+            android:paddingBottom="@dimen/common_padding_8dp"
+            android:paddingEnd="@dimen/common_padding_8dp"
+            android:text="@string/search_advanced_label"
+            android:textColor="@color/primaryTeal" />
+
+        <HorizontalScrollView
+            android:id="@+id/advancedPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:id="@+id/collectionChipRow" />
+        </HorizontalScrollView>
+    </LinearLayout>
+
+    <LinearLayout
         android:id="@+id/subtitleLayout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginStart="@dimen/common_padding_24dp"
         android:layout_marginEnd="@dimen/common_padding_24dp"
         android:orientation="horizontal"
-        app:layout_constraintTop_toBottomOf="@id/toolbar">
+        app:layout_constraintTop_toBottomOf="@id/advancedRegion">
 
         <androidx.appcompat.widget.AppCompatCheckBox
             android:id="@+id/selectAllCheckbox"

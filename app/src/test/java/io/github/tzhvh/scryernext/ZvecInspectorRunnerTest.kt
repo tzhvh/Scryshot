@@ -210,7 +210,7 @@ class ZvecInspectorRunnerTest {
             set(value) { closeTs = value }
         override var lastStatsError: String? = null
 
-        override suspend fun search(matchString: String, topK: Int): List<ZvecDoc> {
+        override suspend fun search(matchString: String, topK: Int, filter: String?): List<ZvecDoc> {
             // The benchmark-synth probe (O1) returns a configurable count; other queries return the
             // single hardcoded doc the inspectQuery test asserts against.
             if (matchString.contains("benchmark synthetic")) {

@@ -61,10 +61,12 @@ interface ScreenshotRepository {
     fun searchScreenshots(
         queryText: String,
         policy: RankPolicy = RankPolicy.Blended(),
+        filter: String? = null,
     ): Flow<List<ScreenshotModel>>
     suspend fun searchScreenshotList(
         queryText: String,
         policy: RankPolicy = RankPolicy.Blended(),
+        filter: String? = null,
     ): List<ScreenshotModel>
 
     /**

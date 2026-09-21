@@ -8,6 +8,7 @@ import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.*
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.view.ActionMode
 import androidx.core.content.ContextCompat
@@ -42,6 +43,7 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
 
     companion object {
         private const val SPAN_COUNT = 3
+        private const val STATE_ADVANCED_OPEN = "advancedOpen"
     }
 
     private var _binding: FragmentFullTextSearchBinding? = null
@@ -57,6 +59,15 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
      * RankStage — the fragment renders the returned list as-is. Blended is the shipped default.
      */
     private var rankPolicy: RankPolicy = RankPolicy.Blended()
+
+    /**
+     * Phase 2.1 step 5: the filter-chip state (collection multi-select; date range joins in step 6,
+     * gated on the backfill). Composed into the push-down expression on every search.
+     */
+    private var searchFilters = SearchFilters()
+
+    /** The Advanced disclosure's per-session collapsed state (survives rotation, not process death). */
+    private var isAdvancedOpen = false
 
     private var actionModeMenu: Menu? = null
     private var isIndexing: Boolean = false
@@ -190,6 +201,11 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        isAdvancedOpen = savedInstanceState?.getBoolean(STATE_ADVANCED_OPEN, false) ?: false
+        binding.advancedToggle.setOnClickListener {
+            isAdvancedOpen = !isAdvancedOpen
+            updateAdvancedRegion()
+        }
         binding.searchEditText.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
 
@@ -251,7 +267,8 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
         searchJob?.cancel()
         searchJob = viewLifecycleOwner.lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.searchScreenshots(query, rankPolicy).collect { screenshots ->
+                val filter = searchFilters.takeIf { !it.isEmpty }?.toFilterExpression()
+                viewModel.searchScreenshots(query, rankPolicy, filter).collect { screenshots ->
                     binding.subtitleLayout.visibility = if (screenshots.isEmpty()) {
                         View.GONE
                     } else {
@@ -294,6 +311,52 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
             RankPolicy.Recency -> R.string.search_sort_recent
         }
         binding.sortToggle.text = getString(R.string.search_sort_label, getString(label))
+    }
+
+    /**
+     * Phase 2.1 step 5 — the Advanced disclosure (UX-2). The control renders only when it has
+     * something to offer (collection chips exist); an empty corpus must not show a dead toggle.
+     */
+    private fun updateAdvancedRegion() {
+        binding.advancedRegion.visibility = if (collectionList.isEmpty()) View.GONE else View.VISIBLE
+        binding.advancedPanel.visibility = if (isAdvancedOpen && collectionList.isNotEmpty()) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
+        val active = if (searchFilters.isEmpty) 0 else
+            searchFilters.collectionIds.size + (if (searchFilters.fromMillis != null || searchFilters.toMillis != null) 1 else 0)
+        binding.advancedToggle.text = if (active > 0) {
+            getString(R.string.search_advanced_label_count, active)
+        } else {
+            getString(R.string.search_advanced_label)
+        }
+    }
+
+    /** Rebuilds the collection chip row from [collectionList]; preserves active selections. */
+    private fun rebuildCollectionChips() {
+        val row = binding.collectionChipRow
+        row.removeAllViews()
+        val context = context ?: return
+        val inflator = LayoutInflater.from(context)
+        for (collection in collectionList) {
+            val chip = inflator.inflate(R.layout.view_filter_chip, row, false) as TextView
+            chip.text = collection.name
+            chip.isSelected = searchFilters.collectionIds.contains(collection.id)
+            chip.setOnClickListener {
+                val selected = !chip.isSelected
+                chip.isSelected = selected
+                searchFilters = searchFilters.withCollection(collection.id, selected)
+                updateAdvancedRegion()
+                startSearchJob(binding.searchEditText.text.toString())
+            }
+            row.addView(chip)
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_ADVANCED_OPEN, isAdvancedOpen)
     }
 
     override fun onDestroyView() {
@@ -407,13 +470,16 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
                     collectionList = collections.asSequence().filter {
                         !SuggestCollectionHelper.isSuggestCollection(it)
                     }.toList()
+                    rebuildCollectionChips()
+                    updateAdvancedRegion()
                 }
             }
         }
 
         searchJob = viewLifecycleOwner.lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.searchScreenshots("", rankPolicy).collect { screenshots ->
+                val filter = searchFilters.takeIf { !it.isEmpty }?.toFilterExpression()
+                viewModel.searchScreenshots("", rankPolicy, filter).collect { screenshots ->
                     screenshotAdapter.screenshotList = screenshots
                     screenshotAdapter.notifyDataSetChanged()
                 }

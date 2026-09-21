@@ -368,9 +368,18 @@ open class ZvecContentStore(
      * caller's pre-shape supplies prefix wildcards / exclusions — both legs receive the
      * same string). A no-match query returns an empty list, not an error.
      *
+     * Phase 2.1 step 5: [filter] is the push-down expression (scalar IN / range clauses —
+     * `SearchFilters` builds it; user-derived values MUST arrive pre-escaped via
+     * `ZvecFilters.escapeFilterValue`). Applied BEFORE search by the engine — corpus-wide
+     * recall, not a post-filter.
+     *
      * `open` so a JVM test can record the call without the `.so`.
      */
-    open suspend fun search(matchString: String, topK: Int = DEFAULT_SEARCH_TOPK): List<ZvecDoc> {
+    open suspend fun search(
+        matchString: String,
+        topK: Int = DEFAULT_SEARCH_TOPK,
+        filter: String? = null,
+    ): List<ZvecDoc> {
         ensureOpen()
         return withContext(Dispatchers.IO) {
             collection!!.hybridSearch(
@@ -382,6 +391,7 @@ open class ZvecContentStore(
                 reranker = WeightedReranker(
                     weights = mapOf(FIELD_CONTENT to 1.0f, FIELD_CONTENT_NGRAM to 0.3f),
                 ),
+                filter = filter,
                 outputFields = listOf(FIELD_LOCATOR, FIELD_CONTENT),
             )
         }
@@ -476,6 +486,13 @@ open class ZvecContentStore(
         const val FIELD_CONTENT = "content"
         const val FIELD_CONTENT_NGRAM = "content_ngram"
         const val FIELD_COLLECTION_ID = "collection_id"
+
+        /**
+         * Phase 2.1 (step 4): the capture-time scalar pushed into zvec for date-range push-down
+         * (2.1-D2). Named by [io.github.tzhvh.scryernext.search.SearchFilters]'s builder before the
+         * column itself lands with the step-4 add — the field name is the schema contract.
+         */
+        const val FIELD_LAST_MODIFIED = "last_modified"
 
         /** The default collection options (mmap enabled, read-write). */
         private fun options(): CollectionOptions = CollectionOptions()

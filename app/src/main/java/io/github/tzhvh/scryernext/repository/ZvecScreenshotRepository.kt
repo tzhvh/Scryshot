@@ -84,12 +84,20 @@ class ZvecScreenshotRepository(
      * bridged rows + the engine score map (Phase 2.1 step 1) — callers render the list as returned;
      * the old downstream recency re-sort is gone. Changing the policy re-runs the search.
      */
-    override fun searchScreenshots(queryText: String, policy: RankPolicy): Flow<List<ScreenshotModel>> = flow {
-        emit(searchZvecAndBridge(queryText, policy))
+    override fun searchScreenshots(
+        queryText: String,
+        policy: RankPolicy,
+        filter: String?,
+    ): Flow<List<ScreenshotModel>> = flow {
+        emit(searchZvecAndBridge(queryText, policy, filter))
     }.flowOn(Dispatchers.IO)
 
-    override suspend fun searchScreenshotList(queryText: String, policy: RankPolicy): List<ScreenshotModel> =
-        withContext(Dispatchers.IO) { searchZvecAndBridge(queryText, policy) }
+    override suspend fun searchScreenshotList(
+        queryText: String,
+        policy: RankPolicy,
+        filter: String?,
+    ): List<ScreenshotModel> =
+        withContext(Dispatchers.IO) { searchZvecAndBridge(queryText, policy, filter) }
 
     /**
      * The shared zvec-FTS-then-batched-Room-lookup body for both the Flow and the List entry points.
@@ -106,11 +114,15 @@ class ZvecScreenshotRepository(
      * with the rows to [rankStage], which owns the final order per [policy]. The score never rides
      * on [ScreenshotModel]; it lives in this parallel map and dies here.
      */
-    private suspend fun searchZvecAndBridge(queryText: String, policy: RankPolicy): List<ScreenshotModel> {
+    private suspend fun searchZvecAndBridge(
+        queryText: String,
+        policy: RankPolicy,
+        filter: String?,
+    ): List<ScreenshotModel> {
         val trimmed = queryText.trim()
         if (trimmed.isEmpty()) return emptyList()
 
-        val docs = store.search(processQuery(trimmed))
+        val docs = store.search(processQuery(trimmed), filter = filter)
         if (docs.isEmpty()) return emptyList()
 
         // The content_hash (zvec doc PK) is the gallery-row bridge. Collect PKs preserving zvec

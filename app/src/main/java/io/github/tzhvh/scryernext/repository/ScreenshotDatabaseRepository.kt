@@ -270,10 +270,10 @@ class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : 
      * wired — fail loudly rather than return a silent empty result (a "search works" symptom would
      * hide the wiring regression).
      */
-    override fun searchScreenshots(queryText: String, policy: RankPolicy): Flow<List<ScreenshotModel>> =
+    override fun searchScreenshots(queryText: String, policy: RankPolicy, filter: String?): Flow<List<ScreenshotModel>> =
         throw UnsupportedOperationException("searchScreenshots is served by ZvecScreenshotRepository (zvec); wire the façade.")
 
-    override suspend fun searchScreenshotList(queryText: String, policy: RankPolicy): List<ScreenshotModel> =
+    override suspend fun searchScreenshotList(queryText: String, policy: RankPolicy, filter: String?): List<ScreenshotModel> =
         throw UnsupportedOperationException("searchScreenshotList is served by ZvecScreenshotRepository (zvec); wire the façade.")
 
     /**

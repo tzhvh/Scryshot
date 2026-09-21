@@ -184,6 +184,43 @@ class ZvecScreenshotRepositoryDeviceTest {
         assertEquals("the newer doc leads under Recency", newUri, recency[0].uri)
     }
 
+    /**
+     * Phase 2.1 step 5 — collection filter push-down: the filter narrows results to the selected
+     * collection(s) BEFORE search (engine push-down, not post-filter), escaped through
+     * `SearchFilters.toFilterExpression()`. Both docs match the query; only the in-collection one
+     * surfaces.
+     */
+    @Test fun collectionFilter_pushDown_narrowsResults() = runBlocking {
+        val (repo, sink, _) = newRepo()
+        val uriA = "content://media/colA-${System.nanoTime()}"
+        val uriB = "content://media/colB-${System.nanoTime()}"
+        repo.addScreenshot(
+            listOf(
+                ScreenshotModel(id = "id-a", uri = uriA, displayName = "a.png",
+                    size = 1L, lastModified = 1L, collectionId = "col-target"),
+                ScreenshotModel(id = "id-b", uri = uriB, displayName = "b.png",
+                    size = 1L, lastModified = 2L, collectionId = "col-other"),
+            )
+        )
+        sink.commit(
+            Candidate(locator = uriA, byteHandle = { ByteArrayInputStream("a-bytes".toByteArray()) }),
+            text = "shared keyword matchme", processed = true, bytes = "a-bytes".toByteArray(),
+        )
+        sink.commit(
+            Candidate(locator = uriB, byteHandle = { ByteArrayInputStream("b-bytes".toByteArray()) }),
+            text = "shared keyword matchme", processed = true, bytes = "b-bytes".toByteArray(),
+        )
+
+        val unfiltered = repo.searchScreenshotList("matchme")
+        assertEquals("sanity: both docs match without a filter", 2, unfiltered.size)
+
+        val filtered = repo.searchScreenshotList(
+            "matchme", RankPolicy.Recency, "collection_id IN ('col-target')",
+        )
+        assertEquals("push-down must narrow to the selected collection", 1, filtered.size)
+        assertEquals(uriA, filtered[0].uri)
+    }
+
     private fun sha256Hex(bytes: ByteArray): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
         val sb = StringBuilder(digest.size * 2)

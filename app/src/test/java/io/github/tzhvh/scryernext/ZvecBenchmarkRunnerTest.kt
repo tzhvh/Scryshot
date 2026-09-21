@@ -136,7 +136,7 @@ class ZvecBenchmarkRunnerTest {
 
         // Bypass the real ensureOpen/native path entirely.
         override suspend fun docCount(): Long = docCount
-        override suspend fun search(matchString: String, topK: Int): List<ZvecDoc> =
+        override suspend fun search(matchString: String, topK: Int, filter: String?): List<ZvecDoc> =
             listOf(ZvecDoc(pk = "seed-pk", score = 1.0f, fields = mapOf()))
         override suspend fun fetch(contentHash: String): ZvecDoc? =
             ZvecDoc(pk = contentHash, score = null, fields = mapOf())
