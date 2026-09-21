@@ -133,6 +133,9 @@
   <string name="search_sort_recent">Terbaru</string>
   <string name="search_advanced_label">Lanjutan</string>
   <string name="search_advanced_label_count">Lanjutan · %1$d aktif</string>
+  <string name="search_date_label">Tanggal</string>
+  <string name="search_date_any">Semua</string>
+  <string name="search_date_clear">Hapus</string>
   <string name="search_error_parse_title">Tidak dapat mencari itu</string>
   <string name="search_error_parse_content">Coba istilah yang lebih sederhana.</string>
   <string name="search_transition_progress">%1$d tangkapan layar tersisa ...</string>

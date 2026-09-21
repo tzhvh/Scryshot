@@ -65,19 +65,89 @@
             android:text="@string/search_advanced_label"
             android:textColor="@color/primaryTeal" />
 
-        <HorizontalScrollView
+        <LinearLayout
             android:id="@+id/advancedPanel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:scrollbars="none"
+            android:orientation="vertical"
             android:visibility="gone">
 
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/collectionChipRow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal" />
+            </HorizontalScrollView>
+
+            <!-- Phase 2.1 step 6: date-range push-down. Renders only after the last_modified
+                 backfill completes (R8 gate) — a visible-but-empty date filter is dead UI. -->
             <LinearLayout
+                android:id="@+id/dateRangeRow"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:id="@+id/collectionChipRow" />
-        </HorizontalScrollView>
+                android:paddingTop="4dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:paddingEnd="@dimen/common_padding_8dp"
+                    android:text="@string/search_date_label"
+                    android:textColor="@color/grey60" />
+
+                <TextView
+                    android:id="@+id/dateFromButton"
+                    style="@style/Subtitle1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_filter_chip"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:textColor="@color/filter_chip_text" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:text="–"
+                    android:textColor="@color/grey60" />
+
+                <TextView
+                    android:id="@+id/dateToButton"
+                    style="@style/Subtitle1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_filter_chip"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:textColor="@color/filter_chip_text" />
+
+                <TextView
+                    android:id="@+id/dateClearButton"
+                    style="@style/Subtitle1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:paddingStart="@dimen/common_padding_8dp"
+                    android:paddingEnd="@dimen/common_padding_8dp"
+                    android:text="@string/search_date_clear"
+                    android:textColor="@color/primaryTeal"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </LinearLayout>
     </LinearLayout>
 
     <LinearLayout

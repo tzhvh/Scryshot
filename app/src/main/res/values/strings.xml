@@ -240,6 +240,10 @@
     <!-- Advanced search disclosure (Phase 2.1 step 5). %1$d is the count of active filters -->
     <string name="search_advanced_label">Advanced</string>
     <string name="search_advanced_label_count">Advanced · %1$d active</string>
+    <!-- Date-range filter (Phase 2.1 step 6). Renders only after the backfill completes. -->
+    <string name="search_date_label">Dates</string>
+    <string name="search_date_any">Any</string>
+    <string name="search_date_clear">Clear</string>
     <!-- Recoverable parse-error state (Phase 2.1 step 7, 2.1-D10) -->
     <string name="search_error_parse_title">Couldn\'t search for that</string>
     <string name="search_error_parse_content">Try simpler terms.</string>

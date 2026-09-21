@@ -1,5 +1,6 @@
 package io.github.tzhvh.scryernext.search
 
+import android.app.DatePickerDialog
 import android.content.Context
 import android.graphics.Color
 import android.os.Bundle
@@ -17,6 +18,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import io.github.tzhvh.scryernext.R
+import java.util.Calendar
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -205,6 +207,12 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
             isAdvancedOpen = !isAdvancedOpen
             updateAdvancedRegion()
         }
+        binding.dateFromButton.setOnClickListener { showDatePicker(isFrom = true) }
+        binding.dateToButton.setOnClickListener { showDatePicker(isFrom = false) }
+        binding.dateClearButton.setOnClickListener {
+            searchFilters = searchFilters.withDateRange(null, null)
+            onDateRangeChanged()
+        }
         binding.searchEditText.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
 
@@ -332,7 +340,70 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
         } else {
             getString(R.string.search_advanced_label)
         }
+        updateDateRangeControls()
     }
+
+    /**
+     * Phase 2.1 step 6 — the date-range push-down affordance. The row renders only after the
+     * one-shot `last_modified` backfill has completed (the R8 gate: a filter silently hides null
+     * rows, so a visible-but-empty date control is dead UI). "From" anchors the picked day's
+     * midnight; "To" is inclusive through the day's last millisecond.
+     */
+    private fun updateDateRangeControls() {
+        val backfillDone = ScryerApplication.isLastModifiedBackfillDone()
+        binding.dateRangeRow.visibility = if (backfillDone) View.VISIBLE else View.GONE
+        if (!backfillDone) return
+        binding.dateFromButton.text = searchFilters.fromMillis
+            ?.let { formatDate(it) } ?: getString(R.string.search_date_any)
+        binding.dateToButton.text = searchFilters.toMillis
+            ?.let { formatDate(it) } ?: getString(R.string.search_date_any)
+        binding.dateClearButton.visibility =
+            if (searchFilters.fromMillis != null || searchFilters.toMillis != null) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
+    }
+
+    private fun showDatePicker(isFrom: Boolean) {
+        val calendar = Calendar.getInstance()
+        val current = if (isFrom) searchFilters.fromMillis else searchFilters.toMillis
+        if (current != null) calendar.timeInMillis = current
+        context?.let {
+            DatePickerDialog(
+                it,
+                { _, year, month, day ->
+                    calendar.set(year, month, day)
+                    if (isFrom) {
+                        calendar.set(Calendar.HOUR_OF_DAY, 0)
+                        calendar.set(Calendar.MINUTE, 0)
+                        calendar.set(Calendar.SECOND, 0)
+                        calendar.set(Calendar.MILLISECOND, 0)
+                        searchFilters = searchFilters.withDateRange(calendar.timeInMillis, searchFilters.toMillis)
+                    } else {
+                        calendar.set(Calendar.HOUR_OF_DAY, 23)
+                        calendar.set(Calendar.MINUTE, 59)
+                        calendar.set(Calendar.SECOND, 59)
+                        calendar.set(Calendar.MILLISECOND, 999)
+                        searchFilters = searchFilters.withDateRange(searchFilters.fromMillis, calendar.timeInMillis)
+                    }
+                    onDateRangeChanged()
+                },
+                calendar.get(Calendar.YEAR),
+                calendar.get(Calendar.MONTH),
+                calendar.get(Calendar.DAY_OF_MONTH),
+            ).show()
+        }
+    }
+
+    private fun onDateRangeChanged() {
+        updateAdvancedRegion()
+        updateDateRangeControls()
+        startSearchJob(binding.searchEditText.text.toString())
+    }
+
+    private fun formatDate(millis: Long): String =
+        java.text.DateFormat.getDateInstance(java.text.DateFormat.SHORT).format(java.util.Date(millis))
 
     /** Rebuilds the collection chip row from [collectionList]; preserves active selections. */
     private fun rebuildCollectionChips() {
