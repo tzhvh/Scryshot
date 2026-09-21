@@ -244,6 +244,9 @@
     <string name="search_date_label">Dates</string>
     <string name="search_date_any">Any</string>
     <string name="search_date_clear">Clear</string>
+    <!-- View-mode toggle (Phase 2.1 step 8): shows the mode you'd switch TO -->
+    <string name="search_mode_list">List</string>
+    <string name="search_mode_grid">Grid</string>
     <!-- Zero-results state machine (Phase 2.1 step 9). %1$s is the query. -->
     <string name="search_zero_title">No matches for \'%1$s\'</string>
     <string name="search_zero_content_no_filter">Try fewer terms.</string>

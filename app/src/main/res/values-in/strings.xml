@@ -136,6 +136,8 @@
   <string name="search_date_label">Tanggal</string>
   <string name="search_date_any">Semua</string>
   <string name="search_date_clear">Hapus</string>
+  <string name="search_mode_list">Daftar</string>
+  <string name="search_mode_grid">Kisi</string>
   <string name="search_zero_title">Tidak ada hasil untuk \'%1$s\'</string>
   <string name="search_zero_content_no_filter">Coba lebih sedikit kata.</string>
   <string name="search_zero_content_filters">Tidak ada di koleksi yang difilter.</string>

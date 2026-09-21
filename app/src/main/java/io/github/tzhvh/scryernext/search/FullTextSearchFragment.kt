@@ -52,6 +52,11 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
 
     private lateinit var screenshotAdapter: SearchAdapter
     private var searchJob: Job? = null
+
+    /** Phase 2.1 step 8: list mode swaps grid thumbnails for snippet + highlight cards. */
+    private var isListMode = false
+    private var latestContentByHash: Map<String, String> = emptyMap()
+    private var latestQuery: String = ""
     private var collectionList = emptyList<CollectionModel>()
     private lateinit var viewModel: ScreenshotViewModel
 
@@ -263,6 +268,13 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
         binding.clear.setOnClickListener { binding.searchEditText.setText("") }
 
         binding.sortToggle.setOnClickListener { cycleRankPolicy() }
+        binding.viewModeToggle.setOnClickListener {
+            isListMode = !isListMode
+            binding.viewModeToggle.text =
+                getString(if (isListMode) R.string.search_mode_grid else R.string.search_mode_list)
+            applyViewModeToAdapter()
+            screenshotAdapter.notifyDataSetChanged()
+        }
 
         binding.selectAllCheckbox.setOnClickListener { _ ->
             val isChecked = binding.selectAllCheckbox.isChecked
@@ -339,6 +351,9 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
                     binding.subtitleTextView.text = getString(R.string.search_separator_results, screenshots.size)
 
                     screenshotAdapter.screenshotList = screenshots
+                    latestContentByHash = (outcome as? SearchOutcome.Results)?.contentByHash ?: emptyMap()
+                    latestQuery = query
+                    applyViewModeToAdapter()
                     screenshotAdapter.notifyDataSetChanged()
                 }
             }
@@ -363,6 +378,14 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
             RankPolicy.Recency -> R.string.search_sort_recent
         }
         binding.sortToggle.text = getString(R.string.search_sort_label, getString(label))
+    }
+
+    /** Pushes the current view mode + snippet payload into the adapter (step 8). */
+    private fun applyViewModeToAdapter() {
+        screenshotAdapter.listMode = isListMode
+        screenshotAdapter.contentByHash = latestContentByHash
+        screenshotAdapter.snippetTerms =
+            io.github.tzhvh.scryernext.repository.parseFtsQueryParts(latestQuery).positives
     }
 
     /**
@@ -610,6 +633,7 @@ class FullTextSearchFragment : androidx.fragment.app.Fragment() {
                 return when (screenshotAdapter.getItemViewType(position)) {
                     SearchAdapter.VIEW_TYPE_ITEM -> 1
                     SearchAdapter.VIEW_TYPE_LOADING -> SPAN_COUNT
+                    SearchAdapter.VIEW_TYPE_LIST_ITEM -> SPAN_COUNT
                     else -> -1
                 }
             }

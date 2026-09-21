@@ -18,8 +18,18 @@ import io.github.tzhvh.scryernext.persistence.ScreenshotModel
  * [io.github.tzhvh.scryernext.zvec.ZvecException] on the search call and wraps it here.
  */
 sealed interface SearchOutcome {
-    /** Rows in final rank order; empty for a no-match or blank submission. */
-    data class Results(val rows: List<ScreenshotModel>) : SearchOutcome
+    /**
+     * Rows in final rank order; empty for a no-match or blank submission.
+     *
+     * [contentByHash] is the OCR text the store already projects on the search path, keyed by the
+     * same content_hash the rows bridge by — the list mode's snippet source (2.1 step 8). It rides
+     * beside the rows (the gallery row stays text-free, the same D7 rationale as the score) and is
+     * empty for non-zvec implementations.
+     */
+    data class Results(
+        val rows: List<ScreenshotModel>,
+        val contentByHash: Map<String, String> = emptyMap(),
+    ) : SearchOutcome
 
     /** The engine rejected the query. Recoverable: the UI shows a notice and keeps the input. */
     data class QueryError(val cause: Exception) : SearchOutcome

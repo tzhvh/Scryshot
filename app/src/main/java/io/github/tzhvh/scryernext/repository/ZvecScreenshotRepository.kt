@@ -142,11 +142,15 @@ class ZvecScreenshotRepository(
         // first sighting of a PK carries its score.
         val rankedHashes = ArrayList<String>(docs.size)
         val scores = HashMap<String, Float>(docs.size)
+        val contentByHash = HashMap<String, String>(docs.size)
         val seen = HashSet<String>()
         for (doc in docs) {
             if (doc.pk.isNotEmpty() && seen.add(doc.pk)) {
                 rankedHashes.add(doc.pk)
                 scores[doc.pk] = doc.score ?: 0f
+                // Phase 2.1 step 8: the OCR text the store already projects rides out beside the
+                // scores — the list mode's snippet source. No second fetch, no new I/O.
+                contentByHash[doc.pk] = (doc.fields[ZvecContentStore.FIELD_CONTENT] as? ZvecValue.Str)?.value ?: ""
             }
         }
         if (rankedHashes.isEmpty()) return SearchOutcome.Results(emptyList())
@@ -174,7 +178,7 @@ class ZvecScreenshotRepository(
                 result.addAll(hashRows)
             }
         }
-        return SearchOutcome.Results(rankStage.apply(result, scores, policy))
+        return SearchOutcome.Results(rankStage.apply(result, scores, policy), contentByHash)
     }
 
     /**
