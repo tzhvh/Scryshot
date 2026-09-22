@@ -21,14 +21,11 @@ import io.github.tzhvh.scryernext.persistence.*
 import io.github.tzhvh.scryernext.ingestion.Candidate
 import io.github.tzhvh.scryernext.search.PrecisionMode
 import io.github.tzhvh.scryernext.search.RankPolicy
-import java.security.MessageDigest
+import io.github.tzhvh.scryernext.util.sha256Hex
 
 class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : ScreenshotRepository {
 
     companion object {
-        /** SHA-256 hex lookup — shared with `ZvecWriteSink` + the façade's read path. */
-        val HEX = "0123456789abcdef".toCharArray()
-
         fun create(context: Context, onCreated: () -> Unit): ScreenshotDatabaseRepository {
             val callback = object : RoomDatabase.Callback() {
                 override fun onCreate(db: SupportSQLiteDatabase) {
@@ -302,9 +299,11 @@ class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : 
         //    the locator *is* the identity (uri is the unique index).
         //
         //    D1: returns DedupResult so the dedup-skip branch can stamp the resolved content_hash onto
-        //    the duplicate's Room row (D2). The hash is threaded only on the miss path (where it was
-        //    computed); the cheap path returns null — a cheap-path duplicate already has its hash set
-        //    by a prior full-pipeline write of the same uri.
+        //    the duplicate's Room row (D2), AND so the engine can thread the digest into the sink's
+        //    precomputedContentHash (roadmap V2 §0.4 — no second hash of the same bytes). The hash is
+        //    returned on every miss-path call (where it was computed); only the cheap path returns
+        //    null — a cheap-path duplicate already has its hash set by a prior full-pipeline write of
+        //    the same uri.
         val screenshot = candidate.locator?.let { database.screenshotDao().getScreenshotByUri(it) }
         if (screenshot != null) {
             // The cache key is the filesystem triple; a change to mtime/size naturally forces a miss
@@ -315,9 +314,12 @@ class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : 
         }
         // Miss path: hash the bytes, consult the cache's hash index. The hash index is the
         // cross-locator dedup path (same content under a different uri) and the zvec-existence proxy.
-        val hash = sha256(bytes)
+        val hash = sha256Hex(bytes)
         val known = database.contentMetadataCacheDao().lookupByHash(hash)?.indexed ?: false
-        DedupResult(known = known, resolvedContentHash = if (known) hash else null)
+        // §0.4 (widened D1): the miss path ALWAYS returns the digest it just paid for — known or
+        // not — so the engine can thread it into the sink's precomputedContentHash and the file is
+        // hashed ONCE per run. The cheap path still returns null (no hash computed there).
+        DedupResult(known = known, resolvedContentHash = hash)
     }
 
     override suspend fun markProcessed(candidate: Candidate) {
@@ -385,21 +387,5 @@ class ScreenshotDatabaseRepository(internal val database: ScreenshotDatabase) : 
         return withContext(Dispatchers.IO) {
             database.screenshotDao().getScreenshotsByContentHash(hashes)
         }
-    }
-
-    /**
-     * SHA-256 hex of [bytes] — the zvec-era content identity. Shared with `ZvecWriteSink` / the
-     * façade's read path so every side computes the same PK. (Issue 04: the base repo's `isKnown`
-     * miss-path hashes here and checks the cache's hash index; the sink hashes here and upserts to
-     * zvec on the result.)
-     */
-    internal fun sha256(bytes: ByteArray): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
-        val sb = StringBuilder(digest.size * 2)
-        for (b in digest) {
-            val v = b.toInt() and 0xff
-            sb.append(HEX[v ushr 4]).append(HEX[v and 0x0f])
-        }
-        return sb.toString()
     }
 }

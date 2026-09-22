@@ -33,9 +33,23 @@ package io.github.tzhvh.scryernext.ingestion
 fun interface WriteSink {
     /**
      * Persist [text] for [candidate], marking it processed iff [processed]. [bytes] is the file
-     * content the engine already read once (issue 02's READ→DEDUP reorder) — the sink hashes it for
-     * the content_hash PK without re-opening the file. Throwing here surfaces as [Progress.Error] at
-     * the engine boundary.
+     * content the engine already read once (issue 02's READ→DEDUP reorder) — without re-opening
+     * the file. Throwing here surfaces as [Progress.Error] at the engine boundary.
+     *
+     * Content identity: [precomputedContentHash] is the SHA-256 the repository's `isKnown` miss
+     * path already computed over the SAME [bytes] (zvec roadmap V2 §0.4 — one digest per file,
+     * not two). When present it is **authoritative and not re-verified**; the sink falls back to
+     * hashing [bytes] only when null (the metadata-cache cheap path computes no hash, and
+     * standalone callers — tests, other write paths — have no dedup upstream). The contract the
+     * caller must uphold: bitwise-identical [bytes] flow to `isKnown` and to this call in the
+     * same iteration (no in-place mutation between dedup and commit), and the value is exactly
+     * what [io.github.tzhvh.scryernext.util.sha256Hex] yields — SHA-256, lowercase hex, 64 chars.
      */
-    suspend fun commit(candidate: Candidate, text: String?, processed: Boolean, bytes: ByteArray)
+    suspend fun commit(
+        candidate: Candidate,
+        text: String?,
+        processed: Boolean,
+        bytes: ByteArray,
+        precomputedContentHash: String?,
+    )
 }

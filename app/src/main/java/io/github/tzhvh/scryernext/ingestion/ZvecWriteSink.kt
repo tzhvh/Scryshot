@@ -10,9 +10,9 @@ import io.github.tzhvh.scryernext.ZvecEventRecorder
 import io.github.tzhvh.scryernext.persistence.ContentMetadataCache
 import io.github.tzhvh.scryernext.persistence.ContentMetadataCacheDao
 import io.github.tzhvh.scryernext.repository.ScreenshotRepository
+import io.github.tzhvh.scryernext.util.sha256Hex
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.security.MessageDigest
 
 /**
  * zvec Phase 2, issue 03 — the write-cutover [WriteSink]. Upserts OCR content to zvec on the
@@ -40,10 +40,11 @@ import java.security.MessageDigest
  * hole `getContentText` can't fill.
  *
  * ## No re-open of the file
- *
- * The hash is computed from [bytes] — the SAME bytes the engine already read once (issue 02's
- * READ→DEDUP reorder). The sink never re-opens `Candidate.byteHandle`; single-open is the whole
- * point of the reorder.
+
+ * The content identity comes from [bytes] — the SAME bytes the engine already read once (issue 02's
+ * READ→DEDUP reorder). Prefer the `precomputedContentHash` the engine threads from `isKnown`'s miss
+ * path (one digest per file — roadmap V2 §0.4); hash [bytes] only as the fallback. The sink never
+ * re-opens `Candidate.byteHandle`; single-open is the whole point of the reorder.
  *
  * ## The missing-row case
  *
@@ -61,7 +62,13 @@ class ZvecWriteSink(
     private val metadataCacheDaoProvider: () -> ContentMetadataCacheDao,
 ) : WriteSink {
 
-    override suspend fun commit(candidate: Candidate, text: String?, processed: Boolean, bytes: ByteArray) {
+    override suspend fun commit(
+        candidate: Candidate,
+        text: String?,
+        processed: Boolean,
+        bytes: ByteArray,
+        precomputedContentHash: String?,
+    ) {
         // The WriteSink contract: TransientFailure never reaches the sink. Defensive guard — a
         // processed=false call writes nothing (the row stays unprocessed so the next run re-attempts).
         if (!processed) return
@@ -78,7 +85,9 @@ class ZvecWriteSink(
             return
         }
 
-        val contentHash = sha256(bytes)
+        // §0.4: prefer the digest `isKnown`'s miss path already computed over these same bytes;
+        // fall back to hashing only when none was threaded (cheap-path flow, standalone callers).
+        val contentHash = precomputedContentHash ?: sha256Hex(bytes)
 
         // ── zvec-first (D13) ──────────────────────────────────────────────────────────────
         // Step 1 + 2: upsert content to zvec, then flush for durability. A crash after this block
@@ -117,19 +126,7 @@ class ZvecWriteSink(
         ZvecEventRecorder.record { "Committed doc with hash: ${contentHash.take(8)}... (locator=$locator)" }
     }
 
-    private fun sha256(bytes: ByteArray): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
-        // Hex-encode; the zvec PK is the content_hash string.
-        val sb = StringBuilder(digest.size * 2)
-        for (b in digest) {
-            val v = b.toInt() and 0xff
-            sb.append(HEX[v ushr 4]).append(HEX[v and 0x0f])
-        }
-        return sb.toString()
-    }
-
     private companion object {
         const val TAG = "ZvecWriteSink"
-        val HEX = "0123456789abcdef".toCharArray()
     }
 }

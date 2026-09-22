@@ -75,7 +75,7 @@ class ZvecWriteSinkTest {
         val bytes = byteArrayOf(1, 2, 3, 4)
         val candidate = Candidate(locator = "content://media/1", byteHandle = { error("must not re-open") })
 
-        sink.commit(candidate, text = "hello ocr", processed = true, bytes = bytes)
+        sink.commit(candidate, text = "hello ocr", processed = true, bytes = bytes, precomputedContentHash = null)
 
         val expectedHash = sha256Hex(bytes)
 
@@ -111,7 +111,7 @@ class ZvecWriteSinkTest {
         val sink = ZvecWriteSink(repo, store) { RecordingCacheDao() }
         val bytes = byteArrayOf(9)
 
-        sink.commit(Candidate("content://media/1", byteHandle = { error("must not re-open") }), text = null, processed = true, bytes = bytes)
+        sink.commit(Candidate("content://media/1", byteHandle = { error("must not re-open") }), text = null, processed = true, bytes = bytes, precomputedContentHash = null)
 
         // PermanentContentFailure path: text is null → empty content (the processed-but-empty case).
         val upsert = store.events.filterIsInstance<RecordingZvecContentStore.Upsert>().single()
@@ -125,7 +125,7 @@ class ZvecWriteSinkTest {
         val store = RecordingZvecContentStore()
         val sink = ZvecWriteSink(repo, store) { RecordingCacheDao() }
 
-        sink.commit(Candidate("content://media/1", byteHandle = { error("must not re-open") }), text = "x", processed = false, bytes = byteArrayOf(1))
+        sink.commit(Candidate("content://media/1", byteHandle = { error("must not re-open") }), text = "x", processed = false, bytes = byteArrayOf(1), precomputedContentHash = null)
 
         // TransientFailure never reaches the sink; a processed=false call writes nothing.
         assertTrue(store.events.isEmpty())
@@ -138,7 +138,7 @@ class ZvecWriteSinkTest {
         val store = RecordingZvecContentStore()
         val sink = ZvecWriteSink(repo, store) { RecordingCacheDao() }
 
-        sink.commit(Candidate("content://missing", byteHandle = { error("must not re-open") }), text = "x", processed = true, bytes = byteArrayOf(1))
+        sink.commit(Candidate("content://missing", byteHandle = { error("must not re-open") }), text = "x", processed = true, bytes = byteArrayOf(1), precomputedContentHash = null)
 
         // Model B invariant violation — logged + skipped; zvec is untouched.
         assertTrue(store.events.isEmpty())
@@ -155,10 +155,36 @@ class ZvecWriteSinkTest {
 
         val candidate = Candidate(locator = "content://media/1", byteHandle = { error("sink must not re-open the file") })
 
-        sink.commit(candidate, text = "x", processed = true, bytes = byteArrayOf(1, 2, 3))
+        sink.commit(candidate, text = "x", processed = true, bytes = byteArrayOf(1, 2, 3), precomputedContentHash = null)
 
         // Commit completed without the byteHandle ever being invoked (no throw propagated).
         assertEquals(1, store.events.filterIsInstance<RecordingZvecContentStore.Upsert>().size)
+    }
+
+    @Test
+    fun commit_precomputedHashIsAuthoritative_acrossAllThreeStores() = runBlocking {
+        // The §0.4 threading: the engine passes the hash `isKnown`'s miss path already
+        // computed, so the sink must NOT re-hash [bytes]. A deliberately-wrong sentinel
+        // (not sha256Hex(bytes)) proves precedence — if the sink re-derived the hash this
+        // test fails, and if the sentinel ever fails to fan out to ALL THREE stores
+        // (zvec PK, Room content_hash, cache) the cross-store identity splits.
+        val repo = ScreenshotInMemoryRepository()
+        repo.addScreenshot(listOf(ScreenshotModel("id-1", "content://media/1", "n", 5L, 100L, "col")))
+        val store = RecordingZvecContentStore()
+        val cacheDao = RecordingCacheDao()
+        val sink = ZvecWriteSink(repo, store) { cacheDao }
+        val sentinel = "precomputed-sentinel-not-the-digest"
+
+        sink.commit(
+            Candidate("content://media/1", byteHandle = { error("must not re-open") }),
+            text = "x", processed = true, bytes = byteArrayOf(1, 2, 3),
+            precomputedContentHash = sentinel,
+        )
+
+        assertEquals(sentinel, store.events.filterIsInstance<RecordingZvecContentStore.Upsert>().single().contentHash)
+        assertEquals(sentinel, repo.getScreenshotByUri("content://media/1")!!.contentHash)
+        assertEquals(sentinel, cacheDao.upserts.single().contentHash)
+        assertEquals(listOf(sentinel), cacheDao.markIndexedHashes)
     }
 
     @Test
@@ -177,7 +203,7 @@ class ZvecWriteSinkTest {
         val bytes = byteArrayOf(7)
 
         val threw = runCatching {
-            sink.commit(Candidate("content://media/1", byteHandle = { error("must not re-open") }), "x", processed = true, bytes)
+            sink.commit(Candidate("content://media/1", byteHandle = { error("must not re-open") }), "x", processed = true, bytes, null)
         }
 
         assertTrue("Room write threw (simulating the mid-write crash)", threw.isFailure)

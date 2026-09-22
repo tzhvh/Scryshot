@@ -40,6 +40,7 @@ import io.github.tzhvh.scryernext.preference.PreferenceWrapper
 import io.github.tzhvh.scryernext.promote.Promoter
 import io.github.tzhvh.scryernext.sortingpanel.SortingPanelActivity
 import io.github.tzhvh.scryernext.ui.ScryerToast
+import io.github.tzhvh.scryernext.util.sha256Hex
 import io.github.tzhvh.scryernext.viewmodel.ScreenshotViewModel
 import kotlin.coroutines.CoroutineContext
 
@@ -51,9 +52,6 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
         private const val EXTRA_SCREENSHOT_ID = "screenshot_id"
         private const val EXTRA_COLLECTION_ID = "collection_id"
         private const val EXTRA_SEARCH_KEYWORD = "search_keyword"
-
-        /** SHA-256 hex lookup — mirrors `ZvecWriteSink` / the repo's shared helper. */
-        val HEX = "0123456789abcdef".toCharArray()
 
         private const val SUPPORT_SLIDE = true
 
@@ -446,6 +444,11 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
                 locator = screenshot.uri,
                 content = contentText,
                 collectionId = screenshot.collectionId,
+                // Phase 2.1 step 4 (2.1-D2): every ingestion write populates capture time so
+                // date-range filters push down — this path diverged from ZvecWriteSink (which
+                // passed it) and left detail-page-OCR'd docs hidden behind date filters until
+                // the backfill ran.
+                lastModified = screenshot.lastModified,
             )
             store.flush()
             // ── then Room: record the bridge hash + retire the row (one update). ──────────────
@@ -454,17 +457,6 @@ class DetailPageActivity : AppCompatActivity(), CoroutineScope {
             // Decode failure — no bytes to hash/index; just retire the row so it leaves the queue.
             viewModel.updateScreenshots(listOf(screenshot.copy(processed = true)))
         }
-    }
-
-    /** SHA-256 hex — the zvec content_hash PK. Mirrors `ZvecWriteSink` / the repo's shared helper. */
-    private fun sha256Hex(bytes: ByteArray): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
-        val sb = StringBuilder(digest.size * 2)
-        for (b in digest) {
-            val v = b.toInt() and 0xff
-            sb.append(HEX[v ushr 4]).append(HEX[v and 0x0f])
-        }
-        return sb.toString()
     }
 
     private fun showConnectPromptSnackbar() {

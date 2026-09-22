@@ -20,8 +20,13 @@ import io.github.tzhvh.scryernext.search.RankPolicy
  * unreadable, because the search bridge and `getContentText` both resolve by content_hash.
  *
  * - [known] mirrors the legacy Boolean: is this content already in zvec?
- * - [resolvedContentHash] is the SHA-256 the miss-path computed (null on the cheap-path cache hit,
- *   where no hash was computed, and null when [known] is false).
+ * - [resolvedContentHash] is the SHA-256 (lowercase hex, [io.github.tzhvh.scryernext.util.sha256Hex]
+ *   format) the repository computed over [isKnown]'s `bytes` — returned on EVERY miss-path call,
+ *   known or not (roadmap V2 §0.4: the engine threads it into the sink's `precomputedContentHash`
+ *   so the same bytes are hashed once per run, not twice). Null only where no hash was computed:
+ *   the cheap-path metadata-cache hit, a null-locator/no-key candidate, and reference impls.
+ *   The dedup-skip D2 stamp still reads it only under [known] — an unknown candidate's hash is for
+ *   the WRITE path, not the skip path.
  */
 data class DedupResult(val known: Boolean, val resolvedContentHash: String? = null) {
     companion object {

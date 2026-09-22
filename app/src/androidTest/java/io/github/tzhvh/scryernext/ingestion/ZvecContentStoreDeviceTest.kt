@@ -99,6 +99,7 @@ class ZvecContentStoreDeviceTest {
             text = "recognized OCR text",
             processed = true,
             bytes = bytes,
+            precomputedContentHash = null,
         )
 
         // The doc round-trips via the store's read path.

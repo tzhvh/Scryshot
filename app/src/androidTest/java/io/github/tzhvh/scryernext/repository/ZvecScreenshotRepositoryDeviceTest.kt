@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -89,6 +90,7 @@ class ZvecScreenshotRepositoryDeviceTest {
             text = "deploy the new search index tonight",
             processed = true,
             bytes = bytes,
+            precomputedContentHash = null,
         )
 
         // searchScreenshotList: zvec FTS → batched gallery-row bridge. The OCR text matches the query.
@@ -129,6 +131,7 @@ class ZvecScreenshotRepositoryDeviceTest {
             text = "shared keyword matchme",
             processed = true,
             bytes = liveBytes,
+            precomputedContentHash = null,
         )
 
         // Index a "ghost" doc whose locator matches a query but has NO Room row — upsert directly to
@@ -170,12 +173,14 @@ class ZvecScreenshotRepositoryDeviceTest {
             text = "receipt total invoice billing",
             processed = true,
             bytes = "old-bytes".toByteArray(),
+            precomputedContentHash = null,
         )
         sink.commit(
             Candidate(locator = newUri, byteHandle = { ByteArrayInputStream("new-bytes".toByteArray()) }),
             text = "receipt",
             processed = true,
             bytes = "new-bytes".toByteArray(),
+            precomputedContentHash = null,
         )
 
         val relevance = rows(repo.searchScreenshotList("receipt invoice", RankPolicy.Relevance))
@@ -206,10 +211,12 @@ class ZvecScreenshotRepositoryDeviceTest {
         sink.commit(
             Candidate(locator = uriA, byteHandle = { ByteArrayInputStream("a-bytes".toByteArray()) }),
             text = "shared keyword matchme", processed = true, bytes = "a-bytes".toByteArray(),
+            precomputedContentHash = null,
         )
         sink.commit(
             Candidate(locator = uriB, byteHandle = { ByteArrayInputStream("b-bytes".toByteArray()) }),
             text = "shared keyword matchme", processed = true, bytes = "b-bytes".toByteArray(),
+            precomputedContentHash = null,
         )
 
         val unfiltered = rows(repo.searchScreenshotList("matchme"))
@@ -252,6 +259,7 @@ class ZvecScreenshotRepositoryDeviceTest {
         sink.commit(
             Candidate(locator = newUri, byteHandle = { ByteArrayInputStream("new-bytes-lm".toByteArray()) }),
             text = "shared keyword matchme", processed = true, bytes = "new-bytes-lm".toByteArray(),
+            precomputedContentHash = null,
         )
 
         // Bound chosen so the OLD doc's 1,000ms timestamp PASSES it — pre-backfill it is
@@ -286,6 +294,41 @@ class ZvecScreenshotRepositoryDeviceTest {
 
     private fun rows(outcome: SearchOutcome): List<ScreenshotModel> =
         (outcome as SearchOutcome.Results).rows
+
+    /**
+     * Roadmap V2 §0.4, repo side: the `isKnown` miss path must return the digest it just paid
+     * for even when the content is UNKNOWN (the old contract nulled it — the engine's new-file
+     * case — forcing the sink to re-hash the same bytes). The threading side: handing that
+     * digest to the sink as `precomputedContentHash` lands the SAME hash as the zvec PK and the
+     * Room bridge column. The expected digest comes from this file's own sha256Hex copy — an
+     * implementation independent of production's shared helper, so this is a real cross-check.
+     */
+    @Test fun isKnown_missPath_returnsDigest_whenUnknown_andItThreadsThroughTheSink() = runBlocking {
+        val (repo, sink, store) = newRepo()
+        val uri = "content://media/hash-thread-${System.nanoTime()}"
+        repo.addScreenshot(listOf(ScreenshotModel("id-ht", uri, "shot.png", size = 9L, lastModified = 1L, "col")))
+        val bytes = "hash-thread-bytes".toByteArray()
+
+        // Fresh cache → miss path; hash not in the index → unknown.
+        val dedup = repo.isKnown(Candidate(locator = uri, byteHandle = { ByteArrayInputStream(bytes) }), bytes)
+        assertTrue("fresh content must be unknown", !dedup.known)
+        assertEquals("§0.4: the miss-path digest comes back out even when unknown (was nulled)",
+            sha256Hex(bytes), dedup.resolvedContentHash)
+
+        // Threading: the engine's contract — pass dedup.resolvedContentHash to the sink.
+        sink.commit(
+            Candidate(locator = uri, byteHandle = { error("must not re-open") }),
+            text = "hash thread",
+            processed = true,
+            bytes = bytes,
+            precomputedContentHash = dedup.resolvedContentHash,
+        )
+
+        // One identity across all three stores: the zvec PK and the Room bridge column both
+        // carry the digest isKnown computed — not a re-derivation.
+        assertNotNull("zvec doc lands under the threaded hash", store.fetch(dedup.resolvedContentHash!!))
+        assertEquals(dedup.resolvedContentHash, repo.getScreenshotByUri(uri)!!.contentHash)
+    }
 
     private fun sha256Hex(bytes: ByteArray): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)

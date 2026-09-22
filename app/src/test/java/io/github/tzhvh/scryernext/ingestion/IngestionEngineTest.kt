@@ -61,10 +61,12 @@ class IngestionEngineTest {
             isKnownCalls += candidate
             val key = candidate.identity ?: candidate.locator ?: return DedupResult.UNKNOWN
             val known = key in knownKeys
-            // D1: thread a synthetic hash when known so the engine's dedup-skip (D2) exercises the
-            // markContentIndexed path. Tests that care about which retirement fired assert on the
-            // recorded calls below.
-            return if (known) DedupResult(known = true, resolvedContentHash = "hash-$key") else DedupResult.UNKNOWN
+            // The widened D1 contract (roadmap V2 §0.4): the miss path ALWAYS returns the digest it
+            // computed — known or not — so the engine can thread it into the sink's
+            // precomputedContentHash instead of the sink re-hashing the same bytes. The synthetic
+            // "hash-$key" stands in for the digest; the engine threading test asserts it reaches
+            // commit. (The D2 dedup-skip stamp still only reads it under known.)
+            return DedupResult(known = known, resolvedContentHash = "hash-$key")
         }
 
         override suspend fun markProcessed(candidate: Candidate) {
@@ -122,14 +124,18 @@ class IngestionEngineTest {
     /**
      * A write sink that records what it was asked to persist, keyed by locator.
      * [writtenProcessed] mirrors the `processed` flag so the §7.2 taxonomy asserts
-     * both *what text* and *whether processed* landed.
+     * both *what text* and *whether processed* landed. [writtenHashes] records the
+     * `precomputedContentHash` the engine threaded from dedup (§0.4 — null means the
+     * sink must fall back to hashing the bytes itself).
      */
     private class CapturingWriteSink {
         val written: MutableMap<String?, String?> = mutableMapOf()
         val writtenProcessed: MutableMap<String?, Boolean> = mutableMapOf()
-        val write = WriteSink { candidate, text, processed, _ ->
+        val writtenHashes: MutableMap<String?, String?> = mutableMapOf()
+        val write = WriteSink { candidate, text, processed, _, precomputedContentHash ->
             written[candidate.locator] = text
             writtenProcessed[candidate.locator] = processed
+            writtenHashes[candidate.locator] = precomputedContentHash
         }
     }
 
@@ -205,6 +211,37 @@ class IngestionEngineTest {
     }
 
     // --------------------------------------------------------------------------
+    // (b cont.) the dedup-resolved hash is threaded into the sink — no second hash (§0.4)
+    // --------------------------------------------------------------------------
+
+    @Test
+    fun unknown_success_candidates_receive_the_dedup_hash_at_commit() = runBlocking {
+        // Roadmap V2 §0.4: `isKnown`'s miss path already digested the bytes, so the engine hands
+        // that digest to the sink as precomputedContentHash instead of letting the sink hash the
+        // same bytes again. Both commit branches (Success AND PermanentContentFailure) thread it.
+        val repo = FakeScreenshotRepository(knownKeys = mutableSetOf())
+        val ocr = FakeOcrStage(outcomesByLocator = mapOf(
+            "content://media/1" to OcrOutcome.Success("hello"),
+            "content://media/2" to OcrOutcome.PermanentContentFailure,
+        ))
+        val sink = CapturingWriteSink()
+        val engine = IngestionEngine(repo, ocr, sink.write)
+
+        engine.process(flowOf(
+            candidate("content://media/1"),
+            candidate("content://media/2"),
+        )).toList()
+
+        assertEquals(
+            mapOf(
+                "content://media/1" to "hash-content://media/1",
+                "content://media/2" to "hash-content://media/2",
+            ),
+            sink.writtenHashes,
+        )
+    }
+
+    // --------------------------------------------------------------------------
     // (c) early-progress fires before any OCR
     // --------------------------------------------------------------------------
 
@@ -212,7 +249,7 @@ class IngestionEngineTest {
     fun early_progress_fires_before_any_ocr() = runBlocking {
         val repo = FakeScreenshotRepository(knownKeys = mutableSetOf())
         val ocr = OcrStage { _, _ -> OcrOutcome.Success("x") }
-        val engine = IngestionEngine(repo, ocr, WriteSink { _, _, _, _ -> })
+        val engine = IngestionEngine(repo, ocr, WriteSink { _, _, _, _, _ -> })
 
         val first = engine.process(flowOf(candidate("content://media/1"))).toList().first()
 
@@ -393,7 +430,7 @@ class IngestionEngineTest {
         ))
         // The sink mutates the repo's known set exactly as a processed Room insert would
         // surface in dbKeysByLocator (ScreenshotDao.getIndexedUris selects processed = 1).
-        val write = WriteSink { c, _, processed, _ ->
+        val write = WriteSink { c, _, processed, _, _ ->
             if (processed) {
                 val key = c.identity ?: c.locator
                 if (key != null) knownKeys += key
@@ -464,7 +501,7 @@ class IngestionEngineTest {
             "content://media/2" to OcrOutcome.Success("after-retry"),
         ))
         val writeSleepMs = 8L
-        val write = WriteSink { _, _, _, _ -> Thread.sleep(writeSleepMs) }
+        val write = WriteSink { _, _, _, _, _ -> Thread.sleep(writeSleepMs) }
         val engine = IngestionEngine(repo, ocr, write)
 
         val progress = engine.process(flowOf(
@@ -490,7 +527,7 @@ class IngestionEngineTest {
         val repo = FakeScreenshotRepository(knownKeys = mutableSetOf())
         val ocr = OcrStage { _, _ -> OcrOutcome.Success("ok") }
         val boom = java.io.IOException("disk full")
-        val write = WriteSink { _, _, _, _ -> throw boom }
+        val write = WriteSink { _, _, _, _, _ -> throw boom }
         val engine = IngestionEngine(repo, ocr, write)
 
         val progress = engine.process(flowOf(
@@ -525,7 +562,7 @@ class IngestionEngineTest {
             OcrOutcome.Success("slept")
         }
         val writeSleepMs = 3L
-        val write = WriteSink { _, _, _, _ -> Thread.sleep(writeSleepMs) }
+        val write = WriteSink { _, _, _, _, _ -> Thread.sleep(writeSleepMs) }
         val engine = IngestionEngine(repo, ocr, write)
 
         val progress = engine.process(flowOf(candidate("content://media/1"))).toList()
@@ -552,7 +589,7 @@ class IngestionEngineTest {
         val ocr = FakeOcrStage(outcomesByLocator = mapOf(
             "content://media/2" to OcrOutcome.Success("ok"),
         ))
-        val engine = IngestionEngine(repo, ocr, WriteSink { _, _, _, _ -> })
+        val engine = IngestionEngine(repo, ocr, WriteSink { _, _, _, _, _ -> })
 
         val progress = engine.process(flowOf(
             candidate("content://media/1"),   // unknown→Success (default)

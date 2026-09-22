@@ -123,6 +123,9 @@ class IngestionEngine(
             val bytes = candidate.byteHandle().use { it.readBytes() }
             val readMs = msSince(readStart)
 
+            // The miss path's digest rides back out on DedupResult.resolvedContentHash into the
+            // sink's `precomputedContentHash` (roadmap V2 §0.4 — one digest per file, not two), so
+            // the same `bytes` array must flow UNMUTATED from here through `attempt` to `commit`.
             val dedup = repository.isKnown(candidate, bytes)
             if (dedup.known) {
                 // Dedup-as-skip (ADR 0004 §3, §5). Retire the row from the producer's
@@ -202,13 +205,15 @@ class IngestionEngine(
                 when (outcome) {
                     is OcrOutcome.Success -> {
                         val writeStart = System.nanoTime()
-                        write.commit(candidate, outcome.text, processed = true, bytes = bytes)
+                        write.commit(candidate, outcome.text, processed = true, bytes = bytes,
+                                     precomputedContentHash = dedup.resolvedContentHash)
                         indexed += 1
                         msSince(writeStart)
                     }
                     is OcrOutcome.PermanentContentFailure -> {
                         val writeStart = System.nanoTime()
-                        write.commit(candidate, null, processed = true, bytes = bytes)
+                        write.commit(candidate, null, processed = true, bytes = bytes,
+                                     precomputedContentHash = dedup.resolvedContentHash)
                         indexed += 1
                         msSince(writeStart)
                     }
