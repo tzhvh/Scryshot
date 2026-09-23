@@ -362,6 +362,14 @@ class HomeFragment : Fragment(), CoroutineScope {
                 isVisible = BuildConfig.DEBUG
             }
 
+            menu.findItem(R.id.action_ingestion_inspector).apply {
+                setOnMenuItemClickListener {
+                    startActivity(Intent(safeActivity, IngestionInspectorActivity::class.java))
+                    true
+                }
+                isVisible = BuildConfig.DEBUG
+            }
+
             createOptionsMenuSearchView(safeActivity)
         }
     }

@@ -101,6 +101,10 @@
             android:name="io.github.tzhvh.scryernext.ZvecInspectorActivity"
             android:exported="false" />
 
+        <activity
+            android:name="io.github.tzhvh.scryernext.IngestionInspectorActivity"
+            android:exported="false" />
+
         <service
             android:name="io.github.tzhvh.scryernext.ScryerService"
             android:exported="false"

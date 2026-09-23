@@ -66,4 +66,11 @@ interface ContentMetadataCacheDao {
      */
     @Query("DELETE FROM content_metadata_cache")
     fun clearAll()
+
+    /**
+     * Ingestion Inspector (debug) — total cached dedup rows, the "cache size" line of the
+     * queue-and-drift panel. Read-only count; additive to the wipe/lookup surface, no migration.
+     */
+    @Query("SELECT COUNT(*) FROM content_metadata_cache")
+    fun getCount(): Int
 }

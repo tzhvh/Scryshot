@@ -38,4 +38,6 @@ class ContentMetadataCacheDaoFake : ContentMetadataCacheDao {
     override fun clearAll() {
         rows.clear()
     }
+
+    override fun getCount(): Int = rows.size
 }

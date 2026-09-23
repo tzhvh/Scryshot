@@ -9,6 +9,7 @@ import android.app.Application
 import android.util.Log
 
 import io.github.tzhvh.scryernext.ingestion.IngestionLogger
+import io.github.tzhvh.scryernext.ingestion.IngestionEventRecorder
 import io.github.tzhvh.scryernext.ingestion.IngestionProgressStore
 import io.github.tzhvh.scryernext.repository.ScreenshotDatabaseRepository
 import io.github.tzhvh.scryernext.repository.ScreenshotRepository
@@ -57,6 +58,16 @@ class ScryerApplication : Application() {
         /** Issue 14: app-scope control + cross-process liveness surface (WorkInfo-derived). */
         fun getIngestionSession(): IngestionSession {
             return instance.ingestionSession
+        }
+
+        /**
+         * Ingestion Inspector — the app-scope per-item event recorder, wired into BOTH engine
+         * construction sites (the [OnOpenTrigger] engine below and [IngestionWorker]'s) so the
+         * debug event feed sees on-open and bulk runs alike. Gated by its own `enabled` flag
+         * (see [ingestionEventRecorder]); release builds pay one branch per candidate.
+         */
+        fun getIngestionEventRecorder(): IngestionEventRecorder {
+            return instance.ingestionEventRecorder
         }
 
         /** Issue 21: app-wide ContentResolver for decode/size queries against content URIs. */
@@ -144,6 +155,13 @@ class ScryerApplication : Application() {
     private val ingestionProgressStore = IngestionProgressStore(
         logger = IngestionLogger { msg -> Log.d("IngestionProgressStore", msg) }
     )
+
+    /**
+     * Ingestion Inspector — the per-item event recorder (debug-gated ring buffer + logcat mirror),
+     * app-scope singleton handed to both [IngestionEngine] construction sites and read back by the
+     * debug [IngestionInspectorActivity]. Pure field init is safe: no Context, no Android types.
+     */
+    private val ingestionEventRecorder = IngestionEventRecorder()
 
     /**
      * Issue 14: the user-facing control + cross-process liveness surface. Owns everything
@@ -242,6 +260,9 @@ class ScryerApplication : Application() {
         // scripted smoke without reading the in-memory Inspector — the 2026-09-21 first-open
         // contention investigation needs exactly that timeline.
         ZvecEventRecorder.init(enabled = isDebuggable) { msg -> Log.d("ZvecRecorder", msg) }
+        // Ingestion Inspector — same centralized gate for the per-item recorder. Debug builds
+        // mirror every outcome to logcat so a run's per-file story is visible without the screen.
+        ingestionEventRecorder.init(enabled = isDebuggable) { msg -> Log.d("IngestionRecorder", msg) }
         screenshotRepository = ZvecScreenshotRepository(
             delegate = dbRepository,
             store = zvecContentStore,
@@ -295,7 +316,8 @@ class ScryerApplication : Application() {
             engine = IngestionEngine(
                 screenshotRepository,
                 MlKitOcrStage(),
-                zvecWriteSink
+                zvecWriteSink,
+                events = ingestionEventRecorder,
             ),
             store = ingestionProgressStore,
             scope = applicationScope,

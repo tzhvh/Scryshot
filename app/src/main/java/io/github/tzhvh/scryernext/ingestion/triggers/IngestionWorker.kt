@@ -109,6 +109,10 @@ class IngestionWorker(
                 zvecContentStore = zvecContentStore,
                 metadataCacheDaoProvider = { ScryerApplication.getMetadataCacheDao() },
             ),
+            // Ingestion Inspector — same recorder instance as the on-open engine (app-scope
+            // singleton), so the debug event feed covers both trigger kinds. Gated internally
+            // by `enabled`; release builds pay one branch per candidate.
+            events = ScryerApplication.getIngestionEventRecorder(),
         )
 
         // 1. Promote to a dataSync foreground service BEFORE any long work (avoids ANR).

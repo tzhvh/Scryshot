@@ -22,6 +22,7 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
+import java.io.IOException
 
 /**
  * Unit tests for [IngestionEngine] — ADR 0004 §2's pure pipeline, tested in
@@ -606,5 +607,78 @@ class IngestionEngineTest {
         val afterFirst = progress[1] as Progress.Indexing
         // read+ocr+write each took some wall-clock; ocrMs should be non-zero.
         assertTrue(afterFirst.stageTimings!!.ocrMs >= 0.0)
+    }
+
+    // ==========================================================================
+    // debug per-item event feed (the IngestionEventRecorder seam)
+    // ==========================================================================
+
+    // --------------------------------------------------------------------------
+    // (e) one event per candidate outcome, in loop order, with cause + uri
+    // --------------------------------------------------------------------------
+
+    @Test
+    fun event_feed_records_dedup_skip_success_permanent_and_transient() = runBlocking {
+        val recorder = IngestionEventRecorder().apply { init(enabled = true) }
+        val repo = FakeScreenshotRepository(knownKeys = mutableSetOf("content://media/known"))
+        repo.screenshotRows = listOf(screenshot(uri = "content://media/known"))
+        val ocr = FakeOcrStage(outcomesByLocator = mapOf(
+            "content://media/success" to OcrOutcome.Success("hello"),
+            "content://media/permanent" to OcrOutcome.PermanentContentFailure,
+            "content://media/transient" to OcrOutcome.TransientFailure(IOException("model warming")),
+        ))
+        val engine = IngestionEngine(repo, ocr, CapturingWriteSink().write, events = recorder)
+
+        val progress = engine.process(flowOf(
+            candidate("content://media/known"),
+            candidate("content://media/success"),
+            candidate("content://media/permanent"),
+            candidate("content://media/transient"),
+        )).toList()
+
+        // The recorder is observational: counters and terminal are exactly as without it.
+        val completed = progress.last() as Progress.Completed
+        assertEquals(2, completed.indexed)   // Success + Permanent (processed-but-empty)
+        assertEquals(1, completed.failed)
+
+        val messages = recorder.getEvents().map { it.message }
+        assertEquals(4, messages.size)
+        assertTrue(messages[0].startsWith("dedup-skip uri=content://media/known"))
+        assertTrue(messages[1].startsWith("indexed uri=content://media/success"))
+        assertTrue(messages[2].startsWith("permanent-content-failure uri=content://media/permanent"))
+        assertTrue(messages[3].startsWith("transient-failure uri=content://media/transient"))
+        assertTrue(messages[3].contains("IOException"))
+        assertTrue(messages[3].contains("model warming"))
+    }
+
+    @Test
+    fun event_feed_records_write_errors() = runBlocking {
+        val recorder = IngestionEventRecorder().apply { init(enabled = true) }
+        val repo = FakeScreenshotRepository(knownKeys = mutableSetOf())
+        val ocr = OcrStage { _, _ -> OcrOutcome.Success("x") }
+        val write = WriteSink { _, _, _, _, _ -> throw IllegalStateException("disk full") }
+        val engine = IngestionEngine(repo, ocr, write, events = recorder)
+
+        engine.process(flowOf(candidate("content://media/1"))).toList()
+
+        val message = recorder.getEvents().single().message
+        assertTrue(message.startsWith("write-error uri=content://media/1"))
+        assertTrue(message.contains("IllegalStateException"))
+        assertTrue(message.contains("disk full"))
+    }
+
+    @Test
+    fun event_feed_unwired_run_is_unaffected() = runBlocking {
+        // The seam defaults to null — every pre-existing construction site and test compiles
+        // and behaves identically, and the disabled recorder is gated to a volatile read.
+        val repo = FakeScreenshotRepository(knownKeys = mutableSetOf())
+        val ocr = FakeOcrStage(outcomesByLocator = mapOf(
+            "content://media/1" to OcrOutcome.Success("hello"),
+        ))
+        val engine = IngestionEngine(repo, ocr, CapturingWriteSink().write)
+
+        val progress = engine.process(flowOf(candidate("content://media/1"))).toList()
+
+        assertTrue(progress.last() is Progress.Completed)
     }
 }

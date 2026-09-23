@@ -77,11 +77,20 @@ import kotlinx.coroutines.flow.toList
  *                   `processed` flag so it can express "write text" (success) and "write
  *                   empty + processed" (permanent-content failure). The trigger layer /
  *                   repository owns how/where it persists.
+ * @param events     optional debug-only per-item event sink (the Ingestion Inspector's event
+ *                   feed). Null by default — observability, not a dependency; no static state
+ *                   reaches this class. When wired, the loop records one line per candidate
+ *                   outcome (dedup-skip / success / permanent / transient / write-error) with
+ *                   URI, cause, and stage latencies — data [Progress] cannot carry (it is
+ *                   count-only by design). Gated internally by the recorder's `enabled` flag
+ *                   (see [IngestionEventRecorder]): an unwired or disabled recorder costs the
+ *                   loop nothing.
  */
 class IngestionEngine(
     private val repository: ScreenshotRepository,
     private val ocr: OcrStage,
     private val write: WriteSink,
+    private val events: IngestionEventRecorder? = null,
 ) {
     /**
      * Process [candidates] into a cold [Flow] of [Progress].
@@ -149,6 +158,10 @@ class IngestionEngine(
                 } else {
                     repository.markProcessed(candidate)
                 }
+                events?.record {
+                    "dedup-skip uri=${candidate.locator ?: "?"} readMs=${formatMs(readMs)} " +
+                        "cheap=${dedup.resolvedContentHash == null}"
+                }
                 emit(Progress.Indexing(current = indexed + failed, total = total,
                                        failedCount = failed, stageTimings = timings.snapshot()))
                 continue
@@ -208,23 +221,41 @@ class IngestionEngine(
                         write.commit(candidate, outcome.text, processed = true, bytes = bytes,
                                      precomputedContentHash = dedup.resolvedContentHash)
                         indexed += 1
-                        msSince(writeStart)
+                        val elapsed = msSince(writeStart)
+                        events?.record {
+                            "indexed uri=${candidate.locator ?: "?"} chars=${outcome.text.length} " +
+                                "ocrMs=${formatMs(ocrMs)} writeMs=${formatMs(elapsed)}"
+                        }
+                        elapsed
                     }
                     is OcrOutcome.PermanentContentFailure -> {
                         val writeStart = System.nanoTime()
                         write.commit(candidate, null, processed = true, bytes = bytes,
                                      precomputedContentHash = dedup.resolvedContentHash)
                         indexed += 1
-                        msSince(writeStart)
+                        val elapsed = msSince(writeStart)
+                        events?.record {
+                            "permanent-content-failure uri=${candidate.locator ?: "?"} " +
+                                "ocrMs=${formatMs(ocrMs)} writeMs=${formatMs(elapsed)} (written processed-but-empty)"
+                        }
+                        elapsed
                     }
                     is OcrOutcome.TransientFailure -> {
                         failed += 1
+                        events?.record {
+                            "transient-failure uri=${candidate.locator ?: "?"} " +
+                                "cause=${outcome.cause.javaClass.simpleName}: ${outcome.cause.message} " +
+                                "ocrMs=${formatMs(ocrMs)}"
+                        }
                         null   // no write occurred → no write sample keeps the write EMA honest
                     }
                 }
             } catch (ce: kotlinx.coroutines.CancellationException) {
                 throw ce
             } catch (t: Throwable) {
+                events?.record {
+                    "write-error uri=${candidate.locator ?: "?"} ${t.javaClass.simpleName}: ${t.message}"
+                }
                 emit(Progress.Error(t))
                 return@flow
             }
@@ -240,6 +271,9 @@ class IngestionEngine(
 
     private fun msSince(startNanos: Long): Double =
         (System.nanoTime() - startNanos) / NANOS_PER_MS
+
+    /** Event-feed millisecond rendering — one decimal, locale-stable (debug log, not UI copy). */
+    private fun formatMs(ms: Double): String = String.format(java.util.Locale.US, "%.1f", ms)
 
     private companion object {
         const val NANOS_PER_MS = 1_000_000.0

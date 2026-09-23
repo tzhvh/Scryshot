@@ -340,4 +340,57 @@ class IngestionProgressStoreTest {
         assertSame("late abort must not clobber the prior terminal", before, store.progress.value)
         assertEquals(1, fired)
     }
+
+    // ==========================================================================
+    // run history — the debug Ingestion Inspector's retained last-N runs
+    // ==========================================================================
+
+    @Test
+    fun runHistory_records_kind_start_end_and_terminal_on_complete() {
+        val store = newStore()
+        assertTrue(store.tryEnter(IngestionProgressStore.TriggerKind.BULK))
+        store.complete(Progress.Completed(indexed = 4, failed = 1, total = 5))
+
+        val history = store.runHistory()
+        assertEquals(1, history.size)
+        val run = history.single()
+        assertEquals(IngestionProgressStore.TriggerKind.BULK, run.kind)
+        assertEquals(4, (run.terminal as Progress.Completed).indexed)
+        assertEquals(1, (run.terminal as Progress.Completed).failed)
+        assertTrue("start must precede end", run.startedAtMs <= run.endedAtMs)
+    }
+
+    @Test
+    fun runHistory_records_fail_and_abort_with_their_terminal_states() {
+        val store = newStore()
+        assertTrue(store.tryEnter(IngestionProgressStore.TriggerKind.ON_OPEN))
+        store.fail(Progress.Error(IllegalStateException("boom")))
+        assertTrue(store.tryEnter(IngestionProgressStore.TriggerKind.BULK))
+        store.abort()
+
+        val history = store.runHistory()
+        assertEquals(2, history.size)
+        assertEquals(IngestionProgressStore.TriggerKind.ON_OPEN, history[0].kind)
+        assertTrue(history[0].terminal is Progress.Error)
+        assertEquals(IngestionProgressStore.TriggerKind.BULK, history[1].kind)
+        assertTrue(history[1].terminal is Progress.Aborted)
+    }
+
+    @Test
+    fun runHistory_ignores_terminals_without_a_guard_and_caps_at_ten() {
+        val store = newStore()
+        // Terminal without a guard held — the idempotence path must not record a phantom run.
+        store.complete(Progress.Completed(0, 0, 0))
+        assertEquals(0, store.runHistory().size)
+
+        repeat(12) { i ->
+            assertTrue(store.tryEnter(IngestionProgressStore.TriggerKind.ON_OPEN))
+            store.complete(Progress.Completed(indexed = i, failed = 0, total = i))
+        }
+        val history = store.runHistory()
+        assertEquals("history is capped at the last 10 runs", 10, history.size)
+        // Oldest evicted: runs i=0 and i=1 fell off; retained runs are i=2..11.
+        assertEquals(2, (history.first().terminal as Progress.Completed).indexed)
+        assertEquals(11, (history.last().terminal as Progress.Completed).indexed)
+    }
 }

@@ -124,8 +124,19 @@ class MlKitOcrStage(
     }
 
     companion object {
+        /**
+         * Ingestion Inspector — wall-clock ms when the singleton [TextRecognizer] was created
+         * (first [MlKitOcrStage] construction, via the default parameter), `0` = never. Primitive
+         * only, so the debug runner can read it on the JVM without loading ML Kit classes; the
+         * zero-sentinel keeps "never needed yet" distinguishable from "created".
+         */
+        @Volatile
+        var recognizerCreatedAtMs: Long = 0L
+            private set
+
         private val defaultTextRecognizer: TextRecognizer by lazy {
             TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                .also { recognizerCreatedAtMs = System.currentTimeMillis() }
         }
     }
 }

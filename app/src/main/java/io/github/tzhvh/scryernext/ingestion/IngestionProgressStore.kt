@@ -76,6 +76,35 @@ class IngestionProgressStore(
      */
     enum class TriggerKind { ON_OPEN, BULK }
 
+    /**
+     * One finished run, retained (last [HISTORY_MAX]) for the debug Ingestion Inspector's
+     * run-history panel — "throughput collapsed N runs ago" must outlive the EMA, which dies
+     * with its run. Recorded at the three terminal transitions ([complete]/[fail]/[abort])
+     * from state captured atomically with the guard release; in-memory only (process-lifetime),
+     * matching the guard itself — never persisted (see the poison-pill KDoc above).
+     *
+     * @param kind      which trigger owned the run (the same `was` the terminal logs already name).
+     * @param startedAtMs wall-clock start (captured at [tryEnter] grant, inside the winning CAS payload).
+     * @param endedAtMs   wall-clock terminal transition.
+     * @param terminal   the terminal [Progress] ([Completed]/[Error]/[Aborted]) — totals live here
+     *   ([Completed] carries `indexed`/`failed`/`total`; for [Aborted] the last [Indexing] numbers
+     *   remain readable from the store's progress surface at abort time).
+     */
+    data class RunRecord(
+        val kind: TriggerKind,
+        val startedAtMs: Long,
+        val endedAtMs: Long,
+        val terminal: Progress,
+    )
+
+    /** How many finished runs [runHistory] retains. */
+    private companion object {
+        const val HISTORY_MAX = 10
+    }
+
+    /** Guard payload: the kind AND the start timestamp, captured in the same CAS (see [activeRun]). */
+    private class ActiveRun(val kind: TriggerKind, val startedAtMs: Long)
+
     /** Held only to drive the `onTerminal` clear hook (issue `14a` cosmetic cleanup). */
     private var onTerminal: (() -> Unit)? = null
 
@@ -88,11 +117,15 @@ class IngestionProgressStore(
     val backlog: StateFlow<Int> = _backlog.asStateFlow()
 
     /**
-     * The §7.5 lock. `null` == no run active (Idle); non-null == a run of that
-     * [TriggerKind] is active. An [AtomicReference] + `compareAndSet` makes
-     * [tryEnter] a real atomic CAS rather than a read-then-write race.
+     * The §7.5 lock. `null` == no run active (Idle); non-null == a run of that [TriggerKind] is
+     * active, with its start time carried in the same payload so a terminal transition reads a
+     * consistent (kind, startedAt) pair with no second racy read. An [AtomicReference] +
+     * `compareAndSet` makes [tryEnter] a real atomic CAS rather than a read-then-write race.
      */
-    private val activeRun = AtomicReference<TriggerKind?>(null)
+    private val activeRun = AtomicReference<ActiveRun?>(null)
+
+    /** Finished-run ring (oldest evicted); mutated only via the synchronized [recordRun]. */
+    private val runHistory = ArrayDeque<RunRecord>(HISTORY_MAX)
 
     /**
      * Atomically enter an indexing session (ADR 0004 §7.5 guard).
@@ -105,12 +138,14 @@ class IngestionProgressStore(
      * tears down must be genuinely cancellable (issue `11`'s precondition).
      */
     fun tryEnter(kind: TriggerKind): Boolean {
-        val granted = activeRun.compareAndSet(null, kind)
+        // The start timestamp rides in the CAS payload: a terminal transition later reads a
+        // consistent (kind, startedAt) pair for the history record, with no second racy read.
+        val granted = activeRun.compareAndSet(null, ActiveRun(kind, System.currentTimeMillis()))
         if (granted) {
             _progress.value = Progress.Indexing(current = 0, total = 0, failedCount = 0)
             logger.log("tryEnter($kind) → granted")
         } else {
-            logger.log("tryEnter($kind) → refused (${activeRun.get()} active)")
+            logger.log("tryEnter($kind) → refused (${activeRun.get()?.kind} active)")
         }
         return granted
     }
@@ -184,7 +219,8 @@ class IngestionProgressStore(
         if (removed > 0) {
             _backlog.value = (_backlog.value - removed).coerceAtLeast(0)
         }
-        logger.log("complete(${result.indexed}/${result.total}, failed=${result.failed}) [was $was] backlog=${_backlog.value}")
+        recordRun(was, result)
+        logger.log("complete(${result.indexed}/${result.total}, failed=${result.failed}) [was ${was?.kind}] backlog=${_backlog.value}")
     }
 
     /**
@@ -197,7 +233,8 @@ class IngestionProgressStore(
         val hook = onTerminal
         onTerminal = null
         hook?.invoke()
-        logger.log("fail(${error.throwable.javaClass.simpleName}: ${error.throwable.message}) [was $was]")
+        recordRun(was, error)
+        logger.log("fail(${error.throwable.javaClass.simpleName}: ${error.throwable.message}) [was ${was?.kind}]")
     }
 
     /**
@@ -216,9 +253,31 @@ class IngestionProgressStore(
         onTerminal = null
         _progress.value = Progress.Aborted
         hook?.invoke()
-        logger.log("abort [was $was]")
+        recordRun(was, Progress.Aborted)
+        logger.log("abort [was ${was.kind}]")
     }
 
     /** Convenience: is a run currently active in *this* process? (Cross-process is WorkInfo.) */
     val isActive: Boolean get() = activeRun.get() != null
+
+    /**
+     * Which [TriggerKind] owns the active run, or null when idle (debug Ingestion Inspector's
+     * live-state line — "who is squatting on the guard", the same name the refusal log prints).
+     */
+    val activeKind: TriggerKind? get() = activeRun.get()?.kind
+
+    /**
+     * The retained finished runs, oldest first (debug Ingestion Inspector's run-history panel).
+     * A defensive copy; capped at [HISTORY_MAX] — process-lifetime only, like the guard.
+     */
+    @Synchronized
+    fun runHistory(): List<RunRecord> = runHistory.toList()
+
+    /** Append one finished run; evicts the oldest past [HISTORY_MAX]. */
+    @Synchronized
+    private fun recordRun(run: ActiveRun?, terminal: Progress) {
+        if (run == null) return   // terminal published with no guard held (see the idempotence tests)
+        if (runHistory.size >= HISTORY_MAX) runHistory.removeFirst()
+        runHistory.addLast(RunRecord(run.kind, run.startedAtMs, System.currentTimeMillis(), terminal))
+    }
 }

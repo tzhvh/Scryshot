@@ -56,6 +56,7 @@ class ZvecWriteSinkTest {
             return upserts.count { it.contentHash == contentHash }
         }
         override fun clearAll() { upserts.clear() }
+        override fun getCount(): Int = upserts.size
     }
 
     @Test
