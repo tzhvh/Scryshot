@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -34,6 +36,28 @@ android {
         jvmTarget = "1.8"
     }
 
+    // Test-phase release signing: credentials live in local.properties (gitignored), the
+    // .jks itself lives outside the repo. When either is absent (fresh clone, CI), release
+    // builds stay unsigned instead of failing — attach the config only when it resolves.
+    val testKeystoreProps = Properties().apply {
+        val propsFile = rootProject.file("local.properties")
+        if (propsFile.exists()) propsFile.inputStream().use { load(it) }
+    }
+    val testKeystoreFile = testKeystoreProps.getProperty("scryer.test.storeFile")
+            ?.let { rootProject.file(it) }
+            ?.takeIf { it.exists() }
+
+    signingConfigs {
+        if (testKeystoreFile != null) {
+            create("test") {
+                storeFile = testKeystoreFile
+                storePassword = testKeystoreProps.getProperty("scryer.test.storePassword")
+                keyAlias = testKeystoreProps.getProperty("scryer.test.keyAlias")
+                keyPassword = testKeystoreProps.getProperty("scryer.test.keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -42,6 +66,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.findByName("test")
         }
         debug {
             applicationIdSuffix = ".debug"
