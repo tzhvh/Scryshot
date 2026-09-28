@@ -327,8 +327,11 @@ open class ZvecContentStore(
      *   empty Room DB — because "marker matches but dir missing" is precisely the ghost-index state
      *   (engine empty, queue believes everything is done) the reset exists to undo. The marker is
      *   written last: a crash anywhere earlier leaves no marker, and the next launch re-runs the
-     *   idempotent wipe. [schemaWipesCount] / the outcome string count only real wipes (a dir that
-     *   held data), not fresh creates.
+     *   idempotent wipe. [schemaWipesCount] counts only real wipes (a dir that held data), not
+     *   fresh creates; [lastOpenOutcome] names both distinctly — the fresh-create branch sets its
+     *   own outcome (issue `04`, fixing the §15.4 cosmetic gap where a first-launch create left
+     *   `lastOpenOutcome = "never_opened"` even after a successful open, under-reporting in the
+     *   harness summaries and the inspector).
      */
     protected open suspend fun openOrRetry(): ZvecCollection {
         val marker = readSchemaMarker()
@@ -352,6 +355,11 @@ open class ZvecContentStore(
         if (wipedExistingData) {
             schemaWipesCount++
             lastOpenOutcome = "wipe-recreated (schema v$SCHEMA_VERSION)"
+        } else {
+            // Fresh create (issue `04`, §15.4's cosmetic gap): name it, so the
+            // outcome string never claims "never_opened" about a collection this
+            // call just created — the harness summaries and the inspector read it.
+            lastOpenOutcome = "created (schema v$SCHEMA_VERSION)"
         }
         return col
     }
@@ -567,6 +575,20 @@ open class ZvecContentStore(
     open suspend fun deleteAll(pks: List<String>): io.github.tzhvh.scryernext.zvec.WriteResult {
         ensureOpen()
         return withContext(Dispatchers.IO) { collection!!.deleteAll(pks) }
+    }
+
+    /**
+     * Bulk upsert passthrough — the write-mirror of [deleteAll] for tooling that seeds many docs
+     * at once (the ingestion repro harness's pre-seed probe, INGESTION_ADHOC_REPRO_HARNESS.md §5.1:
+     * inflate the collection to the cliff state in seconds, without OCR). Routes to
+     * [ZvecCollection.upsertAll]'s per-doc result surface; an engine-level failure throws. No
+     * production caller — the ingestion sink writes per-file via [upsert] + [flush] deliberately.
+     */
+    open suspend fun upsertAll(
+        docs: List<io.github.tzhvh.scryernext.zvec.ZvecDocBuilder.() -> Unit>,
+    ): io.github.tzhvh.scryernext.zvec.WriteResult {
+        ensureOpen()
+        return withContext(Dispatchers.IO) { collection!!.upsertAll(docs) }
     }
 
     /**
