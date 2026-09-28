@@ -681,4 +681,159 @@ class IngestionEngineTest {
 
         assertTrue(progress.last() is Progress.Completed)
     }
+
+    // ==========================================================================
+    // Issue 01 — checkpoint-batched flush: the terminal checkpoint wiring
+    // ==========================================================================
+
+    /** A batching-shaped sink: records commits + checkpoints into the caller's ordered log. */
+    private class CheckpointingSink(private val log: MutableList<String>) : WriteSink {
+        override suspend fun commit(candidate: Candidate, text: String?, processed: Boolean, bytes: ByteArray, precomputedContentHash: String?) {
+            log += "commit:${candidate.locator}"
+        }
+        override suspend fun checkpoint() { log += "checkpoint" }
+    }
+
+    @Test
+    fun terminal_checkpoint_runs_once_before_the_completed_emission() = runBlocking {
+        // The sink defers durability to batches; the engine must drain the tail BEFORE declaring
+        // the run done. One ordered log interleaves sink calls with flow emissions so the
+        // before-Completed ordering is asserted on the true sequence, not inferred after.
+        val log = mutableListOf<String>()
+        val repo = FakeScreenshotRepository(knownKeys = mutableSetOf())
+        val ocr = OcrStage { _, _ -> OcrOutcome.Success("x") }
+        val engine = IngestionEngine(repo, ocr, CheckpointingSink(log))
+
+        engine.process(flowOf(candidate("content://media/1"), candidate("content://media/2")))
+            .collect { log += "emit:${it.javaClass.simpleName}" }
+
+        assertEquals(
+            listOf(
+                "emit:Indexing",               // the §7.4 early emit, before any OCR
+                "commit:content://media/1",
+                "emit:Indexing",
+                "commit:content://media/2",
+                "emit:Indexing",
+                "checkpoint",                   // issue 01: terminal drain, tail batch's flush
+                "emit:Completed",               // Completed only after the tail is durable
+            ),
+            log,
+        )
+    }
+
+    @Test
+    fun write_error_path_checkpoints_bestEffort_and_never_masks_the_primary_error() = runBlocking {
+        // The error path's checkpoint is best-effort: it drains what DID commit (so the run keeps
+        // its partial work) but a SECONDARY checkpoint failure must be swallowed + logged, never
+        // displacing the primary write failure as the run's error.
+        val primary = java.io.IOException("disk full")
+        val log = mutableListOf<String>()
+        val write = object : WriteSink {
+            override suspend fun commit(candidate: Candidate, text: String?, processed: Boolean, bytes: ByteArray, precomputedContentHash: String?) {
+                log += "commit:${candidate.locator}"
+                throw primary
+            }
+            override suspend fun checkpoint() {
+                log += "checkpoint"
+                throw IllegalStateException("secondary: flush also broken")
+            }
+        }
+        val repo = FakeScreenshotRepository(knownKeys = mutableSetOf())
+        val ocr = OcrStage { _, _ -> OcrOutcome.Success("x") }
+        val engine = IngestionEngine(repo, ocr, write)
+
+        val progress = mutableListOf<Progress>()
+        engine.process(flowOf(candidate("content://media/1"), candidate("content://media/2")))
+            .collect {
+                log += "emit:${it.javaClass.simpleName}"
+                progress += it
+            }
+
+        // Checkpoint ran (best-effort drain) BEFORE the Error emission, and its failure changed
+        // nothing observable: the terminal error is still the PRIMARY write failure.
+        assertEquals(
+            listOf("emit:Indexing", "commit:content://media/1", "checkpoint", "emit:Error"),
+            log,
+        )
+        assertTrue(progress.last() is Progress.Error)
+        assertSame(primary, (progress.last() as Progress.Error).throwable)
+        assertTrue(progress.none { it is Progress.Completed })
+    }
+
+    @Test
+    fun write_error_path_checkpoint_success_does_not_displace_the_error() = runBlocking {
+        // The drain side of the same contract: a checkpoint that SUCCEEDS after a write failure
+        // still surfaces Progress.Error (the run failed; the drain only salvaged the tail).
+        val log = mutableListOf<String>()
+        val write = object : WriteSink {
+            override suspend fun commit(candidate: Candidate, text: String?, processed: Boolean, bytes: ByteArray, precomputedContentHash: String?) {
+                log += "commit:${candidate.locator}"
+                if (candidate.locator == "content://media/1") throw java.io.IOException("disk full")
+            }
+            override suspend fun checkpoint() { log += "checkpoint" }
+        }
+        val repo = FakeScreenshotRepository(knownKeys = mutableSetOf())
+        val ocr = OcrStage { _, _ -> OcrOutcome.Success("x") }
+        val engine = IngestionEngine(repo, ocr, write)
+
+        val progress = mutableListOf<Progress>()
+        engine.process(flowOf(candidate("content://media/1"), candidate("content://media/2")))
+            .collect {
+                log += "emit:${it.javaClass.simpleName}"
+                progress += it
+            }
+
+        assertEquals(
+            listOf("emit:Indexing", "commit:content://media/1", "checkpoint", "emit:Error"),
+            log,
+        )
+        assertTrue(progress.last() is Progress.Error)
+    }
+
+    @Test
+    fun cancelled_run_never_calls_the_terminal_checkpoint() = runBlocking {
+        // The cancel contract (issue 01 notes): correctness never REQUIRES the terminal
+        // checkpoint — an uncheckpointed batch just re-OCRs next run — so cancellation must
+        // surface as CancellationException with no blocking drain on the way out. The OCR
+        // stage gates on a deferred so cancellation lands at a real suspension point.
+        val repo = FakeScreenshotRepository(knownKeys = mutableSetOf())
+        val firstReached = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val releaseFirst = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val checkpointed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val ocr = OcrStage { _, _ ->
+            firstReached.complete(Unit)
+            releaseFirst.await()
+            OcrOutcome.Success("first")
+        }
+        val write = object : WriteSink {
+            override suspend fun commit(candidate: Candidate, text: String?, processed: Boolean, bytes: ByteArray, precomputedContentHash: String?) = Unit
+            override suspend fun checkpoint() { checkpointed.set(true) }
+        }
+        val engine = IngestionEngine(repo, ocr, write)
+
+        val scope = kotlinx.coroutines.CoroutineScope(coroutineContext)
+        val job = scope.launch { engine.process(flowOf(candidate("content://media/1"))).collect { } }
+        firstReached.await()
+        job.cancel()
+        releaseFirst.complete(Unit)
+        job.join()
+
+        assertFalse("cancel must not block on the terminal checkpoint", checkpointed.get())
+    }
+
+    @Test
+    fun sam_lambda_sinks_inherit_the_default_noop_checkpoint() = runBlocking {
+        // The seam decision: `checkpoint` is a DEFAULT method on the fun interface, so every
+        // SAM-constructed sink (RoomWriteSink-era call sites, test fakes) needs no change —
+        // the call compiles and is a verified no-op.
+        val repo = FakeScreenshotRepository(knownKeys = mutableSetOf())
+        val ocr = OcrStage { _, _ -> OcrOutcome.Success("x") }
+        val write: WriteSink = WriteSink { _, _, _, _, _ -> }   // SAM — no checkpoint override
+        val engine = IngestionEngine(repo, ocr, write)
+
+        write.checkpoint()   // the default must exist and do nothing
+
+        val progress = engine.process(flowOf(candidate("content://media/1"))).toList()
+        assertTrue(progress.last() is Progress.Completed)
+    }
 }

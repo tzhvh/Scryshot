@@ -256,6 +256,23 @@ class IngestionEngine(
                 events?.record {
                     "write-error uri=${candidate.locator ?: "?"} ${t.javaClass.simpleName}: ${t.message}"
                 }
+                // Best-effort terminal checkpoint (issue 01, checkpoint-batched flush): the sink
+                // defers zvec flush + Room marks to ~100-doc batches, so drain what DID commit
+                // before this failure — otherwise the whole pending batch's OCR work is forfeit.
+                // Swallowed + logged, never thrown: a secondary checkpoint failure must not mask
+                // the primary error, and CancellationException is rethrown above so the cancel
+                // path (where checkpoint is explicitly NOT required — uncheckpointed docs simply
+                // re-OCR next run) never blocks here.
+                try {
+                    write.checkpoint()
+                } catch (ce2: kotlinx.coroutines.CancellationException) {
+                    throw ce2
+                } catch (secondary: Throwable) {
+                    events?.record {
+                        "checkpoint-error (primary write failure stands): " +
+                            "${secondary.javaClass.simpleName}: ${secondary.message}"
+                    }
+                }
                 emit(Progress.Error(t))
                 return@flow
             }
@@ -264,6 +281,22 @@ class IngestionEngine(
 
             emit(Progress.Indexing(current = indexed + failed, total = total,
                                    failedCount = failed, stageTimings = timings.snapshot()))
+        }
+        // ── terminal checkpoint (issue 01, checkpoint-batched flush) ────────────────────────
+        // The sink batches durability (~100 docs per flush); drain the tail before declaring the
+        // run done, so a small run (on-open ≤ 12 files) flushes exactly once — here — and no
+        // run-end batch is left to re-OCR. Same failure contract as the per-candidate write: a
+        // throw surfaces as [Progress.Error] (the pending rows stay `processed = 0`; next run
+        // re-OCRs — the bounded re-OCR contract, not a hole). The flush cost here lands outside
+        // any per-candidate writeMs sample — see ZvecWriteSink's latency-semantics note.
+        try {
+            write.checkpoint()
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            events?.record { "checkpoint-error ${t.javaClass.simpleName}: ${t.message}" }
+            emit(Progress.Error(t))
+            return@flow
         }
         emit(Progress.Completed(indexed = indexed, failed = failed, total = total,
                                 stageTimings = timings.snapshot()))

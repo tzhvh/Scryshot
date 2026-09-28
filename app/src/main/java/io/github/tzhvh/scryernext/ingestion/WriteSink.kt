@@ -52,4 +52,23 @@ fun interface WriteSink {
         bytes: ByteArray,
         precomputedContentHash: String?,
     )
+
+    /**
+     * Drain any durability [commit] has deferred — the checkpoint-batched-flush hook (issue `01`,
+     * the fd-exhaustion cliff fix: `INGESTION_ADHOC_REPRO_HARNESS` §15.5 #1). A sink that commits
+     * synchronously (every commit already durable when it returns — [RoomWriteSink], test fakes)
+     * needs no checkpoint: the default is a no-op, so only batching sinks override it.
+     *
+     * The contract (the load-bearing invariant, D13 at batch granularity): on return, every doc
+     * previously handed to [commit] must be **flushed first, then** marked processed in the Room
+     * row — never the reverse. A throw out of `checkpoint` means the tail was not drained (the
+     * rows stay `processed = 0` and re-OCR next run — the bounded re-OCR contract, not a hole).
+     *
+     * The engine calls this on its terminal [Progress] states: before `Progress.Completed`
+     * (required — otherwise the run would forfeit its tail batch's OCR work), and best-effort on
+     * the `Progress.Error` path (a secondary checkpoint failure must not mask the primary error).
+     * Correctness never *requires* it — an uncheckpointed batch is self-healing re-OCR — so no
+     * caller should block cancellation on it.
+     */
+    suspend fun checkpoint() {}
 }
