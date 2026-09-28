@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108">
+  <!-- Adaptive-icon foreground: glyph only, must stay inside the 66dp safe circle (21..87) -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M32 48 L32 36 Q32 32 36 32 L48 32"/>
+    <path d="M60 32 L72 32 Q76 32 76 36 L76 48"/>
+    <path d="M32 60 L32 72 Q32 76 36 76 L48 76"/>
+    <path d="M60 76 L72 76 Q76 76 76 72 L76 60"/>
+    <circle cx="54" cy="54" r="12"/>
+    <path d="M62.5 62.5 L71 71"/>
+  </g>
+</svg>

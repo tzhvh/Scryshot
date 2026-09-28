@@ -1,13 +1,49 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Glyph stays inside the adaptive-icon 66dp safe circle (21..87 in the 108 viewport).
+     Stroke paths declare a transparent fillColor — VectorDrawable's default fill is opaque
+     black and would otherwise fill the bracket/magnifier outlines solid. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:fillColor="#333333"
-        android:pathData="M0,0h108v108h-108z" />
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M32,48L32,36Q32,32,36,32L48,32" />
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,20c-18.7,0-34,15.3-34,34s15.3,34,34,34s34-15.3,34-34S72.7,20,54,20z M54,80c-14.3,0-26-11.7-26-26s11.7-26,26-26s26,11.7,26,26S68.3,80,54,80z" />
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M60,32L72,32Q76,32,76,36L76,48" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M32,60L32,72Q32,76,36,76L48,76" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M60,76L72,76Q76,76,76,72L76,60" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6"
+        android:pathData="M66,54A12,12,0,1,0,42,54A12,12,0,1,0,66,54Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:pathData="M62.5,62.5L71,71" />
 </vector>
