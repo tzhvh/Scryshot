@@ -29,8 +29,9 @@ import io.github.tzhvh.scryernext.ScryerApplication
  * shared cleanup; "Index now" additionally enqueues the bulk job):
  *
  * - **[ACTION_INDEX_NOW]** → [IngestionWorker.enqueue] (issue `12`'s bulk job starts), then
- *   cancel the discovery notification. The `KEEP` policy on `enqueueUniqueWork("ingestion")`
- *   makes a double-tap a no-op (no second bulk job).
+ *   cancel the discovery notification. The state-aware policy on `enqueueUniqueWork("ingestion")`
+ *   (issue `02`) makes a double-tap while a healthy run is pending a no-op (no second bulk
+ *   job), while a tap against a retry-backoff zombie or a terminal state starts a real run.
  * - **[ACTION_SNOOZE]** → cancel only. "Snooze is dismissal, not scheduling" (ADR 0004 §4):
  *   WM's periodic interval handles cadence, so snooze just dismisses the notification. There
  *   is no snooze-duration system.

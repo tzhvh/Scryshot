@@ -15,6 +15,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import io.github.tzhvh.scryernext.R
@@ -72,6 +73,34 @@ import kotlinx.coroutines.delay
  * down the foreground notification. Pause/resume/cosmetic continuity is issue `14`;
  * this issue wires only the notification shell + Stop→cancel.
  *
+ * ### Issue 02 — recoverability: no death may permanently break "Index now"
+ *
+ * The fd-exhaustion incident (harness doc §1) diagnosed a three-link chain that turns
+ * *any* terminal ingestion failure into a permanent dead end, all fixed here:
+ *
+ * 1. **The zombie** — `bulkResultDecision(Progress.Error)` → `Result.retry()` leaves
+ *    this unique work `ENQUEUED` in exponential backoff; [ExistingWorkPolicy.KEEP]
+ *    alone then made every "Index now" tap a silent no-op (WorkInfo survives process
+ *    death). [enqueue] is now state-aware via the pure [enqueuePolicyDecision]:
+ *    `ENQUEUED` with `runAttemptCount > 0` (sitting in retry backoff) is
+ *    cancel-and-requeued; healthy `RUNNING`/first-attempt-`ENQUEUED` is never replaced.
+ * 2. **The dead cosmetic fallback** — `saveCosmetic(0, 0)` was written once and never
+ *    updated, so `HomeFragment`'s `sessionStartTotal > 0` gate could never pass through
+ *    the fallback. The first [Progress.Indexing] emission now re-seeds
+ *    `(sessionStartTotal = total, doneCount = current)` (the engine emits an early
+ *    `Indexing(0, total)` before any OCR — §7.4), so the cross-process fallback shows
+ *    determinate progress instead of hiding the line ("indeterminate" forever).
+ * 3. **Invisible backoff** — `Result.retry()` retries forever by default. Every retry
+ *    site now maps through the pure [cappedResultDecision]: a RETRY at
+ *    `runAttemptCount ≥ [MAX_RUN_ATTEMPTS]` gives up as `failure()` — a terminal
+ *    WorkInfo the next tap can replace, never an invisible infinite loop.
+ *
+ * **Fence (load-bearing, ADR 0004 §5):** none of this is continuation-retry. The cap
+ * bounds *whole-run re-attempts*; dedup remains the checkpoint and re-derives the
+ * unindexed set per attempt. The healthy-path policy is unchanged (`KEEP`); only the
+ * ENQUEUED-in-backoff zombie is replaced, and the §7.5 CAS — not enqueue policy —
+ * remains the double-engine lock.
+ *
  * ### Wiring
  *
  * Default WorkManager init (no custom [androidx.work.WorkerFactory]); deps are pulled
@@ -81,6 +110,7 @@ import kotlinx.coroutines.delay
  * call, so it is not dead code.
  *
  * See: [.scratch/ingestion/issues/12-bulk-ingestion-worker-datasync.md](file:///.scratch/ingestion/issues/12-bulk-ingestion-worker-datasync.md)
+ * See: [.scratch/ingestion-cliff/issues/02-ingestion-recoverability.md](file:///.scratch/ingestion-cliff/issues/02-ingestion-recoverability.md)
  * See: [ADR 0004 §2, §4, §5, §6, §7.5](file:///docs/adr/0004-ingestion-engine-and-trigger-architecture-v2.md)
  */
 class IngestionWorker(
@@ -125,26 +155,51 @@ class IngestionWorker(
         if (!acquireGuardOrRetry(store)) {
             // retry-to-BEGIN (resurrection window): the run never started, so this is NOT
             // the continuation-retry §5 forbids. Distinguished explicitly per issue 12.
-            logger.log("doWork: guard not acquired after bounded wait; retry-to-begin.")
-            return Result.retry()
+            // Capped per issue 02 (link 3): a begin that can never happen must surface as a
+            // terminal failure, not back off invisibly forever (the squatter is in-memory
+            // and dies with the process, so >MAX_RUN_ATTEMPTS here is pathological anyway).
+            logger.log("doWork: guard not acquired after bounded wait; retry-to-begin (attempt $runAttemptCount).")
+            return retryOrGiveUp()
         }
 
         // Issue 14a — cosmetic continuity. The guard is now held (a genuine session start):
         // (1) register the clear-on-terminal hook so a finished/aborted session's numerics
         //     don't bleed into the next. The store fires this hook on complete()/fail()/abort(),
         //     which all release the guard (issue 10.5) — so the clear is automatic, not manual.
-        // (2) persist (sessionStartTotal=0, doneCount=0) for bar continuity. Cosmetic ONLY —
-        //     never the guard's Indexing state (poison-pill trap; see IngestionSession KDoc).
+        // (2) reset the persisted numerics to (sessionStartTotal=0, doneCount=0) — the
+        //     "total unknown yet" placeholder that keeps HomeFragment's `sessionStartTotal > 0`
+        //     gate closed until real numbers exist. Issue 02 (link 2) completes the loop: the
+        //     FIRST Progress.Indexing emission below re-seeds (total, current), so the reset
+        //     is no longer a write-once-dead value. Cosmetic ONLY — never the guard's Indexing
+        //     state (poison-pill trap; see IngestionSession KDoc).
         store.onTerminalClear { session.clearCosmetic() }
         session.saveCosmetic(sessionStartTotal = 0, doneCount = 0)
 
         // 3. Single long collection of the engine's cold Flow (§5 — no mid-run checkpoint).
         var terminal: Progress = Progress.Idle
+        var cosmeticSeeded = false
         try {
             engine.process(producer.candidates()).collect { progress ->
                 when (progress) {
                     is Progress.Indexing -> {
                         store.publish(progress)
+                        // Issue 02 (link 2) — seed the cosmetic fallback ONCE from the first
+                        // Indexing emission. The engine's early emit (§7.4) carries the full
+                        // total before any OCR, so a UI that re-opens while the live in-process
+                        // surface is unavailable (resurrection gap, cross-process pending)
+                        // renders DETERMINATE continuity instead of a hidden progress line —
+                        // the incident's "indeterminate forever" symptom. First-emission-only
+                        // (not per-tick): the fallback serves the pre-live window; once the
+                        // store publishes, HomeFragment reads the live numerics, and per-tick
+                        // Prefs writes at 18k files would be churn for a value nobody reads.
+                        // Re-seeded per attempt; cleared on terminal by the hook above.
+                        if (!cosmeticSeeded && progress.total > 0) {
+                            session.saveCosmetic(
+                                sessionStartTotal = progress.total,
+                                doneCount = progress.current
+                            )
+                            cosmeticSeeded = true
+                        }
                         updateNotification(progress.current, progress.total)
                     }
                     is Progress.Completed -> {
@@ -170,14 +225,19 @@ class IngestionWorker(
         } catch (t: Throwable) {
             // An unexpected collection-loop failure (not an engine Error emission, not
             // cancellation). Surface as Error and re-attempt — symmetric with OnOpenTrigger.
+            // Capped per issue 02 (link 3): see retryOrGiveUp below.
             logger.log("doWork: collection error — ${t.javaClass.simpleName}: ${t.message}")
             store.fail(Progress.Error(t))
-            return Result.retry()
+            return retryOrGiveUp()
         }
 
-        // 4. Map the terminal Progress to a WorkManager Result per the §5 contract.
-        val decision = bulkResultDecision(terminal)
-        logger.log("doWork: terminal=$terminal → $decision")
+        // 4. Map the terminal Progress to a WorkManager Result per the §5 contract, with
+        //    the issue-02 retry cap applied: RETRY at runAttemptCount ≥ MAX_RUN_ATTEMPTS
+        //    becomes a VISIBLE failure (WM FAILED is terminal → the next "Index now" tap
+        //    re-enqueues fresh; the banner leaves ACTIVE and returns to the actionable
+        //    nudge) instead of an invisible infinite backoff loop.
+        val decision = cappedResultDecision(bulkResultDecision(terminal), runAttemptCount)
+        logger.log("doWork: terminal=$terminal → $decision (attempt $runAttemptCount)")
         // Returning from doWork lets WM stop the SystemForegroundService and remove the
         // foreground notification — no explicit cancel is required for terminal teardown.
         return when (decision) {
@@ -186,6 +246,19 @@ class IngestionWorker(
             WorkResultDecision.FAILURE -> Result.failure()
         }
     }
+
+    /**
+     * The retry-cap application for the two early retry sites (retry-to-begin and the
+     * collection-throw path): RETRY unless [cappedResultDecision] has given up, in which
+     * case a visible `failure()`. Issue 02 (link 3) — an environment that can never
+     * succeed must surface, not back off invisibly forever.
+     */
+    private fun retryOrGiveUp(): Result =
+        if (cappedResultDecision(WorkResultDecision.RETRY, runAttemptCount) == WorkResultDecision.FAILURE) {
+            Result.failure()
+        } else {
+            Result.retry()
+        }
 
     /**
      * Acquire the §7.5 guard, polling for a short window on refusal to absorb the
@@ -280,18 +353,71 @@ class IngestionWorker(
         private const val BOUNDED_WAIT_POLL_MS = 500L
         private const val BOUNDED_WAIT_ATTEMPTS = 10
 
+        // Direct executor for the enqueue lookup's listener: the body runs only once the
+        // future is complete (inline on the caller if already done — get() is then instant;
+        // else on WM's query thread), so it never blocks main and needs no dedicated thread.
+        private val DIRECT_EXECUTOR = java.util.concurrent.Executor { it.run() }
+
         /**
-         * Enqueue the bulk job as unique work ([ExistingWorkPolicy.KEEP] — a second tap
-         * while one runs is a no-op, so two bulk jobs can never coexist). No constraints:
-         * the job is user-initiated, runs on-device OCR, and should start promptly. Phase
-         * 3's banner and issue `13`'s notification action call this; nothing calls it yet.
+         * Enqueue the bulk job as unique work, **state-aware** (issue 02, link 1 — the
+         * zombie fix). The old unconditional [ExistingWorkPolicy.KEEP] made every tap a
+         * no-op whenever unique work existed in *any* non-terminal state — including the
+         * zombie: a failed attempt sitting `ENQUEUED` in retry backoff, where it survives
+         * process death and silently swallows taps forever (harness doc §1).
+         *
+         * The (state, runAttemptCount) → policy mapping is the pure [enqueuePolicyDecision]:
+         * a healthy `RUNNING` session or a cleanly-queued first attempt keeps `KEEP`
+         * (a second tap while one runs is still a no-op — two bulk jobs can never coexist;
+         * replacing a *running* session would be the double-engine regression, fence per
+         * issue 02); an `ENQUEUED` attempt with `runAttemptCount > 0` (the zombie in
+         * backoff) is cancel-and-requeued so the tap always produces a live run —
+         * semantically clean because dedup *is* the resumption story (ADR 0004 §5).
+         *
+         * The §7.5 CAS, not this policy, remains the double-engine lock: under the
+         * ENQUEUED→RUNNING race (the attempt starts between query and enqueue) the
+         * just-started retry is cancelled (its `CancellationException` path releases the
+         * guard) and the fresh run enters cleanly — never two engines over one producer.
+         *
+         * Fire-and-forget, synchronous-signature: the WorkInfo lookup rides a
+         * [com.google.common.util.concurrent.ListenableFuture] listener (direct executor
+         * — the body runs only once the future is complete: inline on the caller if
+         * already done, else on WM's query thread; never blocking main), preserving
+         * [DiscoveryActionReceiver]'s no-ANR contract. A failed lookup degrades to a
+         * plain `KEEP` enqueue (absent → fresh) so a tap is never lost to the query.
+         * No constraints: the job is user-initiated, runs on-device OCR, and should
+         * start promptly. Phase 3's banner and issue `13`'s notification action call
+         * this via [IngestionSession.startBulk].
          */
         fun enqueue(context: Context) {
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                UNIQUE_NAME,
-                ExistingWorkPolicy.KEEP,
-                OneTimeWorkRequestBuilder<IngestionWorker>().build()
-            )
+            val wm = WorkManager.getInstance(context)
+            val request = OneTimeWorkRequestBuilder<IngestionWorker>().build()
+            val future = wm.getWorkInfosForUniqueWork(UNIQUE_NAME)
+            future.addListener({
+                val info = try {
+                    future.get().firstOrNull()
+                } catch (_: Throwable) {
+                    null   // lookup failed → treat as absent → plain fresh enqueue
+                }
+                val decision = enqueuePolicyDecision(info?.state, info?.runAttemptCount ?: 0)
+                android.util.Log.d(
+                    TAG,
+                    "enqueue: state=${info?.state} attempt=${info?.runAttemptCount ?: 0} → $decision"
+                )
+                wm.enqueueUniqueWork(
+                    UNIQUE_NAME,
+                    when (decision) {
+                        // KEEP for both: WM re-evaluates liveness atomically at enqueue
+                        // time, so a run that went terminal in the query→enqueue race
+                        // still yields a fresh job, and KEEP is a no-op iff still pending.
+                        EnqueuePolicyDecision.KEEP_ACTIVE,
+                        EnqueuePolicyDecision.ENQUEUE_FRESH -> ExistingWorkPolicy.KEEP
+                        // WM 2.10 has no CANCEL_AND_REQUEUE for one-time work; REPLACE is
+                        // that semantics — cancel-and-delete pending work, then insert.
+                        EnqueuePolicyDecision.CANCEL_AND_ENQUEUE -> ExistingWorkPolicy.REPLACE
+                    },
+                    request
+                )
+            }, DIRECT_EXECUTOR)
         }
     }
 }
@@ -362,3 +488,87 @@ internal fun bulkResultDecision(terminal: Progress): WorkResultDecision = when (
     Progress.Idle, Progress.Aborted, is Progress.Paused, is Progress.Indexing ->
         WorkResultDecision.SUCCESS
 }
+
+/**
+ * The issue-02 retry cap (link 3 — no terminal failure may retry invisibly forever).
+ *
+ * `Result.retry()` retries without bound by default; the incident's `Progress.Error`
+ * (fd exhaustion) sat in exponential backoff forever with no user-facing give-up. This
+ * pure wrapper maps a RETRY decision at `runAttemptCount ≥ [MAX_RUN_ATTEMPTS]` to a
+ * visible [FAILURE][WorkResultDecision.FAILURE] — WM marks the work `FAILED` (terminal),
+ * the store already surfaced [Progress.Error] via `store.fail()`, the banner leaves
+ * ACTIVE for the actionable IDLE_BACKLOG nudge, and the next "Index now" tap enqueues
+ * fresh ([enqueuePolicyDecision] maps terminal → [ENQUEUE_FRESH][EnqueuePolicyDecision.ENQUEUE_FRESH]).
+ *
+ * Applied to **every** retry site — the terminal mapping, retry-to-begin (resurrection
+ * window), and the collection-throw path — so no path can loop invisibly. This is NOT
+ * continuation-retry (ADR 0004 §5): each attempt is a whole fresh run over a re-derived
+ * unindexed set; the cap bounds *re-attempts*, and dedup remains the checkpoint.
+ *
+ * @param decision         the §5-contract decision ([bulkResultDecision] output, or a
+ *                         literal RETRY at the early sites).
+ * @param runAttemptCount  WM's 0-based attempt counter (`runAttemptCount == 0` on the
+ *                         first run; incremented per retry).
+ */
+internal fun cappedResultDecision(
+    decision: WorkResultDecision,
+    runAttemptCount: Int
+): WorkResultDecision =
+    if (decision == WorkResultDecision.RETRY && runAttemptCount >= MAX_RUN_ATTEMPTS) {
+        WorkResultDecision.FAILURE
+    } else {
+        decision
+    }
+
+/**
+ * The whole-run re-attempt cap (issue 02, link 3). **Three** because the failure classes
+ * that legitimately map RETRY (write-path error, whole-run transient) either clear within
+ * WM's first backoff windows (default exponential 30s/1m/2m ≈ 3.5 min ≈ this cap's span)
+ * or are persistent — the fd-exhaustion wall of the incident, where every extra retry is
+ * an invisible zombie minute. Top-level (not in the worker's companion) so it sits with
+ * the pure decision it parameterizes and is reachable from JVM tests.
+ */
+internal const val MAX_RUN_ATTEMPTS = 3
+
+/**
+ * What a user-initiated "Index now" enqueue should do with the existing unique work —
+ * the issue-02 zombie decision (link 1), extracted as a pure function (house convention:
+ * [bulkResultDecision]/[isPending]/[bannerMode]).
+ *
+ * | WorkInfo state | runAttemptCount | Decision | Why |
+ * |---|---|---|---|
+ * | `null` (absent/never run) | — | [ENQUEUE_FRESH] | Nothing to keep. |
+ * | [RUNNING][WorkInfo.State.RUNNING] | any | [KEEP_ACTIVE] | A healthy live session. Replacing it is the double-engine regression (issue 02 fence); a tap during a real run *should* be a no-op. |
+ * | [ENQUEUED][WorkInfo.State.ENQUEUED] | 0 | [KEEP_ACTIVE] | A cleanly-queued first attempt waiting on the executor — a legitimate pending run, not a zombie. |
+ * | [ENQUEUED][WorkInfo.State.ENQUEUED] | > 0 | [CANCEL_AND_ENQUEUE] | **The zombie**: a post-failure attempt sitting in retry backoff. `KEEP` alone makes every tap a silent no-op against it (harness doc §1) — the exact incident symptom. |
+ * | [SUCCEEDED]/[FAILED]/[CANCELLED] | — | [ENQUEUE_FRESH] | Terminal; a tap starts a new run (WM's KEEP already re-enqueues past terminal work — explicit here for the mapping's completeness). |
+ *
+ * [BLOCKED][WorkInfo.State.BLOCKED] is defensively mapped like [ENQUEUED][WorkInfo.State.ENQUEUED]
+ * (standalone one-time work has no prerequisites, so the state is unreachable in practice).
+ *
+ * Replacement is semantically clean because dedup *is* the resumption story (ADR 0004 §5):
+ * the re-derivation a replacement triggers is exactly what the next discovery/app-open
+ * would do anyway. And the §7.5 `tryEnter` CAS — not this policy — remains the double-engine
+ * lock; see [IngestionWorker.enqueue]'s KDoc for the ENQUEUED→RUNNING race analysis.
+ */
+internal enum class EnqueuePolicyDecision { KEEP_ACTIVE, CANCEL_AND_ENQUEUE, ENQUEUE_FRESH }
+
+internal fun enqueuePolicyDecision(state: WorkInfo.State?, runAttemptCount: Int): EnqueuePolicyDecision =
+    when (state) {
+        // A healthy live run — never replaced (fence: double-engine regression).
+        WorkInfo.State.RUNNING -> EnqueuePolicyDecision.KEEP_ACTIVE
+        // Pending work: attempt 0 is a clean first queue (keep); attempt > 0 is the
+        // zombie sitting in retry backoff (cancel-and-requeue so the tap runs). BLOCKED
+        // is defensively folded in (unreachable for standalone one-time work).
+        WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED ->
+            if (runAttemptCount > 0) {
+                EnqueuePolicyDecision.CANCEL_AND_ENQUEUE
+            } else {
+                EnqueuePolicyDecision.KEEP_ACTIVE
+            }
+        // Terminal or absent: nothing to keep — a tap means "start a run".
+        WorkInfo.State.SUCCEEDED,
+        WorkInfo.State.FAILED,
+        WorkInfo.State.CANCELLED,
+        null -> EnqueuePolicyDecision.ENQUEUE_FRESH
+    }

@@ -96,7 +96,9 @@ class IngestionSession(
      * The banner's "Index now" button calls this. Mirrors [abort]'s shape: the session owns the
      * WM enqueue surface so the UI (and [DiscoveryActionReceiver]) don't re-implement it and
      * never touch [WorkManager] directly. Delegates to [IngestionWorker.enqueue], whose
-     * `ExistingWorkPolicy.KEEP` makes a double-tap a no-op (no second bulk job).
+     * state-aware policy (issue `02`) makes a double-tap while a healthy run is pending a
+     * no-op (no second bulk job), while a tap against a retry-backoff zombie or after a
+     * terminal state always starts a real run — no death may permanently break this button.
      */
     fun startBulk() {
         IngestionWorker.enqueue(appContext)
